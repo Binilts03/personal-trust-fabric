@@ -91,6 +91,18 @@ test('HTTP sandbox exposes safe state and human approval executes through server
   });
 });
 
+test('API session bootstrap supports static hosts and remains idempotent', async () => {
+  await withServer(async (baseUrl) => {
+    const first = await fetch(`${baseUrl}/api/session`);
+    assert.equal(first.status, 200);
+    const cookie = first.headers.get('set-cookie').split(';', 1)[0];
+    assert.equal((await first.json()).profile, 'synthetic_sandbox');
+
+    const second = await fetch(`${baseUrl}/api/session`, { headers: { cookie } });
+    assert.equal(second.headers.get('set-cookie').split(';', 1)[0], cookie);
+  });
+});
+
 test('HTTP boundary rejects unknown fields and exposes an explicit Human persona correction', async () => {
   await withServer(async (baseUrl) => {
     const session = await openHumanSession(baseUrl);

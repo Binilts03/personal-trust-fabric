@@ -95,12 +95,11 @@ async function sendStatic(response, requestPath) {
   return true;
 }
 
-export function createAppServer({ publicOrigin = null } = {}) {
+export function createAppHandler({ publicOrigin = null, sessions = new Map() } = {}) {
   const parsedPublicOrigin = publicOrigin === null ? null : new URL(publicOrigin);
   if (parsedPublicOrigin !== null && parsedPublicOrigin.protocol !== 'https:') {
     throw new TypeError('PUBLIC_ORIGIN must use HTTPS');
   }
-  const sessions = new Map();
 
   function openSession(request) {
     const existingToken = getSessionToken(request);
@@ -114,7 +113,7 @@ export function createAppServer({ publicOrigin = null } = {}) {
     return { token, session };
   }
 
-  return createServer(async (request, response) => {
+  return async (request, response) => {
     response.setHeader('x-content-type-options', 'nosniff');
     response.setHeader('referrer-policy', 'no-referrer');
     response.setHeader('cross-origin-resource-policy', 'same-origin');
@@ -122,6 +121,15 @@ export function createAppServer({ publicOrigin = null } = {}) {
     const url = new URL(request.url, 'http://ptf.local');
 
     try {
+      if (request.method === 'GET' && url.pathname === '/api/session') {
+        const { token, session } = openSession(request);
+        const secure = parsedPublicOrigin ? '; Secure' : '';
+        response.setHeader(
+          'set-cookie',
+          `ptf_human_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600${secure}`
+        );
+        return sendJson(response, 200, session.sandbox.state());
+      }
       if (request.method === 'GET' && url.pathname === '/api/state') {
         const session = requireSession(request, sessions);
         return sendJson(response, 200, session.sandbox.state());
@@ -177,7 +185,11 @@ export function createAppServer({ publicOrigin = null } = {}) {
             : 'request is not authorized'
       });
     }
-  });
+  };
+}
+
+export function createAppServer(options) {
+  return createServer(createAppHandler(options));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

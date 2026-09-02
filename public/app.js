@@ -160,4 +160,4 @@ app.addEventListener('submit', async (event) => {
 window.addEventListener('ptf-state-changed', () => refresh());
 const webmcpReady = await registerWebMCPTools();
 document.documentElement.dataset.webmcp = webmcpReady ? 'ready' : 'unavailable';
-await refresh(webmcpReady);
+render(await api('/api/session'), webmcpReady);

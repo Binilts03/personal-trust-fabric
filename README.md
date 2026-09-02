@@ -40,6 +40,7 @@ The adapter feature-detects `document.modelContext.registerTool`. Current ChatGP
 - Playwright artifacts are written under `output/playwright/` during local judge-like testing.
 - Synthetic recipient sessions demonstrate the recipient-authentication hook; they are not cryptographic production authentication.
 - The audit chain demonstrates consistency relative to this process only; it is unkeyed, volatile, and not independently anchored.
+- The Vercel preview uses the same process-local synthetic session store. A cold start can reset demo state; this is not durable custody or production authority storage.
 - Production custody, recovery, interoperability, deployment, video, and submission remain OPEN and require the decisions/evidence in the live ledgers.
 
 Licensed under the [Apache License 2.0](LICENSE).
