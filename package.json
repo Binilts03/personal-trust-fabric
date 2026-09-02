@@ -1,0 +1,19 @@
+{
+  "name": "personal-trust-fabric",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:core": "node --test test/core/*.test.js",
+    "test:integration": "node --test test/integration/*.test.js",
+    "test:architecture": "node --test test/architecture/*.test.js",
+    "lint:architecture": "node scripts/verify-architecture.mjs",
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "verify:harness": "pwsh -NoProfile -File scripts/verify-harness.ps1"
+  }
+}
