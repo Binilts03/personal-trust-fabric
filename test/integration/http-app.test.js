@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { request as httpRequest } from 'node:http';
 import test from 'node:test';
 
 import { createAppServer } from '../../src/server.js';
@@ -28,6 +29,24 @@ async function openHumanSession(baseUrl) {
     cookie: response.headers.get('set-cookie').split(';', 1)[0],
     origin: baseUrl
   };
+}
+
+function rawRequest(baseUrl, path, { method = 'GET', headers = {}, body = null } = {}) {
+  const target = new URL(path, baseUrl);
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(target, { method, headers }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve({
+        status: response.statusCode,
+        headers: response.headers,
+        body: Buffer.concat(chunks).toString('utf8')
+      }));
+    });
+    request.on('error', reject);
+    if (body !== null) request.end(body);
+    else request.end();
+  });
 }
 
 test('HTTP sandbox exposes safe state and human approval executes through server-held recipient proof', async () => {
@@ -190,6 +209,37 @@ test('hosted profile marks the Human session cookie Secure', async () => {
     const response = await fetch(baseUrl);
     assert.match(response.headers.get('set-cookie'), /; Secure$/);
   }, { publicOrigin: 'HTTPS://ptf.example' });
+});
+
+test('hosted Vercel aliases bind mutations to the request origin', async () => {
+  await withServer(async (baseUrl) => {
+    const host = 'ptf-preview.vercel.app';
+    const sessionResponse = await rawRequest(baseUrl, '/api/session', { headers: { host } });
+    const cookie = sessionResponse.headers['set-cookie'][0].split(';', 1)[0];
+    assert.match(sessionResponse.headers['set-cookie'][0], /; Secure$/);
+
+    const reset = await rawRequest(baseUrl, '/api/reset', {
+      method: 'POST',
+      body: '{}',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': 2,
+        cookie,
+        host,
+        origin: `https://${host}`
+      }
+    });
+    assert.equal(reset.status, 200);
+  }, { hosted: true });
+});
+
+test('hosted profile rejects an untrusted request host', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await rawRequest(baseUrl, '/api/session', {
+      headers: { host: 'attacker.test' }
+    });
+    assert.equal(response.status, 403);
+  }, { hosted: true });
 });
 
 test('hosted profile rejects a non-HTTPS public origin', () => {

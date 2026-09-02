@@ -60,6 +60,17 @@ function getSessionToken(request) {
     ?.slice('ptf_human_session='.length);
 }
 
+function resolveHostedOrigin(request, allowedHosts) {
+  const host = request.headers.host;
+  if (typeof host !== 'string' || !/^[A-Za-z0-9.-]+(?::[0-9]+)?$/.test(host)) {
+    throw new Error('request host is not trusted');
+  }
+  const origin = new URL(`https://${host}`);
+  const trusted = origin.hostname.endsWith('.vercel.app') || allowedHosts.has(origin.hostname);
+  if (!trusted) throw new Error('request host is not trusted');
+  return origin.origin;
+}
+
 function requireSession(request, sessions, { mutation = false, publicOrigin = null } = {}) {
   const session = sessions.get(getSessionToken(request));
   if (!session) throw new Error('browser session is required');
@@ -95,11 +106,17 @@ async function sendStatic(response, requestPath) {
   return true;
 }
 
-export function createAppHandler({ publicOrigin = null, sessions = new Map() } = {}) {
+export function createAppHandler({
+  publicOrigin = null,
+  hosted = false,
+  allowedHosts = [],
+  sessions = new Map()
+} = {}) {
   const parsedPublicOrigin = publicOrigin === null ? null : new URL(publicOrigin);
   if (parsedPublicOrigin !== null && parsedPublicOrigin.protocol !== 'https:') {
     throw new TypeError('PUBLIC_ORIGIN must use HTTPS');
   }
+  const trustedHostedHosts = new Set(allowedHosts);
 
   function openSession(request) {
     const existingToken = getSessionToken(request);
@@ -121,9 +138,12 @@ export function createAppHandler({ publicOrigin = null, sessions = new Map() } =
     const url = new URL(request.url, 'http://ptf.local');
 
     try {
+      const requestPublicOrigin = parsedPublicOrigin?.origin ?? (
+        hosted ? resolveHostedOrigin(request, trustedHostedHosts) : null
+      );
       if (request.method === 'GET' && url.pathname === '/api/session') {
         const { token, session } = openSession(request);
-        const secure = parsedPublicOrigin ? '; Secure' : '';
+        const secure = requestPublicOrigin ? '; Secure' : '';
         response.setHeader(
           'set-cookie',
           `ptf_human_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600${secure}`
@@ -140,7 +160,7 @@ export function createAppHandler({ publicOrigin = null, sessions = new Map() } =
         return sendJson(response, 200, { assuranceLabel, safeView });
       }
       if (request.method === 'POST' && url.pathname === '/api/reset') {
-        const session = requireSession(request, sessions, { mutation: true, publicOrigin });
+        const session = requireSession(request, sessions, { mutation: true, publicOrigin: requestPublicOrigin });
         assertBodyFields(await readJson(request), []);
         session.sandbox = createSandbox();
         session.operationRequests = 0;
@@ -154,19 +174,19 @@ export function createAppHandler({ publicOrigin = null, sessions = new Map() } =
       }
       const approval = url.pathname.match(/^\/api\/approvals\/([A-Za-z0-9_-]+)$/);
       if (request.method === 'POST' && approval) {
-        const session = requireSession(request, sessions, { mutation: true, publicOrigin });
+        const session = requireSession(request, sessions, { mutation: true, publicOrigin: requestPublicOrigin });
         const body = await readJson(request);
         assertBodyFields(body, ['decision']);
         return sendJson(response, 200, await session.sandbox.decide(approval[1], body.decision));
       }
       const correction = url.pathname.match(/^\/api\/persona\/([A-Za-z0-9_-]+)\/correct$/);
       if (request.method === 'POST' && correction) {
-        const session = requireSession(request, sessions, { mutation: true, publicOrigin });
+        const session = requireSession(request, sessions, { mutation: true, publicOrigin: requestPublicOrigin });
         return sendJson(response, 200, session.sandbox.correctPersona(correction[1], await readJson(request)));
       }
       if (request.method === 'GET' && url.pathname === '/') {
         const { token } = openSession(request);
-        const secure = parsedPublicOrigin ? '; Secure' : '';
+        const secure = requestPublicOrigin ? '; Secure' : '';
         response.setHeader(
           'set-cookie',
           `ptf_human_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600${secure}`
@@ -190,6 +210,19 @@ export function createAppHandler({ publicOrigin = null, sessions = new Map() } =
 
 export function createAppServer(options) {
   return createServer(createAppHandler(options));
+}
+
+let vercelHandler;
+
+export default function handleVercelRequest(request, response) {
+  vercelHandler ??= createAppHandler({
+    hosted: true,
+    allowedHosts: (process.env.PTF_ALLOWED_HOSTS ?? '')
+      .split(',')
+      .map((host) => host.trim())
+      .filter(Boolean)
+  });
+  return vercelHandler(request, response);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
