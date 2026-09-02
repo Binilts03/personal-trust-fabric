@@ -1,14 +1,11 @@
-# Documentation index
+# Documentation
 
-The root handoff documents remain the product specification. This directory contains live implementation evidence and decisions.
+Public docs for the synthetic sandbox:
 
-| Area | Documents |
+| Doc | Purpose |
 |---|---|
-| Program control | `program/requirements-ledger.md`, `program/capability-ledger.md`, `program/security-properties-ledger.md`, `program/build-plan.md`, `program/execution-ledger.md`, `program/harness-status.md` |
-| Runtime inventory | `program/skill-registry.json`, `program/skill-registry-summary.md` |
-| Current primary-source checks | `research/current-sources.md` |
-| Independent reviews | `validation/reviews/` |
-| Architecture decisions | `adr/README.md` |
-| Commands | `commands.md` |
+| `judge-script.md` | Judge/evaluator flow and WebMCP tool prompts |
+| `research/current-sources.md` | Current ChatGPT/Chrome WebMCP evidence |
+| `commands.md` | Command registry |
 
-`VALIDATION_REPORT.md` at the repository root is the W0 gate report. A document is not implementation evidence unless the requirements ledger names a runnable check or inspected artifact.
+Internal handoff specification (product contract, domain model, full program ledgers, ADRs, validation reviews) is archived locally at `../handoff-archive-2026-09-02/` and not tracked on `main`. History retains prior versions for reference.
