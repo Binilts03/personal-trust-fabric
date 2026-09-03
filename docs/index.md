@@ -1,16 +1,24 @@
-# Documentation
+# PTF Proposed Specification Documentation
 
-This branch contains the approved architecture and formal specification for the full Personal Trust Fabric rewrite.
+Status: **Proposed — awaiting human approval.**
 
-| Document | Purpose |
-|---|---|
-| `superpowers/specs/2026-09-03-personal-trust-fabric-v1-spec.md` | Canonical self-reviewed PTF v1 specification awaiting human spec approval |
-| `../CONTEXT-MAP.md` | Canonical bounded contexts, terminology, and architectural invariants |
-| `adr/0001-*.md` through `adr/0006-*.md` | Accepted hard-to-reverse architecture decisions |
-| `research/current-sources.md` | Historical/current research sources from the synthetic WebMCP milestone; not the product specification |
-| `judge-script.md` | Historical WebMCP sandbox evaluator flow |
-| `commands.md` | Commands for the existing sandbox code inherited by this branch |
+## Normative proposed specification
 
-The synthetic WebMCP implementation remains historical milestone evidence. Do not use its module boundaries or archived handoff documents as the source of truth for the rewrite.
+- `spec/PTF-V1-PROPOSED.md`
 
-No implementation planning or code rewrite begins until the canonical specification receives human approval. The next workflow after approval is Superpowers `writing-plans`.
+## Non-normative terminology
+
+- `../CONTEXT-MAP.md`
+
+## Proposed ADRs
+
+- `adr/0001-dual-source-authority-and-personal-state-separation.md`
+- `adr/0002-plan-bound-execution-and-enforcement-map.md`
+- `adr/0003-local-subjects-and-validated-identity-bindings.md`
+- `adr/0004-plural-custody-and-protected-executors.md`
+- `adr/0005-external-protocols-are-adapters-not-authority.md`
+- `adr/0006-preserve-repository-history-rewrite-implementation.md`
+
+## Preservation
+
+The pre-rewrite synthetic WebMCP milestone is preserved on `legacy/webmcp-sandbox`. The immutable tag `webmcp-sandbox-v0.1` is still required before any rewrite of `main`; the available ChatGPT GitHub connector does not expose tag creation.

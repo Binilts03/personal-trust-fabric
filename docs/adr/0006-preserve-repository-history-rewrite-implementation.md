@@ -1,26 +1,14 @@
 # ADR 0006 — Preserve Repository History, Rewrite the Implementation
 
-Status: Accepted  
-Date: 2026-09-03
+Status: **Proposed**
 
 ## Context
-
-The current repository contains a coherent synthetic WebMCP sandbox, but it embodies a milestone architecture rather than the approved full PTF architecture. Extending it incrementally would bias future work toward its existing assumptions: in-memory capability runtime, synthetic recipient proof, provider injection, WebMCP-centered Agent surface, and demo-oriented documentation. Creating a completely unrelated repository, however, would discard useful public provenance and the historical record of how PTF evolved.
+The current repository preserves genuine project provenance but its synthetic WebMCP implementation embodies an obsolete milestone architecture and can mislead future implementation agents.
 
 ## Decision
-
-Keep the existing `Binilts03/personal-trust-fabric` repository as the canonical project repository, but treat the next implementation as a clean rewrite from the approved PTF specification.
-
-Before replacing `main`, preserve the pre-rewrite synthetic milestone using an immutable tag and/or dedicated legacy branch.
-
-Reuse project concepts or code only when they are independently justified by the new specification and pass the new architecture/conformance tests. Existing source layout and module interfaces have no grandfathered status.
-
-The architecture specification, context map, ADRs, threat model, and conformance requirements become the source of truth for the rewrite.
+If approved, the repository identity/history will be retained while the implementation is rebuilt from the approved specification. The synthetic milestone is preserved on `legacy/webmcp-sandbox` and must also be tagged `webmcp-sandbox-v0.1` before `main` is rewritten. The specification branch remains documentation-only.
 
 ## Consequences
+Existing code receives no grandfathered status. Reuse requires independent justification and new tests. The pre-rewrite implementation remains recoverable as history rather than constraining the new architecture.
 
-- Public project history and genuine authorship/provenance remain continuous.
-- Future implementation agents are not forced to retrofit production semantics into demo module boundaries.
-- Existing useful experiments such as safe-view filtering, transaction-term hashing, provenance, leakage canaries, recipient-redirection denial, and one-use testing may inform the rewrite but must be revalidated.
-- `main` will eventually cease describing the WebMCP sandbox and become the architecture-led PTF reference implementation.
-- The legacy milestone remains accessible for historical comparison without constraining the new codebase.
+This ADR becomes Accepted only after explicit human approval of the proposed specification.
