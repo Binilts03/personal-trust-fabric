@@ -1,26 +1,31 @@
 # Personal Trust Fabric — Agent Instructions
 
-Status: **Proposed specification under human review.**
-
-Nothing in this branch is approved merely because it is committed. Do not describe the architecture, ADRs, or specification as accepted/approved until the human explicitly approves the formal written specification.
+Status: **PTF v1 specification approved; implementation planning in progress.**
 
 ## Source of truth
 
-1. `docs/spec/PTF-V1-PROPOSED.md` — sole normative proposed specification.
-2. `CONTEXT-MAP.md` — non-normative terminology/context glossary. If it conflicts with the proposed specification, the proposed specification wins.
-3. `docs/adr/` — proposed hard-to-reverse decisions; their status becomes Accepted only after human approval of the formal specification.
+1. `docs/spec/PTF-V1-APPROVAL.md` — lifecycle approval record identifying the exact approved specification blob.
+2. `docs/spec/PTF-V1-PROPOSED.md` — immutable reviewed specification whose exact blob is approved by the approval record.
+3. `CONTEXT-MAP.md` — non-normative terminology/context glossary. If it conflicts with the approved specification, the approved specification wins.
+4. `docs/adr/` — accepted hard-to-reverse architecture decisions.
+5. `docs/superpowers/plans/` — implementation plans after they are written; plans may sequence the work but may not redefine the product boundary.
+
+Do not infer PTF v1 architecture from conversational history or the synthetic WebMCP implementation.
 
 ## Repository safety
 
-- The synthetic WebMCP milestone is preserved on `legacy/webmcp-sandbox`.
-- The immutable tag `webmcp-sandbox-v0.1` is still required before any rewrite of `main`.
-- Do not implement against the synthetic WebMCP source tree or infer architecture from it.
-- This architecture branch is documentation-only by design.
+- The synthetic WebMCP milestone is preserved on `legacy/webmcp-sandbox` at `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9`.
+- Immutable tag `webmcp-sandbox-v0.1` is a mandatory pre-rewrite gate and must resolve to that same commit before any modification of `main`.
+- The current ChatGPT GitHub connector cannot create the tag; an execution environment with Git push/tag capability must do and verify this first.
+- Do not implement against the synthetic WebMCP source tree or inherit its module boundaries.
+- This architecture/planning branch remains documentation-only.
 
 ## Process gate
 
-Do not write an implementation plan or code from conversational context. Human approval of `docs/spec/PTF-V1-PROPOSED.md` is required first. After approval, use Superpowers `writing-plans` to produce the implementation plan.
+The approved architecture permits implementation planning. Use Superpowers `writing-plans` to produce the complete rewrite roadmap and bounded subplans.
+
+Do **not** begin implementation until the plan set is complete and an execution workflow is explicitly selected. During execution, use an isolated worktree and the applicable Superpowers/Matt skills for each task.
 
 ## Scope guardrail
 
-AP2, x402, OpenID4VP, WebMCP/MCP/A2A, a payment flow, a credential flow, a Trusted Surface, or any demonstration is a proving milestone, not the PTF product boundary.
+The approved full PTF specification is the product boundary. AP2, x402, OpenID4VP, WebMCP/MCP/A2A, a payment flow, a credential flow, a Trusted Surface, or any demonstration is a proving milestone, not the PTF product.
