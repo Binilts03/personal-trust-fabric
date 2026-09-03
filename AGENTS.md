@@ -1,12 +1,19 @@
-# Personal Trust Fabric — Agent Notes
+# Personal Trust Fabric — Agent Instructions
 
-This is the public synthetic sandbox (Node 22, no dependencies). See `README.md` for usage.
+This branch (`architecture/ptf-v1-spec`) contains the approved architecture and formal specification for the full Personal Trust Fabric rewrite.
 
-## Commands
-- `npm test` — full suite (core, http, leakage, WebMCP contract)
-- `npm run dev` / `npm start` — local server (`127.0.0.1:3000` loopback by default; set `PUBLIC_ORIGIN` for non-loopback)
-- `npm run lint:architecture` — architecture lint
+## Canonical sources of truth
 
-Internal harness (`scripts/verify-harness.ps1`) is archived at `../handoff-archive-2026-09-02/` and not tracked on `main`.
+1. `docs/superpowers/specs/2026-09-03-personal-trust-fabric-v1-spec.md` — canonical reviewed specification awaiting human spec approval.
+2. `CONTEXT-MAP.md` — canonical bounded contexts, terminology, and forbidden conflations.
+3. `docs/adr/` — accepted hard-to-reverse architecture decisions.
 
-Detailed flow is in `docs/judge-script.md`. Current WebMCP/ChatGPT source checks are in `docs/research/current-sources.md`.
+The current synthetic WebMCP code and its README are historical milestone evidence only. Do not infer the new product architecture from the old module boundaries, WebMCP demo flow, in-memory capability runtime, synthetic recipient proof, or archived external handoff documents.
+
+## Process gate
+
+Do not implement or plan the rewrite directly from conversational context or the synthetic sandbox. The canonical specification must be human-approved first. After approval, use the Superpowers writing-plans workflow to create the implementation plan.
+
+## Scope guardrail
+
+The full PTF specification is the product boundary. AP2, x402, OpenID4VP, WebMCP/MCP/A2A, or any single milestone may prove part of the architecture but must not redefine PTF as that milestone.
