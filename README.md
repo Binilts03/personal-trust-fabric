@@ -1,43 +1,61 @@
-# Personal Trust Fabric — v1 Architecture and Planning Review
+# Personal Trust Fabric — v1 Architecture and Implementation Planning
 
 This branch is the **documentation-only PTF v1 planning branch**.
 
-The PTF v1 formal specification has been explicitly human-approved. The reviewed specification file is intentionally preserved unchanged; `docs/spec/PTF-V1-APPROVAL.md` identifies the exact approved blob.
+The PTF v1 formal specification has been explicitly human-approved. The approved specification file is intentionally preserved unchanged; `docs/spec/PTF-V1-APPROVAL.md` identifies the exact approved blob.
 
-## Canonical sources
+## Current state
 
-Read in this order:
+```text
+SPECIFICATION:                    APPROVED
+IMPLEMENTATION PLANNING:          VERIFIED
+C10 TASK QUALITY:                 65/65 PASS
+CROSS-PLAN CONSISTENCY:           PASS
+FOUNDATIONAL GATE COVERAGE:       28/28 PASS AT PLANNING LEVEL
+REPOSITORY PRESERVATION DECISION: HUMAN DECISION PENDING
+webmcp-sandbox-v0.1:              ABSENT UNTIL PRESERVATION CHOICE
+SOURCE IMPLEMENTATION:            NOT AUTHORIZED
+```
 
-1. `docs/spec/PTF-V1-APPROVAL.md` — exact approval/lifecycle record.
-2. `docs/spec/PTF-V1-PROPOSED.md` — immutable reviewed specification blob approved by that record.
-3. `docs/adr/` — accepted architecture decisions.
-4. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-readiness-addendum.md` — current planning-readiness blockers and binding task corrections.
-5. `docs/superpowers/plans/2026-09-04-ptf-v1-task-review-protocol.md` — inherited two-stage reviewer acceptance gate for every executable task.
-6. `docs/review/2026-09-04-plan-task-quality-matrix.md` — mechanical C10 status for all executable task units.
-7. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-set-contract.md` — earlier cross-plan execution corrections, subject to the readiness addendum.
-8. `docs/superpowers/plans/2026-09-04-ptf-v1-execution-roadmap.md` — intended dependency order; source execution remains blocked until the readiness addendum is closed.
-9. The seven detailed 2026-09-03 subsystem plans, subject to the September 4 corrections.
-10. `CONTEXT-MAP.md` — non-normative terminology glossary.
-11. `docs/review/2026-09-04-plan-set-audit.md` — earlier audit and 28-gate coverage map; its execution-ready conclusion is superseded by the readiness addendum and current task-quality matrix.
+Planning verification does **not** mean implementation exists or runtime/conformance tests have passed. It means the written source plan is complete enough to execute without inventing missing security semantics once the separate preservation gate is closed.
 
-The earlier `2026-09-03-ptf-v1-rewrite-roadmap.md` remains historical planning evidence and is superseded for execution order.
+## Canonical reading order
 
-## Current phase
+Read these first:
 
-**Specification approved. Implementation planning reopened. No rewrite code has started. Source implementation is not authorized yet.**
+1. `docs/spec/PTF-V1-APPROVAL.md` — approval/lifecycle record.
+2. `docs/spec/PTF-V1-PROPOSED.md` — immutable approved specification blob.
+3. accepted `docs/adr/`.
+4. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-readiness-addendum.md` — current readiness state and the sole open preservation decision.
+5. `docs/superpowers/plans/2026-09-04-ptf-v1-task-quality-corrections-index.md` — authoritative precedence/read order through correction 11 and final strict fixture closure.
+6. `docs/superpowers/plans/2026-09-04-ptf-v1-final-interface-registry.md` + interface-registry addendum — public name/signature oracle.
+7. `docs/superpowers/plans/2026-09-04-ptf-v1-task-review-protocol.md` — inherited two-stage reviewer gate.
+8. `docs/review/2026-09-04-plan-task-quality-matrix.md` — final 65-task C10 matrix.
+9. `docs/review/2026-09-04-final-cross-plan-consistency.md` — final standards/interface review.
+10. `docs/review/2026-09-04-final-28-gate-audit.md` — final approved-spec gate map.
+11. `docs/superpowers/plans/2026-09-04-ptf-v1-execution-roadmap.md` — dependency order only.
+12. the relevant original 2026-09-03 subsystem plan, read subject to all binding documents above.
 
-The September 4 follow-up verification found two blocking issues: repository-preservation state advanced after the recorded preservation baseline, and the detailed task set does not yet uniformly satisfy its own Contract C10 task-quality standard. The readiness addendum defines the exact closure conditions.
+`CONTEXT-MAP.md` is non-normative. The 2026-09-03 rewrite roadmap and earlier review reports are historical planning evidence, not current execution authority.
 
-## Preservation gate
+## Remaining hard gate
 
-The approval record names `legacy/webmcp-sandbox` at `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9`. After that record was written, the synthetic sandbox advanced to `f94a7bd3a59c440bddded8d6cab2956e595132e3`, now protected by annotated tag `webmcp-submit-freeze`.
+The current lifecycle record preserves:
 
-The required `webmcp-sandbox-v0.1` tag is still absent. Planning must not guess whether the formal preservation target remains the approved baseline or is rebaselined to the later submission freeze. The human preservation decision described in the readiness addendum is required before source work.
+```text
+legacy/webmcp-sandbox -> 2ed4020c2f0ef91da1a5ee0e74e083539fed98b9
+```
 
-## Task-quality gate
+A later synthetic submission state is separately frozen at:
 
-The initial mechanical C10 matrix covers 64 executable task units: 61 original subsystem tasks plus three inserted Plan 01 corrections. The current matrix is deliberately fail-closed. A task becomes execution-ready only after every C10 dimension is explicit and the inherited review protocol can release it after green evidence.
+```text
+webmcp-submit-freeze -> f94a7bd3a59c440bddded8d6cab2956e595132e3
+```
+
+The required `webmcp-sandbox-v0.1` tag is absent. Before source work, the human must explicitly select **PRESERVE-A** (keep `2ed4020c...` as the approved preservation baseline) or **PRESERVE-B** (formally rebaseline preservation to `f94a7bd3...`, including the required lifecycle-record amendment). See the readiness addendum for exact consequences and Git preflight commands.
 
 ## Product boundary
 
-The full approved PTF specification remains the product boundary. x402, AP2, OpenID4VP, WebMCP/MCP/A2A, a payment flow, credential presentation, Trusted Surface, or conformance fixture exists to prove or falsify PTF—not to redefine the product.
+The full approved PTF specification is the product boundary. x402, AP2, OpenID4VP, WebMCP/MCP/A2A, a payment flow, credential presentation, Trusted Surface, conformance fixture, or demonstration exists to prove or falsify PTF—not to redefine it.
+
+No Personal State, learned preference, model confidence, protocol validity, payment success, repeated approval, display label, or protocol artifact may silently create or broaden authority or trust.
