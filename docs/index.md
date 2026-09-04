@@ -1,6 +1,6 @@
 # PTF v1 Documentation
 
-Status: **Specification approved; implementation planning verification in progress.**
+Status: **Specification approved; implementation planning complete; implementation not started.**
 
 ## Approved specification
 
@@ -20,7 +20,7 @@ Status: **Specification approved; implementation planning verification in progre
 - `adr/0005-external-protocols-are-adapters-not-authority.md`
 - `adr/0006-preserve-repository-history-rewrite-implementation.md`
 
-## Implementation planning
+## Verified implementation planning
 
 Read `superpowers/plans/2026-09-04-ptf-v1-plan-set-amendments.md` before any roadmap/subplan. It is the normative correction sheet for plan execution.
 
@@ -32,16 +32,19 @@ Read `superpowers/plans/2026-09-04-ptf-v1-plan-set-amendments.md` before any roa
 - `superpowers/plans/2026-09-03-ptf-v1-openid4vp-plan.md` — Plan 04: OpenID4VP cross-domain proving integration.
 - `superpowers/plans/2026-09-03-ptf-v1-product-surface-plan.md` — Plan 05: Trusted Surface + Agent SDK.
 - `superpowers/plans/2026-09-04-ptf-v1-developer-integration-plan.md` — Plan 05B: direct delivery + simulator/inspectors + recipient/verifier integration.
-- `superpowers/plans/2026-09-03-ptf-v1-conformance-operations-plan.md` — Plan 06: conformance, portability, recovery, device/trust closure, release operations.
+- `superpowers/plans/2026-09-03-ptf-v1-conformance-operations-plan.md` — Plan 06: conformance, portability, recovery, identity/device/trust closure, release operations.
 - `superpowers/plans/2026-09-04-ptf-v1-plan-set-amendments.md` — cross-plan corrections and mandatory additions.
+
+## Verification
+
+- `review/2026-09-04-plan-set-verification.md` — final planning review with 28 foundational-gate and 60 user-story traceability.
 
 ## Review history
 
 - `review/2026-09-03-critical-review-remediation.md`
-- `review/2026-09-04-plan-set-verification.md` — created when the final planning audit is completed.
 
-## Preservation
+## Preservation / execution blocker
 
 The synthetic WebMCP milestone is preserved on `legacy/webmcp-sandbox` at `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9`.
 
-Immutable tag `webmcp-sandbox-v0.1` is still required at that same commit before any rewrite of `main`. This remains an execution-preflight blocker until verified.
+Immutable tag `webmcp-sandbox-v0.1` is still required at that same commit before implementation/rewrite work begins. The tag is currently absent, so implementation remains blocked until an execution environment with Git tag/push capability creates and verifies it.
