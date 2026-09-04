@@ -43,7 +43,10 @@ export function createTrustRuntime({
       authorityState: 'active',
       terms: approval.terms,
       expiresAt: now() + 5 * 60 * 1000,
-      maxUses: approval.constraints.maxUses ?? approval.terms.requestedUses
+      maxUses: Math.min(
+        approval.constraints.maxUses ?? approval.terms.requestedUses,
+        approval.terms.requestedUses
+      )
     });
     approval.operationReference = issued.reference;
     return issued;
