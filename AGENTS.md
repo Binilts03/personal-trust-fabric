@@ -1,6 +1,6 @@
 # Personal Trust Fabric — Agent Instructions
 
-Status: **PTF v1 specification approved; verified implementation plan set ready for execution-workflow selection.**
+Status: **PTF v1 specification approved; implementation planning reopened; source execution not authorized.**
 
 ## Source of truth
 
@@ -9,39 +9,51 @@ Read these in order:
 1. `docs/spec/PTF-V1-APPROVAL.md` — lifecycle approval record identifying the exact approved specification blob.
 2. `docs/spec/PTF-V1-PROPOSED.md` — immutable reviewed specification whose exact blob is approved by the approval record; despite the historical filename/status text inside that immutable blob, it is approved only by reference through the approval record.
 3. `docs/adr/` — accepted hard-to-reverse architecture decisions.
-4. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-set-contract.md` — binding execution corrections discovered by cross-plan verification.
-5. `docs/superpowers/plans/2026-09-04-ptf-v1-execution-roadmap.md` — current execution order and gates.
-6. The seven detailed 2026-09-03 subsystem plans under `docs/superpowers/plans/`, read subject to the September 4 contract.
-7. `CONTEXT-MAP.md` — non-normative terminology/context glossary. If it conflicts with the approved specification, the approved specification wins.
-8. `docs/review/2026-09-04-plan-set-audit.md` — verification findings and 28-gate coverage map.
+4. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-readiness-addendum.md` — current binding planning-readiness blockers and corrections.
+5. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-set-contract.md` — earlier cross-plan corrections, subject to the readiness addendum.
+6. `docs/superpowers/plans/2026-09-04-ptf-v1-execution-roadmap.md` — intended execution order, not authorization to start while readiness is open.
+7. The seven detailed 2026-09-03 subsystem plans under `docs/superpowers/plans/`, read subject to both September 4 correction documents.
+8. `CONTEXT-MAP.md` — non-normative terminology/context glossary. If it conflicts with the approved specification, the approved specification wins.
+9. `docs/review/2026-09-04-plan-set-audit.md` — earlier verification findings and 28-gate coverage. Its readiness conclusion is superseded by the readiness addendum.
 
-The 2026-09-03 rewrite roadmap is superseded for execution ordering by the September 4 roadmap. It remains historical planning evidence only.
+The 2026-09-03 rewrite roadmap is historical planning evidence only.
 
 Do not infer PTF v1 architecture from conversational history or the synthetic WebMCP implementation.
 
 ## Repository safety
 
-- The synthetic WebMCP milestone is preserved on `legacy/webmcp-sandbox` at `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9`.
-- Immutable tag `webmcp-sandbox-v0.1` is a mandatory source-rewrite gate and must resolve to that same commit before any implementation source work or modification of `main`.
-- Planning tooling in this workspace has not created that tag. An execution environment with Git push/tag capability must create and verify it first.
+- The approval/lifecycle record names `legacy/webmcp-sandbox` at `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9` as the preservation baseline.
+- The synthetic sandbox later advanced to `f94a7bd3a59c440bddded8d6cab2956e595132e3`, which is protected by annotated tag `webmcp-submit-freeze`.
+- Required tag `webmcp-sandbox-v0.1` is currently absent.
+- Do not create that tag, move `legacy/webmcp-sandbox`, rewrite `main`, or start implementation until the human explicitly approves PRESERVE-A or PRESERVE-B in the readiness addendum.
 - Do not implement against the synthetic WebMCP source tree or inherit its module boundaries.
-- `architecture/ptf-v1-spec` and `planning/ptf-v1-verified` remain documentation/planning branches; implementation starts on a new isolated rewrite branch/worktree after the preservation gate.
+- `architecture/ptf-v1-spec` and this planning branch remain documentation/planning branches. No product source belongs here.
 
 ## Process gate
 
-The written plan set has completed cross-plan review. **Do not begin implementation until the human explicitly selects an execution workflow.**
+The written plan set is **not currently execution-ready**. Do not begin implementation merely because an execution workflow is selected.
 
-After selection:
+Planning must first close every readiness condition in `2026-09-04-ptf-v1-plan-readiness-addendum.md`, including:
+
+1. explicit human preservation-baseline decision;
+2. consistent repository-preservation records and required immutable tag;
+3. a task-quality matrix covering every executable task in Plans 00–06;
+4. rewrite/correction of every task that fails Contract C10;
+5. fresh cross-plan name/signature verification;
+6. fresh mapping of all 28 foundational acceptance gates to implementation and black-box evidence;
+7. verification-before-completion over the actual final plan files and Git refs.
+
+Only after those conditions pass may the human select/confirm an execution workflow. At that point:
 
 1. use Superpowers `using-git-worktrees` before source work;
-2. perform the preservation/tag gate in the verified execution roadmap;
-3. execute the September 4 roadmap in dependency order;
-4. read the plan-set contract before every subsystem plan;
+2. perform the approved preservation/tag gate;
+3. execute the verified roadmap in dependency order;
+4. read all binding plan corrections before each subsystem plan;
 5. use TDD and the applicable narrow Matt/Superpowers skill for each task;
 6. independently review each task before releasing a dependent task;
 7. use Superpowers `verification-before-completion` before any completion/release claim.
 
-A task that does not satisfy Contract C10's plan-quality gate returns to planning rather than allowing the implementer to invent missing security semantics.
+A task that does not satisfy Contract C10 returns to planning. The implementer is not allowed to invent missing security semantics.
 
 ## Scope guardrail
 
