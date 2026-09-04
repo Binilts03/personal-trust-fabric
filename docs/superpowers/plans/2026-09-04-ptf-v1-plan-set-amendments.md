@@ -148,3 +148,45 @@ Plan 06 Tasks that produce final release evidence/claims execute only after:
 ## A10. User-story traceability is a release artifact
 
 Before final release, create/update a machine-reviewable or Markdown matrix mapping **all 60 approved user stories** in spec section 27 to concrete implementation paths and tests. A story may be marked deferred only if the approved spec explicitly makes that behavior optional/deferred; it cannot be omitted merely because it is absent from the 28 foundational acceptance gates.
+
+## A11. Remaining explicit product/assurance traceability requirements
+
+The following behaviors are mandatory additions to the named plan tasks:
+
+### Aggregate authority visibility
+
+Plan 05 Standing Grant UI and Principal API MUST expose safe aggregate accounting for grants where applicable:
+
+```text
+configured limit
+committed usage
+outstanding reserved usage
+available capacity
+held-indeterminate capacity
+accounting period/window
+```
+
+The UI must not infer availability client-side from stale totals; it displays authoritative runtime/accounting values.
+
+### External-artifact revocation truthfulness
+
+Plans 02–04 and Plan 06 protocol conformance MUST distinguish:
+
+- PTF authority/grant revoked locally;
+- not-yet-emitted artifact prevented from being produced;
+- emitted artifact revocable through the external protocol/provider;
+- emitted artifact **not** revocable after release and therefore controlled only by recipient/transaction binding, expiry, proof-of-possession, or other protocol properties.
+
+PTFReceipt/Assurance Manifest and product UI MUST NOT display a generic “revoked” claim when an already-emitted artifact may remain externally usable.
+
+### Custody-profile support vs deployment claims
+
+Plan 00 models the approved custody categories and Assurance Manifest semantics. Plans 01–05B provide concrete reference profiles (managed/synthetic, brokered wallet/credential/signing, direct delivery). Plan 06 MUST maintain a profile matrix covering:
+
+- external/provider-brokered;
+- Principal-device/local;
+- customer-controlled runtime;
+- managed PTF runtime;
+- attested-confidential runtime.
+
+For each category, record whether the reference release has: `SEMANTIC_PROFILE_ONLY`, `TEST_FIXTURE`, or `IMPLEMENTED_AND_VERIFIED` support. Optional attested-confidential infrastructure need not be deployed for foundational v1, but it MUST NOT be claimed implemented without evidence. The same truthfulness rule applies to customer/device profiles.
