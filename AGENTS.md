@@ -1,6 +1,6 @@
 # Personal Trust Fabric — Agent Instructions
 
-Status: **PTF v1 specification approved; implementation planning verification in progress.**
+Status: **PTF v1 specification approved; implementation planning complete; implementation not started.**
 
 ## Source of truth
 
@@ -9,35 +9,36 @@ Status: **PTF v1 specification approved; implementation planning verification in
 3. `CONTEXT-MAP.md` — non-normative terminology/context glossary. If it conflicts with the approved specification, the approved specification wins.
 4. `docs/adr/` — accepted hard-to-reverse architecture decisions.
 5. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-set-amendments.md` — normative corrections to the implementation plan set. Where it conflicts with the roadmap or Plans 00–06, the amendment wins.
-6. `docs/superpowers/plans/` — master rewrite roadmap and bounded executable plans; plans may sequence work but may not redefine the product boundary.
+6. `docs/superpowers/plans/` — verified master rewrite roadmap and bounded executable plans; plans may sequence work but may not redefine the product boundary.
+7. `docs/review/2026-09-04-plan-set-verification.md` — plan-set standards/spec coverage review and execution blockers.
 
 Do not infer PTF v1 architecture from conversational history or the synthetic WebMCP implementation.
 
 ## Repository safety
 
 - The synthetic WebMCP milestone is preserved on `legacy/webmcp-sandbox` at `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9`.
-- Immutable tag `webmcp-sandbox-v0.1` is a mandatory pre-rewrite gate and must resolve to that same commit before any modification of `main`.
+- Immutable tag `webmcp-sandbox-v0.1` is a mandatory pre-rewrite gate and must resolve to that same commit before any implementation/rewrite modification of `main`.
+- The tag is currently absent. Stop before implementation until an execution environment with Git tag/push capability creates and verifies it.
 - Do not implement against the synthetic WebMCP source tree or inherit its module boundaries.
 - This architecture/planning branch remains documentation-only.
 
 ## Process gate
 
-The approved architecture permits implementation planning. Use Superpowers `writing-plans` to produce and verify the complete rewrite roadmap and bounded subplans.
+Implementation planning is complete. Do **not** begin implementation until:
 
-Do **not** begin implementation until:
+1. immutable tag `webmcp-sandbox-v0.1` exists and resolves to the legacy commit;
+2. an execution workflow is explicitly selected;
+3. execution starts from an isolated `rewrite/ptf-v1` worktree/branch created from the verified architecture/planning state.
 
-1. the plan-set verification report passes;
-2. the repository preservation tag gate passes;
-3. an execution workflow is explicitly selected.
-
-During execution, use an isolated worktree and the applicable Superpowers/Matt skills for each task.
+During execution, use the applicable Superpowers/Matt skills for each task and independent review gates specified by the plans.
 
 Before executing any implementation plan, read:
 
 1. the approved spec/approval record;
 2. `2026-09-04-ptf-v1-plan-set-amendments.md`;
 3. the roadmap;
-4. the specific plan being executed.
+4. the specific plan being executed;
+5. the plan-set verification report.
 
 ## Scope guardrail
 
