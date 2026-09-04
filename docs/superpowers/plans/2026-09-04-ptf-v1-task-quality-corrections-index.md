@@ -19,7 +19,7 @@ The September 4 audit repaired the seven original subsystem plans without modify
 6. `2026-09-04-ptf-v1-interface-registry-addendum.md`
 7. `2026-09-04-ptf-v1-task-review-protocol.md`
 
-### Semantic/task corrections — cumulative, later wins on conflict
+### Semantic/task corrections — cumulative, later applicable correction wins on conflict
 
 8. `2026-09-04-ptf-v1-task-quality-corrections.md`
 9. `2026-09-04-ptf-v1-task-quality-corrections-2.md`
@@ -31,28 +31,32 @@ The September 4 audit repaired the seven original subsystem plans without modify
 15. `2026-09-04-ptf-v1-task-quality-corrections-8.md`
 16. `2026-09-04-ptf-v1-task-quality-corrections-9.md`
 17. `2026-09-04-ptf-v1-task-quality-corrections-10.md`
+18. `2026-09-04-ptf-v1-task-quality-corrections-11.md`
 
-Correction 9 is a Plan 02 upstream-API correction and supersedes conflicting x402 SDK examples regardless of its numeric placement relative to Plan 03–06 corrections. Correction 10 supersedes only the conflicting Plan 06 T7 device-registration and T9 supply-chain details in correction 7.
+Correction 9 is the verified x402 2.22.0 upstream-API correction and supersedes guessed/fallback x402 SDK examples wherever they appear. Correction 10 supersedes conflicting Plan 06 T7 device-registration and T9 release-toolchain details in correction 7. Correction 11 supersedes conflicting Plan 04 T5–T7 OpenID4VP protected-delivery examples and Plan 05 T4/T5 Principal-authorization examples.
 
 ### Strict C10 executable supplements
 
-18. `2026-09-04-ptf-v1-strict-c10-plan00.md`
-19. `2026-09-04-ptf-v1-strict-c10-plan01.md`
-20. `2026-09-04-ptf-v1-strict-c10-plan01-fixes.md`
-21. `2026-09-04-ptf-v1-strict-c10-plan02.md`
-22. `2026-09-04-ptf-v1-strict-c10-plan03.md`
-23. `2026-09-04-ptf-v1-strict-c10-plan04.md`
-24. `2026-09-04-ptf-v1-strict-c10-plan05.md`
-25. `2026-09-04-ptf-v1-strict-c10-plan06.md`
+19. `2026-09-04-ptf-v1-strict-c10-plan00.md`
+20. `2026-09-04-ptf-v1-strict-c10-plan01.md`
+21. `2026-09-04-ptf-v1-strict-c10-plan01-fixes.md`
+22. `2026-09-04-ptf-v1-strict-c10-plan02.md`
+23. `2026-09-04-ptf-v1-strict-c10-plan03.md`
+24. `2026-09-04-ptf-v1-strict-c10-plan04.md`
+25. `2026-09-04-ptf-v1-strict-c10-plan05.md`
+26. `2026-09-04-ptf-v1-strict-c10-plan06.md`
+27. `2026-09-04-ptf-v1-strict-c10-final-fixture-closure.md`
 
-Strict supplements supply concrete executable fixtures/code where an older task used prose or shorthand. They do **not** override the final interface registry or a later semantic correction. If a strict snippet conflicts with the registry/corrections above, planning is not ready and that exact task returns to review.
+Strict supplements supply concrete executable fixtures/code where an older task used prose or shorthand. They do **not** override the final interface registry or a semantic correction. `strict-c10-final-fixture-closure.md` supersedes conflicting fixture/helper mechanics in strict supplements 03–06 and removes undefined helpers, magic fixtures, invented production convenience methods, bare expected `Exception` placeholders, and interfaces superseded by corrections 10/11.
+
+If a strict snippet conflicts with the registry or semantic corrections above, the registry/correction wins and the task returns to planning unless the final fixture closure explicitly supplies compatible test mechanics.
 
 ### Older contracts/plans
 
-26. `2026-09-04-ptf-v1-plan-set-contract.md` only for content not superseded above
-27. `2026-09-04-ptf-v1-execution-roadmap.md` for dependency order only
-28. the relevant original `2026-09-03-ptf-v1-*-plan.md`
-29. `CONTEXT-MAP.md` as non-normative terminology/context only
+28. `2026-09-04-ptf-v1-plan-set-contract.md` only for content not superseded above
+29. `2026-09-04-ptf-v1-execution-roadmap.md` for dependency order only
+30. the relevant original `2026-09-03-ptf-v1-*-plan.md`
+31. `CONTEXT-MAP.md` as non-normative terminology/context only
 
 The historical `2026-09-03-ptf-v1-rewrite-roadmap.md` is not an execution authority.
 
@@ -65,9 +69,10 @@ approved spec blob + approval record
 > accepted ADRs
 > readiness/lifecycle addendum
 > final interface registry + registry addendum
-> later applicable semantic correction
+> later applicable semantic correction (through correction 11)
 > earlier applicable semantic correction
-> strict-C10 executable supplement (within the interfaces/semantics above)
+> final strict fixture/helper closure for test-fixture mechanics only
+> strict-C10 executable supplement within the interfaces/semantics above
 > task-review protocol for acceptance mechanics
 > older plan-set contract
 > execution roadmap dependency order
@@ -92,9 +97,11 @@ corrections-7    -> Plan 06 portability/device/recovery/oracle/CI/release struct
 corrections-8    -> final cross-plan interface ownership and corrected canonical names
 corrections-9    -> verified x402 2.22.0 source/API; forbids guessed fallback SDK calls
 corrections-10   -> exact Plan 06 WebAuthn device-registration owner + reviewed release toolchain pins
+corrections-11   -> exact Principal approval challenge seam + protected OpenID4VP direct-post ownership
 registry         -> single public name/signature oracle
 registry addendum-> complete Personal State/Audit constructors used by strict tests
 strict 00–06     -> executable tests/red commands/minimal code shapes for every plan
+fixture closure  -> exact test-helper ownership and correction-10/11-compatible fixture mechanics
 ```
 
 Primary-source protocol/tool research used by strict tasks includes:
@@ -129,4 +136,4 @@ Any document still stating 61 original / 64 total is historical and must not be 
 
 If two documents still appear to disagree after applying this order, do not resolve the ambiguity during coding. Record the exact contradiction in the task-quality matrix and return the task to planning.
 
-No source implementation begins until the final matrix and 28-gate audit pass and the separate repository-preservation decision/tag gate in the readiness addendum is resolved.
+No source implementation begins until the final 65-task matrix and refreshed 28-gate audit pass, the final cross-plan consistency review passes, and the separate repository-preservation decision/tag gate in the readiness addendum is resolved.
