@@ -10,11 +10,13 @@ Read these in order:
 2. `docs/spec/PTF-V1-PROPOSED.md` — immutable reviewed specification whose exact blob is approved by the approval record; despite the historical filename/status text inside that immutable blob, it is approved only by reference through the approval record.
 3. `docs/adr/` — accepted hard-to-reverse architecture decisions.
 4. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-readiness-addendum.md` — current binding planning-readiness blockers and corrections.
-5. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-set-contract.md` — earlier cross-plan corrections, subject to the readiness addendum.
-6. `docs/superpowers/plans/2026-09-04-ptf-v1-execution-roadmap.md` — intended execution order, not authorization to start while readiness is open.
-7. The seven detailed 2026-09-03 subsystem plans under `docs/superpowers/plans/`, read subject to both September 4 correction documents.
-8. `CONTEXT-MAP.md` — non-normative terminology/context glossary. If it conflicts with the approved specification, the approved specification wins.
-9. `docs/review/2026-09-04-plan-set-audit.md` — earlier verification findings and 28-gate coverage. Its readiness conclusion is superseded by the readiness addendum.
+5. `docs/superpowers/plans/2026-09-04-ptf-v1-task-review-protocol.md` — inherited two-stage reviewer acceptance gate for every executable task.
+6. `docs/review/2026-09-04-plan-task-quality-matrix.md` — current C10 readiness state for every executable task unit.
+7. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-set-contract.md` — earlier cross-plan corrections, subject to the readiness addendum.
+8. `docs/superpowers/plans/2026-09-04-ptf-v1-execution-roadmap.md` — intended execution order, not authorization to start while readiness is open.
+9. The seven detailed 2026-09-03 subsystem plans under `docs/superpowers/plans/`, read subject to all September 4 corrections.
+10. `CONTEXT-MAP.md` — non-normative terminology/context glossary. If it conflicts with the approved specification, the approved specification wins.
+11. `docs/review/2026-09-04-plan-set-audit.md` — earlier verification findings and 28-gate coverage. Its readiness conclusion is superseded by the readiness addendum and current matrix.
 
 The 2026-09-03 rewrite roadmap is historical planning evidence only.
 
@@ -43,7 +45,9 @@ Planning must first close every readiness condition in `2026-09-04-ptf-v1-plan-r
 6. fresh mapping of all 28 foundational acceptance gates to implementation and black-box evidence;
 7. verification-before-completion over the actual final plan files and Git refs.
 
-Only after those conditions pass may the human select/confirm an execution workflow. At that point:
+Every executable task inherits `2026-09-04-ptf-v1-task-review-protocol.md`. A candidate task commit is not accepted until both its specification/plan review and implementation/test-quality review pass against the same commit SHA.
+
+Only after all readiness conditions pass may the human select/confirm an execution workflow. At that point:
 
 1. use Superpowers `using-git-worktrees` before source work;
 2. perform the approved preservation/tag gate;
