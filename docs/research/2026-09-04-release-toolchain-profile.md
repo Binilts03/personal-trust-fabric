@@ -20,17 +20,21 @@ The following refs were resolved directly from the official GitHub repositories 
 | `actions/download-artifact` | `v8.0.1` | `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` | https://api.github.com/repos/actions/download-artifact/git/ref/tags/v8.0.1 |
 | `actions/cache` | `v6.1.0` | `55cc8345863c7cc4c66a329aec7e433d2d1c52a9` | https://api.github.com/repos/actions/cache/git/ref/tags/v6.1.0 |
 
-### Gitleaks runtime fact
+### Gitleaks runtime and binary facts
 
-The official `gitleaks/gitleaks-action` v3.0.0 release states that v3 migrates the action runtime from Node 20 to Node 24 without changing its public inputs/outputs/behavior. That makes v3 the reviewed PTF baseline rather than v2 for the September 2026 GitHub-hosted runner profile.
+The official `gitleaks/gitleaks-action` v3.0.0 release states that v3 migrates the action runtime from Node 20 to Node 24 without changing its public inputs/outputs/behavior. The reviewed v3 action source at commit `e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e` uses Gitleaks binary version `8.24.3` when `GITLEAKS_VERSION` is not supplied. PTF sets `GITLEAKS_VERSION=8.24.3` explicitly so the binary version cannot drift independently of the pinned Action commit.
 
-Primary source: https://github.com/gitleaks/gitleaks-action/releases/tag/v3.0.0
+Primary sources:
+
+- https://github.com/gitleaks/gitleaks-action/releases/tag/v3.0.0
+- https://github.com/gitleaks/gitleaks-action/blob/e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e/src/index.js
 
 ## Reviewed CLI/package pins
 
 | Tool | Pin | Verified source fact |
 |---|---|---|
 | `pip-audit` | `2.10.1` | official `pypa/pip-audit` documentation/repository identifies `v2.10.1` as the reviewed package hook/version used by this plan |
+| Gitleaks binary | `8.24.3` | exact binary default in the reviewed `gitleaks-action` v3 source; PTF pins it explicitly in workflow environment |
 | Syft | `1.51.0` | official annotated tag `v1.51.0` resolves to commit `2293641e3bd628a01bb37639318d62c0ebe89b39` |
 
 Syft primary sources:
@@ -46,6 +50,7 @@ Syft primary sources:
 4. Updating an Action or CLI pin is a reviewed supply-chain change. The version/tag, exact SHA/digest, reason, and verification evidence must be updated together.
 5. Vulnerability-feed or package-registry unavailability is not evidence of safety. A release security gate that cannot complete its vulnerability scan is `UNAVAILABLE/FAIL`, never PASS.
 6. Release artifact upload occurs only after registered canary/private-key scans pass. Artifact Actions themselves do not determine what is safe to upload.
+7. `GITLEAKS_VERSION` must be set to `8.24.3` in the reviewed v3 workflow; do not use `latest`.
 
 ## Workflow examples
 
@@ -58,6 +63,8 @@ Use exact SHAs in YAML:
 - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 - uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
 - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+  env:
+    GITLEAKS_VERSION: "8.24.3"
 - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
 ```
 
