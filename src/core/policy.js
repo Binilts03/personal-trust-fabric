@@ -6,6 +6,29 @@ const MATCH_FIELDS = [
   'action'
 ];
 
+function policyId(policy) {
+  return `${policy.id}@${policy.version}`;
+}
+
+function minimumDefined(policies, field) {
+  const values = policies
+    .map((policy) => policy[field])
+    .filter((value) => value !== undefined);
+  return values.length === 0 ? undefined : Math.min(...values);
+}
+
+function intersectDefinedArrays(policies, field) {
+  const arrays = policies
+    .map((policy) => policy[field])
+    .filter((value) => value !== undefined);
+  if (arrays.length === 0) return undefined;
+
+  const [first, ...rest] = arrays;
+  return [...new Set(first)]
+    .filter((value) => rest.every((array) => array.includes(value)))
+    .sort();
+}
+
 export function createPolicyAuthority(policies) {
   return {
     evaluate(request) {
@@ -14,56 +37,62 @@ export function createPolicyAuthority(policies) {
           policy.match[field] === undefined || policy.match[field] === request[field]
         )
       );
-      const deny = matching.find((policy) => policy.effect === 'deny');
+      const denies = matching.filter((policy) => policy.effect === 'deny');
 
-      if (deny) {
+      if (denies.length > 0) {
         return {
           decision: 'deny',
-          policyIds: [`${deny.id}@${deny.version}`],
+          policyIds: denies.map(policyId).sort(),
           constraints: {},
           reason: 'matching deny policy'
         };
       }
 
-      const policy = matching.find((candidate) => candidate.effect === 'allow');
-
-      if (!policy || policy.effect !== 'allow') {
+      const allows = matching.filter((policy) => policy.effect === 'allow');
+      if (allows.length === 0) {
         return {
           decision: 'deny',
-          policyIds: policy ? [`${policy.id}@${policy.version}`] : [],
+          policyIds: [],
           constraints: {},
           reason: 'no matching allow policy'
         };
       }
 
-      if (policy.maxAmountMinor !== undefined && request.amountMinor > policy.maxAmountMinor) {
+      const policyIds = allows.map(policyId).sort();
+      const maxUses = minimumDefined(allows, 'maxUses');
+      const maxAmountMinor = minimumDefined(allows, 'maxAmountMinor');
+      const currencies = intersectDefinedArrays(allows, 'currencies');
+      const allowedModes = intersectDefinedArrays(allows, 'allowedModes');
+
+      if (maxAmountMinor !== undefined && request.amountMinor > maxAmountMinor) {
         return {
           decision: 'deny',
-          policyIds: [`${policy.id}@${policy.version}`],
+          policyIds,
           constraints: {},
           reason: 'request exceeds policy amount limit'
         };
       }
-      if (policy.currencies && !policy.currencies.includes(request.currency)) {
+      if (currencies !== undefined && !currencies.includes(request.currency)) {
         return {
           decision: 'deny',
-          policyIds: [`${policy.id}@${policy.version}`],
+          policyIds,
           constraints: {},
           reason: 'request currency is not allowed'
         };
       }
 
       const constraints = {};
-      if (policy.maxUses !== undefined) constraints.maxUses = policy.maxUses;
-      if (policy.maxAmountMinor !== undefined) constraints.maxAmountMinor = policy.maxAmountMinor;
-      if (policy.currencies !== undefined) constraints.currencies = [...policy.currencies];
-      if (policy.allowedModes !== undefined) constraints.allowedModes = [...policy.allowedModes];
+      if (maxUses !== undefined) constraints.maxUses = maxUses;
+      if (maxAmountMinor !== undefined) constraints.maxAmountMinor = maxAmountMinor;
+      if (currencies !== undefined) constraints.currencies = currencies;
+      if (allowedModes !== undefined) constraints.allowedModes = allowedModes;
 
+      const requireApproval = allows.some((policy) => policy.requireApproval === true);
       return {
-        decision: policy.requireApproval ? 'approval_required' : 'allow',
-        policyIds: [`${policy.id}@${policy.version}`],
+        decision: requireApproval ? 'approval_required' : 'allow',
+        policyIds,
         constraints,
-        reason: policy.requireApproval
+        reason: requireApproval
           ? 'matching policy requires human approval'
           : 'matching policy allows operation'
       };
