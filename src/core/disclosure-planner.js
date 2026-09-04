@@ -1,5 +1,7 @@
 const DISCLOSURE_ORDER = [
   'none',
+  'enclave_sign',
+  'bounded_write',
   'predicate_proof',
   'derived_attribute',
   'selective_claim',
