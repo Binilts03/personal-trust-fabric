@@ -29,3 +29,13 @@ Do **not** begin implementation until the plan set is complete and an execution 
 ## Scope guardrail
 
 The approved full PTF specification is the product boundary. AP2, x402, OpenID4VP, WebMCP/MCP/A2A, a payment flow, a credential flow, a Trusted Surface, or any demonstration is a proving milestone, not the PTF product.
+
+## Agent skills
+
+### Issue tracker
+
+Use GitHub Issues for bounded execution tasks, defects, and review findings. Issues must reference the exact approved plan/task rather than restating requirements. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Use the existing approved PTF domain sources; do not create duplicate `CONTEXT.md` or per-package domain models. See `docs/agents/domain.md`.
