@@ -10,6 +10,7 @@ handoff-archive-2026-09-02/
 handoff-archive/
 
 # Handoff docs removed from public HEAD (history retains them) - prevent re-add
+# Minimal placeholders intentionally tracked on main: VALIDATION_REPORT.md (stub), docs/program/*, docs/validation/reviews/*
 ARCHITECTURE_DECISION_FRAME.md
 BUILD_WORKSTREAMS.md
 CODEBASE_HARNESS.md
@@ -34,11 +35,30 @@ START_HERE.md
 SUBAGENT_AND_EXECUTION_LOOPS.md
 TEST_AND_VALIDATION.md
 USER_STORIES_AND_UX.md
-VALIDATION_REPORT.md
 WEBMCP_CHALLENGE_MILESTONE.md
+!VALIDATION_REPORT.md
 
-# Internal program docs (private execution ledgers)
-docs/adr/
-docs/program/
-docs/validation/
+# Note: docs/adr/, docs/program/, docs/validation/ are not globally ignored —
+# future legitimate ADRs/program docs should be tracked. Legacy handoff ledgers
+# are archived in git history and in ../handoff-archive-2026-09-02/ (outside repo).
+# To prevent accidental re-add of the 26 archived root specs, they are listed above.
+# docs/superpowers/ remains local-only if present
 docs/superpowers/
+
+# my-video render intermediates — regenerable via the scripts in my-video/
+# (build_video.py, build_video2.py, gen_voice.py, shoot.mjs). Explicitly NOT
+# ignored: PTF-submission-FINAL.mp4, ptf-demo.mp4, rec-*.mp4, v2-audio.wav,
+# voice2/, slides2/, shots*/, acts/, explore/, FINAL-contact-sheet.jpg
+my-video/renders/hf/
+my-video/renders/page@*.webm
+my-video/renders/seg-*.mp4
+my-video/renders/v2-seg-*.mp4
+my-video/renders/chunk*.mp4
+my-video/renders/*silent*.mp4
+my-video/renders/sil.wav
+my-video/renders/aud*.txt
+my-video/renders/vid*.txt
+my-video/renders/chunks.txt
+my-video/renders/sync*.jpg
+my-video/renders/icur-*.jpg
+my-video/renders/t-*.mp4

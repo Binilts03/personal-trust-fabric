@@ -4,6 +4,18 @@ Personal Trust Fabric (PTF) lets an agent request useful actions without receivi
 
 This repository currently contains a dependency-free Node 22 synthetic sandbox for the WebMCP milestone. It is **not** a production custody system: no real credentials or payment instruments are accepted.
 
+## Demo video (2:18)
+
+[![Personal Trust Fabric — WebMCP demo, 2:18](docs/images/demo-poster.jpg)](https://youtu.be/Ng3RPWqJnvE)
+
+Live hosted-dashboard tour with narration: agent-safe view, membership-proof
+approval for Verifier A, $42.50 invoice payment for Merchant B, deterministic
+denial of the recipient-redirect attack, policy view, and roadmap. Synthetic
+sandbox — no real credentials. Submission cut:
+`my-video/renders/PTF-submission-FINAL.mp4` (1080p25, 2:18).
+
+<video src="https://github.com/Binilts03/personal-trust-fabric/releases/download/demo-v1/PTF-submission-FINAL.mp4" width="100%" controls preload="metadata"></video>
+
 ## Run locally
 
 Requirements: Node.js 22 or newer. There are no runtime package dependencies.
