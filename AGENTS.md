@@ -1,78 +1,95 @@
 # Personal Trust Fabric — Agent Instructions
 
-Status: **PTF v1 specification approved; implementation planning reopened; source execution not authorized.**
+Status: **PTF v1 specification approved; implementation planning verified; source execution blocked by repository-preservation decision/tag preflight.**
 
 ## Source of truth
 
-Read these in order:
+Read in this order:
 
-1. `docs/spec/PTF-V1-APPROVAL.md` — lifecycle approval record identifying the exact approved specification blob.
-2. `docs/spec/PTF-V1-PROPOSED.md` — immutable reviewed specification whose exact blob is approved by the approval record; despite the historical filename/status text inside that immutable blob, it is approved only by reference through the approval record.
-3. `docs/adr/` — accepted hard-to-reverse architecture decisions.
-4. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-readiness-addendum.md` — current binding planning-readiness blockers and corrections.
-5. `docs/superpowers/plans/2026-09-04-ptf-v1-task-review-protocol.md` — inherited two-stage reviewer acceptance gate for every executable task.
-6. `docs/review/2026-09-04-plan-task-quality-matrix.md` — current C10 readiness state for every executable task unit.
-7. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-set-contract.md` — earlier cross-plan corrections, subject to the readiness addendum.
-8. `docs/superpowers/plans/2026-09-04-ptf-v1-execution-roadmap.md` — intended execution order, not authorization to start while readiness is open.
-9. The seven detailed 2026-09-03 subsystem plans under `docs/superpowers/plans/`, read subject to all September 4 corrections.
-10. `CONTEXT-MAP.md` — non-normative terminology/context glossary. If it conflicts with the approved specification, the approved specification wins.
-11. `docs/review/2026-09-04-plan-set-audit.md` — earlier verification findings and 28-gate coverage. Its readiness conclusion is superseded by the readiness addendum and current matrix.
+1. `docs/spec/PTF-V1-APPROVAL.md` — exact lifecycle approval record.
+2. `docs/spec/PTF-V1-PROPOSED.md` — immutable approved specification blob identified by that record.
+3. accepted `docs/adr/`.
+4. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-readiness-addendum.md` — current lifecycle/readiness gate.
+5. `docs/superpowers/plans/2026-09-04-ptf-v1-task-quality-corrections-index.md` — authoritative planning precedence through correction 11 + final strict fixture closure.
+6. `docs/superpowers/plans/2026-09-04-ptf-v1-final-interface-registry.md` and `2026-09-04-ptf-v1-interface-registry-addendum.md` — public name/signature oracle.
+7. `docs/superpowers/plans/2026-09-04-ptf-v1-task-review-protocol.md` — inherited task acceptance mechanics.
+8. `docs/review/2026-09-04-plan-task-quality-matrix.md` — final 65-task C10 plan-quality matrix.
+9. `docs/review/2026-09-04-final-cross-plan-consistency.md` — final cross-plan standards/interface review.
+10. `docs/review/2026-09-04-final-28-gate-audit.md` — approved-spec foundational gate coverage.
+11. `docs/superpowers/plans/2026-09-04-ptf-v1-execution-roadmap.md` — dependency order only.
+12. the relevant original 2026-09-03 subsystem plan, read subject to every binding document above.
+13. `CONTEXT-MAP.md` as non-normative terminology/context only.
 
-The 2026-09-03 rewrite roadmap is historical planning evidence only.
+Do not infer v1 architecture from conversational history, the synthetic WebMCP implementation, or an older plan snippet that is superseded by the authoritative index.
 
-Do not infer PTF v1 architecture from conversational history or the synthetic WebMCP implementation.
+## Verified planning state
 
-## Repository safety
+```text
+65/65 executable task units satisfy Contract C10 at written-plan level
+cross-plan effective interface consistency PASS
+28/28 foundational gates mapped to implementation + later falsifier
+```
 
-- The approval/lifecycle record names `legacy/webmcp-sandbox` at `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9` as the preservation baseline.
-- The synthetic sandbox later advanced to `f94a7bd3a59c440bddded8d6cab2956e595132e3`, which is protected by annotated tag `webmcp-submit-freeze`.
-- Required tag `webmcp-sandbox-v0.1` is currently absent.
-- Do not create that tag, move `legacy/webmcp-sandbox`, rewrite `main`, or start implementation until the human explicitly approves PRESERVE-A or PRESERVE-B in the readiness addendum.
-- Do not implement against the synthetic WebMCP source tree or inherit its module boundaries.
-- `architecture/ptf-v1-spec` and this planning branch remain documentation/planning branches. No product source belongs here.
+These are planning results only. They do not mean source code exists or runtime tests have passed.
 
-## Process gate
+## Repository-preservation hard stop
 
-The written plan set is **not currently execution-ready**. Do not begin implementation merely because an execution workflow is selected.
+Current verified refs:
 
-Planning must first close every readiness condition in `2026-09-04-ptf-v1-plan-readiness-addendum.md`, including:
+```text
+legacy/webmcp-sandbox -> 2ed4020c2f0ef91da1a5ee0e74e083539fed98b9
+webmcp-submit-freeze  -> f94a7bd3a59c440bddded8d6cab2956e595132e3
+webmcp-sandbox-v0.1   -> ABSENT
+```
 
-1. explicit human preservation-baseline decision;
-2. consistent repository-preservation records and required immutable tag;
-3. a task-quality matrix covering every executable task in Plans 00–06;
-4. rewrite/correction of every task that fails Contract C10;
-5. fresh cross-plan name/signature verification;
-6. fresh mapping of all 28 foundational acceptance gates to implementation and black-box evidence;
-7. verification-before-completion over the actual final plan files and Git refs.
+Do not create/move preservation refs, rewrite `main`, create a product worktree, or start a source task until the human explicitly selects **PRESERVE-A** or **PRESERVE-B** in accordance with the readiness addendum.
 
-Every executable task inherits `2026-09-04-ptf-v1-task-review-protocol.md`. A candidate task commit is not accepted until both its specification/plan review and implementation/test-quality review pass against the same commit SHA.
+- PRESERVE-A keeps `2ed4020c...` as the approved rewrite-preservation baseline and creates `webmcp-sandbox-v0.1` there.
+- PRESERVE-B rebaselines preservation to `f94a7bd3...` and requires explicit lifecycle-record amendment before source work.
 
-Only after all readiness conditions pass may the human select/confirm an execution workflow. At that point:
+An implementer/agent MUST NOT choose between them.
 
-1. use Superpowers `using-git-worktrees` before source work;
-2. perform the approved preservation/tag gate;
-3. execute the verified roadmap in dependency order;
-4. read all binding plan corrections before each subsystem plan;
-5. use TDD and the applicable narrow Matt/Superpowers skill for each task;
-6. independently review each task before releasing a dependent task;
-7. use Superpowers `verification-before-completion` before any completion/release claim.
+## Execution process after preservation closes
 
-A task that does not satisfy Contract C10 returns to planning. The implementer is not allowed to invent missing security semantics.
+Only after the human decision and exact Git preflight succeed:
 
-## Scope guardrail
+1. use Superpowers `using-git-worktrees` before product source work;
+2. start from the approved rewrite execution base, not the synthetic WebMCP source tree;
+3. execute the verified Plan 00→06 dependency order;
+4. for every task, read the authoritative index plus the task's applicable corrections/strict supplement before editing;
+5. use red-first TDD for behavioral source tasks; use the explicit verification-only path only where the plan marks it;
+6. do not invent missing security semantics, aliases, helper interfaces, protocol fallbacks, or broader abstractions;
+7. create the candidate task commit only after the task's green command passes;
+8. run Review A (spec/plan compliance) and Review B (implementation/test quality) from `2026-09-04-ptf-v1-task-review-protocol.md` against the same candidate commit SHA;
+9. do not release a dependent task until both reviews PASS;
+10. use Superpowers `verification-before-completion` before milestone, conformance, release, merge, or completion claims.
 
-The approved full PTF specification is the product boundary. AP2, x402, OpenID4VP, WebMCP/MCP/A2A, a payment flow, a credential flow, a Trusted Surface, a conformance fixture, or any demonstration is a proving milestone, not the PTF product.
+## Scope and trust guardrails
 
-No Personal State, learned preference, model confidence, protocol validity, payment success, or repeated approval can silently create or broaden authority or trust.
+The approved full PTF specification is the product boundary. AP2, x402, OpenID4VP, WebMCP/MCP/A2A, a payment flow, a credential flow, Trusted Surface, conformance fixture, or demonstration is a proving milestone, not the product definition.
 
-## Agent skills
+No Personal State, learned preference, model confidence, protocol validity, protocol artifact, payment success, repeated approval, or display label can silently create or broaden authority or trust.
 
-### Issue tracker
+Use only the final cross-plan interfaces. In particular:
 
-Use GitHub Issues for bounded execution tasks, defects, and review findings. Issues must reference the exact approved plan/task rather than restating requirements. See `docs/agents/issue-tracker.md`.
+```text
+resource_ref, not resource_id
+source_constraint_ids, not object-valued source_constraints
+ApprovalEvidence.target_kind + canonical_fingerprint, not ApprovalEvidence.plan_fingerprint
+POST task-scoped /v1/agent/safe-view, not unscoped GET
+getSafeView(input), not parameterless getSafeView()
+TrustAdministrationService for trust mutation
+PersonalStateService for Personal State mutation
+OpenID4VPWalletExecutor.present_and_deliver for raw credential/VP/direct-post custody
+classify_direct_post_evidence for safe OpenID4VP outcome classification
+```
 
-Do not publish a large execution-ticket DAG without the human granularity review required by Matt Skills Curated `to-tickets`.
+## Issue tracker
 
-### Domain docs
+Use GitHub Issues for bounded execution tasks, defects, and review findings. Issues reference the exact approved plan/task and do not restate or mutate requirements.
 
-Use the existing approved PTF domain sources; do not create duplicate `CONTEXT.md` or per-package domain models. See `docs/agents/domain.md`.
+Do not publish a large execution-ticket DAG without the human granularity review required by the applicable Matt Skills Curated ticketing workflow.
+
+## Domain documentation
+
+Use the approved PTF specification, ADRs, interface registry, corrections, and existing domain sources. Do not create duplicate per-package domain authorities that can drift from the approved model.
