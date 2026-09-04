@@ -1,6 +1,6 @@
-# Personal Trust Fabric — v1 Architecture and Verified Planning
+# Personal Trust Fabric — v1 Architecture and Planning Review
 
-This branch is the **documentation-only verified planning branch** for Personal Trust Fabric (PTF).
+This branch is the **documentation-only PTF v1 planning branch**.
 
 The PTF v1 formal specification has been explicitly human-approved. The reviewed specification file is intentionally preserved unchanged; `docs/spec/PTF-V1-APPROVAL.md` identifies the exact approved blob.
 
@@ -11,25 +11,26 @@ Read in this order:
 1. `docs/spec/PTF-V1-APPROVAL.md` — exact approval/lifecycle record.
 2. `docs/spec/PTF-V1-PROPOSED.md` — immutable reviewed specification blob approved by that record.
 3. `docs/adr/` — accepted architecture decisions.
-4. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-set-contract.md` — binding cross-plan execution corrections.
-5. `docs/superpowers/plans/2026-09-04-ptf-v1-execution-roadmap.md` — current dependency order and execution gates.
-6. The seven detailed 2026-09-03 subsystem plans, subject to the September 4 contract.
-7. `CONTEXT-MAP.md` — non-normative terminology glossary.
-8. `docs/review/2026-09-04-plan-set-audit.md` — plan verification and acceptance-gate coverage.
+4. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-readiness-addendum.md` — current planning-readiness blockers and binding task corrections.
+5. `docs/superpowers/plans/2026-09-04-ptf-v1-plan-set-contract.md` — earlier cross-plan execution corrections, subject to the readiness addendum.
+6. `docs/superpowers/plans/2026-09-04-ptf-v1-execution-roadmap.md` — intended dependency order; source execution remains blocked until the readiness addendum is closed.
+7. The seven detailed 2026-09-03 subsystem plans, subject to the September 4 corrections.
+8. `CONTEXT-MAP.md` — non-normative terminology glossary.
+9. `docs/review/2026-09-04-plan-set-audit.md` — earlier audit and 28-gate coverage map; its execution-ready conclusion is superseded by the readiness addendum.
 
-The earlier `2026-09-03-ptf-v1-rewrite-roadmap.md` is historical planning evidence and is superseded for execution order.
+The earlier `2026-09-03-ptf-v1-rewrite-roadmap.md` remains historical planning evidence and is superseded for execution order.
 
 ## Current phase
 
-**Specification approved. Verified implementation plan set complete. No rewrite code has started.**
+**Specification approved. Implementation planning reopened. No rewrite code has started. Source implementation is not authorized yet.**
 
-The next human decision is which Superpowers execution workflow to use. Source implementation may begin only after that selection, creation/verification of the preservation tag, and isolated-worktree setup.
+The September 4 follow-up verification found two blocking issues: repository-preservation state advanced after the recorded preservation baseline, and the detailed task set does not yet uniformly satisfy its own Contract C10 task-quality standard. The readiness addendum defines the exact closure conditions.
 
 ## Preservation gate
 
-The synthetic WebMCP implementation is preserved on `legacy/webmcp-sandbox` at commit `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9`. It is historical evidence, not the implementation baseline for PTF v1.
+The approval record names `legacy/webmcp-sandbox` at `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9`. After that record was written, the synthetic sandbox advanced to `f94a7bd3a59c440bddded8d6cab2956e595132e3`, now protected by annotated tag `webmcp-submit-freeze`.
 
-Before source implementation or any rewrite of `main`, immutable tag `webmcp-sandbox-v0.1` must exist and resolve to that same commit. Planning tooling has not created the tag; the verified execution roadmap makes this the first hard execution preflight.
+The required `webmcp-sandbox-v0.1` tag is still absent. Planning must not guess whether the formal preservation target remains the approved baseline or is rebaselined to the later submission freeze. The human preservation decision described in the readiness addendum is required before source work.
 
 ## Product boundary
 
