@@ -1,8 +1,8 @@
 # Personal Trust Fabric — Context Map
 
-Status: **Non-normative glossary for the Proposed PTF v1 specification.**
+Status: **Non-normative glossary for the approved PTF v1 specification identified by `docs/spec/PTF-V1-APPROVAL.md`.**
 
-Normative requirements and invariants live only in `docs/spec/PTF-V1-PROPOSED.md`. This file exists to keep domain language consistent. If wording here conflicts with the proposed specification, the proposed specification wins.
+Normative requirements and invariants live only in the exact specification blob at `docs/spec/PTF-V1-PROPOSED.md` identified by the approval record. The specification file intentionally retains its historical review-state text because the approved blob is immutable. This glossary exists only to keep domain language consistent. If wording here conflicts with the approved specification, the approved specification wins.
 
 ## Bounded contexts
 
