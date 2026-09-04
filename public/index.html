@@ -2,16 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23132128'/%3E%3Ctext x='5' y='21' fill='white' font-size='12' font-family='monospace'%3EPTF%3C/text%3E%3C/svg%3E">
-    <meta name="description" content="Personal Trust Fabric separates what an AI agent may know from what it may do.">
-    <title>Personal Trust Fabric</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#132128">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23132128'/%3E%3Ctext x='5' y='21' fill='white' font-size='12' font-family='monospace'%3EPTF%3C/text%3E%3C/svg%3E">
+    <meta name="description" content="Personal Trust Fabric separates what an AI agent may know from what it may do — deterministic policy, human approval, and recipient-bound capabilities.">
+    <title>Personal Trust Fabric — Synthetic PTF Dashboard</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <main id="app">
-      <p>Loading Personal Trust Fabric…</p>
+    <main id="app" aria-live="polite" aria-busy="true">
+      <div style="min-height:60vh;display:grid;place-items:center;padding:4vw;color:#5e7077;font:600 13px/1.4 ui-monospace,monospace;letter-spacing:.04em;text-transform:uppercase">Loading Personal Trust Fabric…</div>
     </main>
+    <noscript><div style="max-width:780px;margin:40px auto;padding:20px;border:1px solid #b9c8cc;background:#fbfcfc;color:#132128">PTF dashboard requires JavaScript to display the human-authority console. Enable JavaScript and reload.</div></noscript>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

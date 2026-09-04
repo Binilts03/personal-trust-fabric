@@ -248,7 +248,9 @@ test('persona store exposes no Hard Policy or authority mutation operation', () 
     'addObservation',
     'confirmClaim',
     'correctClaim',
+    'markContextual',
     'proposeClaim',
-    'queryTaskClaims'
+    'queryTaskClaims',
+    'rejectClaim'
   ]);
 });

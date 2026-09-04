@@ -32,7 +32,8 @@ function createFixtureRuntime() {
         },
         requireApproval: true,
         maxUses: 1,
-        allowedModes: ['predicate_proof']
+        allowedModes: ['predicate_proof'],
+        allowedClaims: ['membership.active']
       },
       {
         id: 'allow_payment',
@@ -48,7 +49,8 @@ function createFixtureRuntime() {
         maxUses: 1,
         maxAmountMinor: 5000,
         currencies: ['USD'],
-        allowedModes: ['direct_delivery']
+        allowedModes: ['direct_delivery'],
+        allowedClaims: []
       }
     ],
     personaClaims: [

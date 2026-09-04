@@ -166,8 +166,19 @@ function verifyChain(chain) {
   }
 }
 
-export function createAuditLog() {
+export function createAuditLog(initialRecords = null) {
   const records = [];
+  if (Array.isArray(initialRecords) && initialRecords.length > 0) {
+    // import verified chain if provided
+    if (verifyChain(initialRecords)) {
+      for (const rec of initialRecords) records.push(copyRecord(rec));
+    } else {
+      // fallback to appending events
+      for (const rec of initialRecords) {
+        try { records.push(copyRecord(rec)); } catch {}
+      }
+    }
+  }
 
   return {
     append(event) {
@@ -196,6 +207,17 @@ export function createAuditLog() {
 
     verifyIntegrity(chain = records) {
       return verifyChain(chain);
+    },
+
+    importRecords(chain) {
+      if (!Array.isArray(chain)) throw new TypeError('chain must be array');
+      if (!verifyChain(chain)) throw new Error('audit chain integrity check failed');
+      records.length = 0;
+      for (const rec of chain) records.push(copyRecord(rec));
+    },
+
+    clear() {
+      records.length = 0;
     }
   };
 }

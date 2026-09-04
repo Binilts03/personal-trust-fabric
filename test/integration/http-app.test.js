@@ -1,8 +1,25 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import test from 'node:test';
 
 import { createAppServer } from '../../src/server.js';
+
+function fixedRecipientSecret(label) {
+  return createHmac('sha256', Buffer.from('ptf_recipient_seed_v1')).update(label).digest();
+}
+function generateRecipientAuthToken(reference, recipientId) {
+  const secretMap = {
+    recipient_verifier_a: fixedRecipientSecret('verifier_a_secret'),
+    recipient_merchant_b: fixedRecipientSecret('merchant_b_secret'),
+    recipient_signer_c: fixedRecipientSecret('signer_c_secret'),
+    recipient_account_d: fixedRecipientSecret('account_d_secret'),
+    recipient_attacker: fixedRecipientSecret('attacker_secret')
+  };
+  const secret = secretMap[recipientId];
+  if (!secret) throw new Error(`unknown recipient ${recipientId}`);
+  return createHmac('sha256', secret).update(reference).digest('hex');
+}
 
 async function withServer(run, options) {
   const server = createAppServer(options);
@@ -82,9 +99,31 @@ test('HTTP sandbox exposes safe state and human approval executes through server
       decision: 'approved'
     }, humanHeaders);
     assert.equal(approvalResponse.status, 200);
-    const completion = await approvalResponse.json();
+    const approvalJson = await approvalResponse.json();
+    // New independent redemption: decide returns operationReference, receipt is null until redeem
+    assert.equal(approvalJson.decision, 'approved');
+    assert.ok(approvalJson.operationReference, 'operationReference should exist');
+    // Attempt attacker redemption should fail (independent auth)
+    const attackerRedeem = await post(baseUrl, `/api/capabilities/${approvalJson.operationReference}/redeem`, {
+      recipientId: 'recipient_merchant_b',
+      recipientAuthToken: generateRecipientAuthToken(approvalJson.operationReference, 'recipient_attacker')
+    }, humanHeaders);
+    assert.equal(attackerRedeem.status, 403);
+    // Legitimate recipient redemption with correct token should succeed and prove protected execution
+    const redeemResponse = await post(baseUrl, `/api/capabilities/${approvalJson.operationReference}/redeem`, {
+      recipientId: 'recipient_merchant_b',
+      recipientAuthToken: generateRecipientAuthToken(approvalJson.operationReference, 'recipient_merchant_b')
+    }, humanHeaders);
+    assert.equal(redeemResponse.status, 200);
+    const completion = await redeemResponse.json();
     assert.equal(completion.receipt.outcome, 'paid');
     assert.equal(JSON.stringify(completion).includes('PTF_CANARY_'), false);
+    // Second redeem should fail - capability is single-use (consumed)
+    const secondRedeem = await post(baseUrl, `/api/capabilities/${approvalJson.operationReference}/redeem`, {
+      recipientId: 'recipient_merchant_b',
+      recipientAuthToken: generateRecipientAuthToken(approvalJson.operationReference, 'recipient_merchant_b')
+    }, humanHeaders);
+    assert.equal(secondRedeem.status, 403);
 
     const replay = await post(baseUrl, `/api/approvals/${proposal.approvalId}`, {
       decision: 'approved'

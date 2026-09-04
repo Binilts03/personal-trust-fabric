@@ -9,7 +9,7 @@ npm test
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`. Confirm the page says “Hosted synthetic profile — no real credentials or payment instruments.” In an ordinary browser, use the clearly labeled simulation controls. In a supported WebMCP host, use the tool prompts below.
+Open `http://127.0.0.1:3000`. Confirm the page says “Hosted synthetic profile — no real credentials or payment instruments.” In an ordinary browser, use the clearly labeled simulation controls. In a supported WebMCP host, use the tool prompts below. All 10 tools are synthetic-only with fixed fixture secrets; no production custody.
 
 Current ChatGPT host setup requires the latest desktop app, a Sol or Terra model, and a supported non-Enterprise/non-Edu workspace. Luna does not currently expose site tools. The alternative judge path is Chrome 149+ with WebMCP testing enabled. Recheck the official setup immediately before the live run because this surface is experimental.
 
@@ -36,6 +36,8 @@ Prompt: “Run PTF’s recipient-redirection adversarial check.”
 Expected tool: `attempt_recipient_redirect_attack`.
 
 Expected result: `deny` with `no matching allow policy`. This denial comes from the policy engine, not a model refusal. No approval is created.
+
+Extended synthetic checks (same session, optional): `request_signing_authority`, `request_bounded_action`, `get_operation_status`, `attempt_capability_forward_attack`, `attempt_replay_attack`, `attempt_claim_escalation_attack`. All remain synthetic, one-use, human-approval gated; no approve/correct/reset tool exists.
 
 ## Persona correction
 

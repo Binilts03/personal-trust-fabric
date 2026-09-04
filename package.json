@@ -14,6 +14,6 @@
     "lint:architecture": "node scripts/verify-architecture.mjs",
     "start": "node src/server.js",
     "dev": "node src/server.js",
-    "verify:harness": "pwsh -NoProfile -File scripts/verify-harness.ps1"
+    "verify:harness": "pwsh -NoProfile -File scripts/verify-harness.ps1 || powershell -NoProfile -File scripts/verify-harness.ps1"
   }
 }

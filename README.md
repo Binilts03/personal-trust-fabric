@@ -37,12 +37,17 @@ Non-loopback binding is refused unless `PUBLIC_ORIGIN` is set to the exact HTTPS
 4. Correct the agent-safe budget persona claim and observe the prior claim being superseded without changing policy.
 5. Inspect the safe activity stream and its explicitly limited in-memory hash-chain evidence.
 
-The exact judge flow and WebMCP tool prompts are in [`docs/judge-script.md`](docs/judge-script.md). The four top-level imperative tools are:
+The exact judge flow and WebMCP tool prompts are in [`docs/judge-script.md`](docs/judge-script.md). The adapter exposes 10 top-level imperative tools (synthetic sandbox only):
 
+Core journeys (4):
 - `get_ptf_safe_view`
 - `request_membership_status_proof`
 - `request_synthetic_invoice_payment`
 - `attempt_recipient_redirect_attack`
+
+Extended capability + hardening checks (6):
+- `request_signing_authority`, `request_bounded_action`, `get_operation_status`
+- `attempt_capability_forward_attack`, `attempt_replay_attack`, `attempt_claim_escalation_attack`
 
 The adapter feature-detects `document.modelContext.registerTool`. Current ChatGPT/Chrome setup and API evidence are tracked in [`docs/research/current-sources.md`](docs/research/current-sources.md).
 

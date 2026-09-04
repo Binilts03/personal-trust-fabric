@@ -62,3 +62,22 @@ my-video/renders/chunks.txt
 my-video/renders/sync*.jpg
 my-video/renders/icur-*.jpg
 my-video/renders/t-*.mp4
+# Submission-size guard: video binaries + node_modules stay local (YouTube is source of truth)
+my-video/renders/*.mp4
+my-video/renders/*.wav
+my-video/node_modules/
+my-video/capture/assets/vercel-capture.png
+target/
+# Rust full-product workspace lives in parent (../), not in this Node synthetic sandbox
+Cargo.toml
+Cargo.lock
+rust-toolchain.toml
+crates/
+contracts/
+# Note: conformance/core + conformance/security-canaries (Node, 4 files) ARE tracked —
+# required by scripts/verify-conformance.mjs (23 tests) + CI security-canary job.
+# Only Rust-side conformance suites (absent here) stay out.
+# Root stray briefs / internal packs stay local (judges use README + docs/judge-script.md)
+BRIEF.md
+DEVPOST_PACK.md
+VALIDATION_REPORT.md

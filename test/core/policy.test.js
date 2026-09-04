@@ -32,16 +32,18 @@ test('policy requires approval for an otherwise allowed consequential request', 
         action: 'present'
       },
       requireApproval: true,
-      maxUses: 1
+      maxUses: 1,
+      allowedClaims: ['membership.active']
     }
   ]);
 
-  assert.deepEqual(authority.evaluate(baseRequest), {
-    decision: 'approval_required',
-    policyIds: ['policy_membership@1'],
-    constraints: { maxUses: 1 },
-    reason: 'matching policy requires human approval'
-  });
+  const result = authority.evaluate(baseRequest);
+  assert.equal(result.decision, 'approval_required');
+  assert.deepEqual(result.policyIds, ['policy_membership@1']);
+  assert.equal(result.constraints.maxUses, 1);
+  // new claimIds authorization adds allowedClaims
+  assert.deepEqual(result.constraints.allowedClaims, ['membership.active']);
+  assert.equal(result.reason, 'matching policy requires human approval');
 });
 
 test('explicit deny overrides a matching allow policy', () => {

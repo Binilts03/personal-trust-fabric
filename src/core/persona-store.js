@@ -38,42 +38,63 @@ function normalizeTimestamp(value, field) {
   return value;
 }
 
+function deepClone(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (typeof structuredClone === 'function') {
+    try { return structuredClone(value); } catch { /* fallback */ }
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+function deepFreeze(obj) {
+  if (obj && typeof obj === 'object' && !Object.isFrozen(obj)) {
+    Object.freeze(obj);
+    for (const key of Reflect.ownKeys(obj)) {
+      const val = obj[key];
+      if (val && typeof val === 'object') deepFreeze(val);
+    }
+  }
+  return obj;
+}
+
 function freezeObservation(observation) {
-  return Object.freeze({
+  return deepFreeze({
     ...observation,
-    source: Object.freeze({ ...observation.source }),
-    content: Object.freeze({ ...observation.content })
+    source: deepFreeze(deepClone(observation.source)),
+    content: deepFreeze(deepClone(observation.content))
   });
 }
 
 function freezeClaim(claim) {
-  return Object.freeze({
+  const base = {
     ...claim,
+    value: deepFreeze(deepClone(claim.value)),
     contexts: Object.freeze([...claim.contexts]),
     evidenceIds: Object.freeze([...claim.evidenceIds]),
-    provenance: Object.freeze(claim.provenance.map((item) => Object.freeze({
-      ...item,
-      source: Object.freeze({ ...item.source })
-    })))
-  });
+    provenance: Object.freeze(claim.provenance.map((item) => deepFreeze(deepClone(item))))
+  };
+  if (claim.contradictions !== undefined) base.contradictions = Object.freeze([...claim.contradictions]);
+  if (claim.contradictionSet !== undefined) base.contradictionSet = Object.freeze([...claim.contradictionSet]);
+  if (claim.rejectedReason !== undefined) base.rejectedReason = claim.rejectedReason;
+  return deepFreeze(base);
 }
 
 function toTaskClaim(claim) {
-  return Object.freeze({
+  const out = {
     id: claim.id,
     key: claim.key,
-    value: claim.value,
+    value: deepFreeze(deepClone(claim.value)),
     contexts: Object.freeze([...claim.contexts]),
     confidence: claim.confidence,
     sensitivity: claim.sensitivity,
     modelVisibility: claim.modelVisibility,
     status: claim.status,
     supersedes: claim.supersedes,
-    provenance: Object.freeze(claim.provenance.map((item) => Object.freeze({
-      ...item,
-      source: Object.freeze({ ...item.source })
-    })))
-  });
+    provenance: Object.freeze(claim.provenance.map((item) => deepFreeze(deepClone(item))))
+  };
+  if (claim.contradictions !== undefined) out.contradictions = Object.freeze([...claim.contradictions]);
+  if (claim.contradictionSet !== undefined) out.contradictionSet = Object.freeze([...claim.contradictionSet]);
+  return deepFreeze(out);
 }
 
 export function createPersonaStore({
@@ -140,8 +161,30 @@ export function createPersonaStore({
       }
 
       const evidenceIds = [...new Set(input.evidenceIds)];
-      const claim = freezeClaim({
-        id: idFactory(),
+      const newId = idFactory();
+      // Contradiction detection: same key, different value among non-superseded/non-rejected claims
+      const contradictions = [];
+      const contradictionSet = new Set();
+      for (const existing of claims.values()) {
+        if (existing.key !== input.key) continue;
+        if (existing.status === 'superseded' || existing.status === 'rejected' || existing.status === 'expired') continue;
+        // Use JSON stringify for deep value comparison (handles objects)
+        const existingVal = typeof existing.value === 'object' ? JSON.stringify(existing.value) : String(existing.value);
+        const newVal = typeof input.value === 'object' ? JSON.stringify(input.value) : String(input.value);
+        if (existingVal !== newVal) {
+          contradictions.push(existing.id);
+          contradictionSet.add(existing.id);
+          // also include any contradictions that existing already had
+          if (existing.contradictions) {
+            for (const cid of existing.contradictions) contradictionSet.add(cid);
+          }
+          if (existing.contradictionSet) {
+            for (const cid of existing.contradictionSet) contradictionSet.add(cid);
+          }
+        }
+      }
+      const baseClaim = {
+        id: newId,
         key: input.key,
         value: input.value,
         contexts: [...new Set(input.contexts)],
@@ -163,9 +206,65 @@ export function createPersonaStore({
             observedAt: observation.observedAt
           };
         })
-      });
+      };
+      if (contradictions.length > 0) {
+        baseClaim.contradictions = contradictions;
+        baseClaim.contradictionSet = [...contradictionSet];
+      }
+      const claim = freezeClaim(baseClaim);
       claims.set(claim.id, claim);
       return claim;
+    },
+
+    rejectClaim(input) {
+      assertKnownFields(input, ['claimId', 'source', 'reason']);
+      assertNonEmptyString(input.claimId, 'claimId');
+      const source = normalizeSource(input.source);
+      if (source.type !== 'human') throw new Error('explicit Human rejection is required');
+      const claim = claims.get(input.claimId);
+      if (!claim) throw new Error('claim not found');
+      if (claim.status !== 'candidate' && claim.status !== 'confirmed' && claim.status !== 'contextual') throw new Error('claim is not rejectable');
+      const rejected = freezeClaim({
+        ...claim,
+        status: 'rejected',
+        rejectedReason: input.reason ?? null,
+        provenance: [
+          ...claim.provenance,
+          {
+            kind: 'rejection',
+            source,
+            occurredAt: new Date(now()).toISOString(),
+            reason: input.reason ?? null
+          }
+        ]
+      });
+      claims.set(rejected.id, rejected);
+      return rejected;
+    },
+
+    // Alias for backward compat: some callers may use rejectClaim without reason
+    // Ensure contextual status handling: mark claim as contextual if needed
+    markContextual(input) {
+      assertKnownFields(input, ['claimId', 'source', 'context']);
+      assertNonEmptyString(input.claimId, 'claimId');
+      const source = normalizeSource(input.source);
+      const claim = claims.get(input.claimId);
+      if (!claim) throw new Error('claim not found');
+      const contextual = freezeClaim({
+        ...claim,
+        status: 'contextual',
+        provenance: [
+          ...claim.provenance,
+          {
+            kind: 'contextual',
+            source,
+            occurredAt: new Date(now()).toISOString(),
+            context: input.context
+          }
+        ]
+      });
+      claims.set(contextual.id, contextual);
+      return contextual;
     },
 
     confirmClaim(input) {
