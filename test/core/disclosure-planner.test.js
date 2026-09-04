@@ -31,3 +31,31 @@ test('planner chooses the least revealing candidate and cannot override denial',
     reason: 'authorization denied'
   });
 });
+
+test('use-only signing and bounded-action modes are valid non-plaintext candidates', () => {
+  const planner = createDisclosurePlanner();
+  assert.deepEqual(planner.plan({
+    authorized: true,
+    candidates: [{ mode: 'enclave_sign', representationId: 'payload_signature' }],
+    allowedModes: ['enclave_sign'],
+    recipientModes: ['enclave_sign']
+  }), {
+    status: 'planned',
+    mode: 'enclave_sign',
+    representationId: 'payload_signature',
+    assurance: 'synthetic_sandbox',
+    downgrade: false
+  });
+  assert.deepEqual(planner.plan({
+    authorized: true,
+    candidates: [{ mode: 'bounded_write', representationId: 'account_change_authorization' }],
+    allowedModes: ['bounded_write'],
+    recipientModes: ['bounded_write']
+  }), {
+    status: 'planned',
+    mode: 'bounded_write',
+    representationId: 'account_change_authorization',
+    assurance: 'synthetic_sandbox',
+    downgrade: false
+  });
+});
