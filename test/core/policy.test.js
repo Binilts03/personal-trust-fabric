@@ -138,3 +138,87 @@ test('a stricter matching amount constraint cannot be bypassed by a broader allo
     reason: 'request exceeds policy amount limit'
   });
 });
+
+test('principal and agent match fields constrain authority, with explicit wildcard support', () => {
+  const principalBound = createPolicyAuthority([{
+    id: 'principal_only',
+    version: 1,
+    effect: 'allow',
+    match: {
+      principalId: 'principal_demo',
+      agentId: 'agent_demo',
+      operationType: 'credential_presentation'
+    },
+    requireApproval: false
+  }]);
+
+  assert.equal(principalBound.evaluate(baseRequest).decision, 'allow');
+  assert.equal(principalBound.evaluate({ ...baseRequest, principalId: 'principal_attacker' }).decision, 'deny');
+  assert.equal(principalBound.evaluate({ ...baseRequest, agentId: 'agent_attacker' }).decision, 'deny');
+
+  const wildcardAgent = createPolicyAuthority([{
+    id: 'any_agent',
+    version: 1,
+    effect: 'allow',
+    match: {
+      principalId: 'principal_demo',
+      agentId: '*',
+      operationType: 'credential_presentation'
+    },
+    requireApproval: false
+  }]);
+  assert.equal(wildcardAgent.evaluate({ ...baseRequest, agentId: 'agent_other' }).decision, 'allow');
+});
+
+test('allowed claim constraints are intersected and over-requested claims are denied', () => {
+  const authority = createPolicyAuthority([
+    {
+      id: 'broad_claims',
+      version: 1,
+      effect: 'allow',
+      match: { operationType: 'credential_presentation' },
+      requireApproval: false,
+      allowedClaims: ['membership.active', 'membership.tier']
+    },
+    {
+      id: 'recipient_claims',
+      version: 1,
+      effect: 'allow',
+      match: { recipientId: 'recipient_verifier_a' },
+      requireApproval: false,
+      allowedClaims: ['membership.active']
+    }
+  ]);
+
+  assert.deepEqual(authority.evaluate(baseRequest).constraints.allowedClaims, ['membership.active']);
+  assert.deepEqual(
+    authority.evaluate({ ...baseRequest, claimIds: ['membership.active', 'membership.tier'] }),
+    {
+      decision: 'deny',
+      policyIds: ['broad_claims@1', 'recipient_claims@1'],
+      constraints: {},
+      reason: 'request includes claims not allowed by policy'
+    }
+  );
+});
+
+test('malformed or unknown policy configuration fails closed at authority construction', () => {
+  assert.throws(
+    () => createPolicyAuthority([{
+      id: 'bad', version: 1, effect: 'allow', match: { operationType: 'payment' }, requireApproval: false, maxUses: '5'
+    }]),
+    /maxUses/
+  );
+  assert.throws(
+    () => createPolicyAuthority([{
+      id: 'bad', version: 1, effect: 'allow', match: { operationType: 'payment' }, requireApproval: false, unknownConstraint: true
+    }]),
+    /unknown policy field/
+  );
+  assert.throws(
+    () => createPolicyAuthority([{
+      id: 'bad', version: 1, effect: 'allow', match: { unknownMatch: 'x' }, requireApproval: false
+    }]),
+    /unknown policy match field/
+  );
+});
