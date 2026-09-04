@@ -68,3 +68,73 @@ test('explicit deny overrides a matching allow policy', () => {
     reason: 'matching deny policy'
   });
 });
+
+test('all matching allow policies are intersected conservatively and order-independently', () => {
+  const permissive = {
+    id: 'global',
+    version: 1,
+    effect: 'allow',
+    match: { operationType: 'credential_presentation' },
+    requireApproval: false,
+    maxUses: 5,
+    allowedModes: ['selective_claim', 'predicate_proof']
+  };
+  const restrictive = {
+    id: 'recipient',
+    version: 2,
+    effect: 'allow',
+    match: { recipientId: 'recipient_verifier_a' },
+    requireApproval: true,
+    maxUses: 1,
+    allowedModes: ['predicate_proof']
+  };
+
+  const expected = {
+    decision: 'approval_required',
+    policyIds: ['global@1', 'recipient@2'],
+    constraints: { maxUses: 1, allowedModes: ['predicate_proof'] },
+    reason: 'matching policy requires human approval'
+  };
+
+  assert.deepEqual(createPolicyAuthority([permissive, restrictive]).evaluate(baseRequest), expected);
+  assert.deepEqual(createPolicyAuthority([restrictive, permissive]).evaluate(baseRequest), expected);
+});
+
+test('a stricter matching amount constraint cannot be bypassed by a broader allow', () => {
+  const request = {
+    ...baseRequest,
+    recipientId: 'recipient_merchant_b',
+    purpose: 'pay_invoice',
+    operationType: 'payment',
+    action: 'pay',
+    amountMinor: 2000,
+    currency: 'USD'
+  };
+  const authority = createPolicyAuthority([
+    {
+      id: 'broad',
+      version: 1,
+      effect: 'allow',
+      match: { operationType: 'payment' },
+      requireApproval: false,
+      maxAmountMinor: 5000,
+      currencies: ['USD', 'EUR']
+    },
+    {
+      id: 'strict',
+      version: 1,
+      effect: 'allow',
+      match: { recipientId: 'recipient_merchant_b' },
+      requireApproval: true,
+      maxAmountMinor: 1000,
+      currencies: ['USD']
+    }
+  ]);
+
+  assert.deepEqual(authority.evaluate(request), {
+    decision: 'deny',
+    policyIds: ['broad@1', 'strict@1'],
+    constraints: {},
+    reason: 'request exceeds policy amount limit'
+  });
+});
