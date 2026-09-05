@@ -31,3 +31,17 @@ Implementation planning may now proceed. Implementation code must still wait unt
 The synthetic milestone is preserved on `legacy/webmcp-sandbox` at commit `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9`.
 
 Before **any rewrite of `main`**, immutable tag `webmcp-sandbox-v0.1` must exist and resolve to that same commit. The ChatGPT GitHub connector used during specification/planning does not expose tag creation, so this remains a mandatory execution preflight action rather than a completed step.
+
+## Preservation rebaseline amendment — PRESERVE-B (human-approved 2026-09-05)
+
+The human owner explicitly selected **PRESERVE-B** ("latest only") on 2026-09-05: the formal rewrite-preservation milestone is rebaselined from `2ed4020c2f0ef91da1a5ee0e74e083539fed98b9` to the later submission freeze `f94a7bd3a59c440bddded8d6cab2956e595132e3`.
+
+Required state after this amendment:
+
+```text
+legacy/webmcp-sandbox -> f94a7bd3a59c440bddded8d6cab2956e595132e3
+webmcp-sandbox-v0.1   -> f94a7bd3a59c440bddded8d6cab2956e595132e3
+webmcp-submit-freeze  -> f94a7bd3a59c440bddded8d6cab2956e595132e3
+```
+
+`2ed4020c...` remains the fast-forward ancestor of `f94a7bd3...` (verified via `git merge-base --is-ancestor`), so the legacy branch move is a fast-forward, not a history rewrite. The approved specification blob (`32fc9bb6...`) and ADRs 0001–0006 are unchanged by this amendment; only the preservation milestone reference moves.
