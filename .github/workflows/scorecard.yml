@@ -23,6 +23,12 @@ jobs:
         with:
           results_format: sarif
           results_file: results.sarif
+          # Private repos need a PAT with repo read; the default token cannot
+          # run all checks (ListCommits fails). Create it once:
+          #   profile → Settings → Developer settings → Personal access tokens
+          #   → Tokens (classic), `repo` scope → repo secret SCORECARD_READ_TOKEN.
+          # Public repos can drop this line (default token suffices).
+          repo_token: ${{ secrets.SCORECARD_READ_TOKEN }}
           publish_results: true
       - uses: actions/upload-artifact@v4
         with:
