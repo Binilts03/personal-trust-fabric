@@ -23,7 +23,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: mkdir -p release-assets && npm pack --pack-destination release-assets
-      - run: npm sbom --sbom-format=cyclonedx-json --omit=dev > release-assets/sbom.cdx.json
+      - run: npm sbom --sbom-format=cyclonedx --omit=dev > release-assets/sbom.cdx.json
       - id: hash
         run: |
           cd release-assets
