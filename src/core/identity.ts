@@ -14,6 +14,18 @@ export interface BindingSnapshot {
   readonly revoked: boolean;
 }
 
+export interface RegistrySnapshot {
+  readonly bindings: {
+    readonly alias: string;
+    readonly keys: {
+      readonly keyHex: string;
+      readonly addedAt: number;
+      readonly superseded: boolean;
+      readonly revoked: boolean;
+    }[];
+  }[];
+}
+
 interface Binding extends BindingSnapshot {
   superseded: boolean;
   revoked: boolean;
@@ -98,6 +110,75 @@ export class RecipientRegistry {
 
   aliases(): string[] {
     return [...this.bindings.keys()];
+  }
+
+  /** Plain-data snapshot (hex keys) for durable stores. */
+  snapshot(): RegistrySnapshot {
+    return {
+      bindings: [...this.bindings.entries()].map(([alias, chain]) => ({
+        alias,
+        keys: chain.map((b) => ({
+          keyHex: Buffer.from(b.key).toString("hex"),
+          addedAt: b.addedAt,
+          superseded: b.superseded,
+          revoked: b.revoked,
+        })),
+      })),
+    };
+  }
+
+  /** Restore from a snapshot, validating key material. Unknown aliases stay absent. */
+  static restore(
+    data: unknown,
+    nowSec: () => number = () => Math.floor(Date.now() / 1000)
+  ): RecipientRegistry {
+    if (typeof data !== "object" || data === null || Array.isArray(data)) {
+      throw new Error("registry snapshot must be an object");
+    }
+    const bindings = (data as Record<string, unknown>)["bindings"];
+    if (!Array.isArray(bindings))
+      throw new Error("registry snapshot: bindings must be an array");
+    const reg = new RecipientRegistry(nowSec);
+    for (const entry of bindings) {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+        throw new Error("registry snapshot: bad binding");
+      }
+      const rec = entry as Record<string, unknown>;
+      if (
+        typeof rec["alias"] !== "string" ||
+        (rec["alias"] as string).length === 0 ||
+        !Array.isArray(rec["keys"]) ||
+        (rec["keys"] as unknown[]).length === 0
+      ) {
+        throw new Error("registry snapshot: bad binding");
+      }
+      const chain = (rec["keys"] as Record<string, unknown>[]).map((k) => {
+        if (
+          typeof k["keyHex"] !== "string" ||
+          !Number.isInteger(k["addedAt"]) ||
+          typeof k["superseded"] !== "boolean" ||
+          typeof k["revoked"] !== "boolean"
+        ) {
+          throw new Error("registry snapshot: bad key entry");
+        }
+        const key = new Uint8Array(Buffer.from(k["keyHex"] as string, "hex"));
+        if (
+          key.length !== 32 ||
+          Buffer.from(key).toString("hex") !==
+            (k["keyHex"] as string).toLowerCase()
+        ) {
+          throw new Error("registry snapshot: bad key material");
+        }
+        return {
+          key,
+          addedAt: k["addedAt"] as number,
+          superseded: k["superseded"] as boolean,
+          revoked: k["revoked"] as boolean,
+        };
+      });
+      reg.bindings.set(rec["alias"] as string, chain);
+    }
+    return reg;
   }
 
   /** Plugs directly into Capabilities as its KeyResolver. */

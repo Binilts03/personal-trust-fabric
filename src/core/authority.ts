@@ -223,6 +223,15 @@ function constraintHolds(
   return true;
 }
 
+export interface AuthoritySnapshot {
+  readonly grants: StandingGrant[];
+  readonly approvals: OneTimeApproval[];
+  readonly policies: PolicyConstraint[];
+  readonly revoked: [string, number | null][];
+  readonly used: [string, number][];
+  readonly issued: [string, string[]][];
+}
+
 export class Authority {
   private readonly grants = new Map<string, StandingGrant>();
   private readonly approvals = new Map<string, OneTimeApproval>();
@@ -345,6 +354,87 @@ export class Authority {
     for (const [id, exp] of this.revoked) {
       if (exp !== null && now > exp + SKEW_SEC) this.revoked.delete(id);
     }
+  }
+
+  /** Plain-data snapshot for durable stores. No keys, no secrets — ids and bounds only. */
+  snapshot(): AuthoritySnapshot {
+    return {
+      grants: [...this.grants.values()],
+      approvals: [...this.approvals.values()],
+      policies: [...this.policies.values()],
+      revoked: [...this.revoked.entries()],
+      used: [...this.used.entries()],
+      issued: [...this.issued.entries()].map(
+        ([k, v]) => [k, [...v]] as [string, string[]]
+      ),
+    };
+  }
+
+  /** Restore from a snapshot, validating through the same gates as live input. */
+  static restore(
+    data: unknown,
+    opts?: {
+      readonly nowSec?: () => number;
+      readonly onRevoke?: (capabilityRevocationIds: string[]) => void;
+    }
+  ): Authority {
+    if (typeof data !== "object" || data === null || Array.isArray(data)) {
+      throw new Error("authority snapshot must be an object");
+    }
+    const snap = data as Record<string, unknown>;
+    const auth = new Authority(opts ?? {});
+    for (const key of ["grants", "approvals", "policies"] as const) {
+      if (!Array.isArray(snap[key]))
+        throw new Error(`authority snapshot: ${key} must be an array`);
+    }
+    for (const g of snap["grants"] as unknown[])
+      auth.addGrant(g as StandingGrant);
+    for (const a of snap["approvals"] as unknown[])
+      auth.addApproval(a as OneTimeApproval);
+    for (const p of snap["policies"] as unknown[])
+      auth.addPolicy(p as PolicyConstraint);
+    const revoked = snap["revoked"];
+    if (!Array.isArray(revoked))
+      throw new Error("authority snapshot: revoked must be an array");
+    for (const entry of revoked) {
+      if (
+        !Array.isArray(entry) ||
+        typeof entry[0] !== "string" ||
+        !(typeof entry[1] === "number" || entry[1] === null)
+      ) {
+        throw new Error("authority snapshot: bad revocation entry");
+      }
+      auth.revoked.set(entry[0] as string, entry[1] as number | null);
+    }
+    const used = snap["used"];
+    if (!Array.isArray(used))
+      throw new Error("authority snapshot: used must be an array");
+    for (const entry of used) {
+      if (
+        !Array.isArray(entry) ||
+        typeof entry[0] !== "string" ||
+        !Number.isInteger(entry[1]) ||
+        (entry[1] as number) < 0
+      ) {
+        throw new Error("authority snapshot: bad usage entry");
+      }
+      auth.used.set(entry[0] as string, entry[1] as number);
+    }
+    const issued = snap["issued"];
+    if (!Array.isArray(issued))
+      throw new Error("authority snapshot: issued must be an array");
+    for (const entry of issued) {
+      if (
+        !Array.isArray(entry) ||
+        typeof entry[0] !== "string" ||
+        !Array.isArray(entry[1]) ||
+        !(entry[1] as unknown[]).every((x) => typeof x === "string")
+      ) {
+        throw new Error("authority snapshot: bad issuance entry");
+      }
+      auth.issued.set(entry[0] as string, new Set(entry[1] as string[]));
+    }
+    return auth;
   }
 
   evaluate(

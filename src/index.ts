@@ -16,3 +16,5 @@ export * from "./adapters/webmcp.js";
 export * from "./adapters/jws.js";
 export * from "./adapters/a2a.js";
 export * from "./adapters/oid4vp.js";
+export * from "./store/files.js";
+export * from "./store/keystore.js";
