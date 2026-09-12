@@ -43,6 +43,8 @@ jobs:
     with:
       base64-subjects: "${{ needs.build.outputs.hashes }}"
       upload-assets: true
+      # Private repository: required for Sigstore signing to work correctly.
+      private-repository: true
 
   github-release:
     needs: [build, provenance]
