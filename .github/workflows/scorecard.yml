@@ -13,7 +13,12 @@ jobs:
     permissions:
       security-events: write
       id-token: write
+      # Recommended reads for private repos (per upstream docs): without these,
+      # GraphQL ListCommits fails with "Resource not accessible by integration".
       contents: read
+      issues: read
+      pull-requests: read
+      checks: read
       actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -23,12 +28,10 @@ jobs:
         with:
           results_format: sarif
           results_file: results.sarif
-          # Private repos need a PAT with repo read; the default token cannot
-          # run all checks (ListCommits fails). Create it once:
-          #   profile → Settings → Developer settings → Personal access tokens
-          #   → Tokens (classic), `repo` scope → repo secret SCORECARD_READ_TOKEN.
-          # Public repos can drop this line (default token suffices).
-          repo_token: ${{ secrets.SCORECARD_READ_TOKEN }}
+          # Default GITHUB_TOKEN is the documented path; no PAT needed unless
+          # classic branch-protection details must be visible (see upstream
+          # docs/authentication/fine-grained-auth-token.md — Administration
+          # read-only). A PAT here OAuth-shadows the job token, so leave it out.
           publish_results: true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
