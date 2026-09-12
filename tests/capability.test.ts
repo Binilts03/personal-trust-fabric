@@ -1,10 +1,16 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { KeyObject } from "node:crypto";
-import { termsDigestOf } from "../src/core/canonical.js";
-import { generateEd25519Keypair, signBytes } from "../src/core/crypto.js";
-import { Capabilities, leafCidHex } from "../src/core/capability.js";
-import type { SealedCapability } from "../src/core/types.js";
+import {
+  Capabilities,
+  MapRevocationStore,
+  MapUseLedger,
+  generateEd25519Keypair,
+  leafCidHex,
+  signBytes,
+  termsDigestOf,
+} from "../src/index.js";
+import type { SealedCapability } from "../src/index.js";
 
 const PRINCIPAL = "did:test:principal";
 const AGENT = "did:test:agent";
@@ -294,5 +300,150 @@ describe("capability runtime (ticket 01)", () => {
         principal.priv
       )
     );
+  });
+});
+
+describe("attenuation fixes (review batch A)", () => {
+  it("child claims must subset parent claims, never widen", () => {
+    const { caps, principal, agent } = setup();
+    const digest = termsDigestOf({ i: "claims-direction" });
+    const base = {
+      iss: PRINCIPAL,
+      aud: AGENT,
+      sub: PRINCIPAL,
+      cmd: "/disclose" as const,
+      pol: [] as never[],
+      purpose: "p",
+      resource: "r",
+      recipient: MERCHANT,
+      exp: 1_700_003_600,
+      maxUses: 5,
+      termsDigest: digest,
+    };
+    const root = caps.issue(
+      null,
+      { ...base, claims: ["ca_status", "age_over_18"] },
+      principal.priv
+    );
+    const child = caps.issue(
+      [root],
+      {
+        ...base,
+        iss: AGENT,
+        aud: CHECKOUT,
+        claims: ["ca_status"],
+      },
+      agent.priv
+    );
+    assert.deepEqual(child.payload.claims, ["ca_status"]);
+    assert.throws(() =>
+      caps.issue(
+        [root],
+        {
+          ...base,
+          iss: AGENT,
+          aud: CHECKOUT,
+          claims: ["ca_status", "age_over_18", "passport"],
+        },
+        agent.priv
+      )
+    );
+    const bare = caps.issue(null, base, principal.priv);
+    assert.throws(() =>
+      caps.issue(
+        [bare],
+        { ...base, iss: AGENT, aud: CHECKOUT, claims: ["anything"] },
+        agent.priv
+      )
+    );
+  });
+
+  it("a single-use root cannot fan out through children", () => {
+    const { caps, principal, agent, merchant } = setup();
+    const digest = termsDigestOf({ i: "fanout" });
+    const root = caps.issue(
+      null,
+      {
+        iss: PRINCIPAL,
+        aud: AGENT,
+        sub: PRINCIPAL,
+        cmd: "/pay",
+        pol: [["<=", ".amount", 100]],
+        purpose: "p",
+        resource: "r",
+        recipient: MERCHANT,
+        amountMax: 100,
+        currency: "INR",
+        exp: 1_700_003_600,
+        maxUses: 1,
+        termsDigest: digest,
+      },
+      principal.priv
+    );
+    const issueChild = (aud: string) =>
+      caps.issue(
+        [root],
+        {
+          iss: AGENT,
+          aud,
+          sub: PRINCIPAL,
+          cmd: "/pay",
+          pol: [["<=", ".amount", 100]],
+          purpose: "p",
+          resource: "r",
+          recipient: MERCHANT,
+          amountMax: 100,
+          currency: "INR",
+          exp: 1_700_003_600,
+          maxUses: 1,
+          termsDigest: digest,
+        },
+        agent.priv
+      );
+    const childA = issueChild("did:test:checkout-a");
+    const childB = issueChild("did:test:checkout-b");
+    const redeem = (leaf: SealedCapability) => {
+      const cidBytes = new Uint8Array(Buffer.from(leafCidHex(leaf), "hex"));
+      return caps.authorize(
+        [root, leaf],
+        {
+          cmd: "/pay",
+          args: { amount: 10, currency: "INR" },
+          recipient: MERCHANT,
+          termsDigest: digest,
+        },
+        {
+          consume: true,
+          proof: {
+            key: merchant.pub,
+            sig: signBytes(merchant.priv, cidBytes),
+          },
+        }
+      );
+    };
+    assert.equal(redeem(childA).ok, true);
+    const second = redeem(childB);
+    assert.equal(second.ok, false);
+    if (!second.ok) assert.equal(second.reason, "uses-exhausted");
+  });
+});
+
+describe("revocation store pruning (review batch B)", () => {
+  it("drops expired revocation and ledger entries, keeps live ones", () => {
+    const store = new MapRevocationStore();
+    store.add("old-cap", 1_000);
+    store.add("live-cap", 1_800_000_000);
+    store.add("noexp-cap");
+    store.prune?.(1_700_000_000);
+    assert.equal(store.has("old-cap"), false);
+    assert.equal(store.has("live-cap"), true);
+    assert.equal(store.has("noexp-cap"), true);
+
+    const ledger = new MapUseLedger();
+    ledger.consume("old-chain", 1, 1_000);
+    ledger.consume("live-chain", 5, 1_800_000_000);
+    ledger.prune?.(1_700_000_000);
+    assert.equal(ledger.remaining("old-chain"), null);
+    assert.equal(ledger.remaining("live-chain"), 4);
   });
 });

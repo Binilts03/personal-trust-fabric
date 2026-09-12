@@ -135,13 +135,46 @@ describe("x402 v2 adapter as evidence (ptf-v01/04)", () => {
     if (!result.ok) assert.equal(result.reason, "recipient");
   });
 
-  it("checks settlement and drives verify/settle through the facilitator stub", async () => {
-    const facilitator = new StubFacilitator(true);
+  it("checks settlement against sender, network, amount, and asset", async () => {
+    const facilitator = new StubFacilitator(true, "0xfrom");
     const verified = await facilitator.verify({ x: 1 }, ACCEPT as never);
     assert.equal(verified.isValid, true);
     const settled = await facilitator.settle({ x: 1 }, ACCEPT as never);
     assert.equal(settled.success, true);
+    assert.equal(settled.payer, "0xfrom");
 
+    const good = {
+      success: true,
+      transaction: "0xabc",
+      network: "eip155:84532",
+      payer: "0xfrom",
+      amount: "10000",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    };
+    const expected = {
+      network: "eip155:84532",
+      payer: "0xfrom",
+      amount: "10000",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    };
+    assert.equal(checkSettlement(good, expected).ok, true);
+    assert.equal(
+      checkSettlement({ ...good, network: "eip155:1" }, expected).ok,
+      false
+    );
+    assert.equal(
+      checkSettlement({ ...good, payer: "0xother" }, expected).ok,
+      false
+    );
+    assert.equal(
+      checkSettlement({ ...good, amount: "9999" }, expected).ok,
+      false
+    );
+    assert.equal(
+      checkSettlement({ ...good, asset: "0xJunk" }, expected).ok,
+      false
+    );
+    // Amount/asset expectations are opt-in; network + payer always apply.
     assert.equal(
       checkSettlement(
         {
@@ -150,26 +183,35 @@ describe("x402 v2 adapter as evidence (ptf-v01/04)", () => {
           network: "eip155:84532",
           payer: "0xfrom",
         },
-        { network: "eip155:84532", payTo: "0xfrom" }
+        { network: "eip155:84532", payer: "0xfrom" }
       ).ok,
       true
-    );
-    assert.equal(
-      checkSettlement(
-        {
-          success: true,
-          transaction: "0xabc",
-          network: "eip155:1",
-          payer: "0xfrom",
-        },
-        { network: "eip155:84532", payTo: "0xfrom" }
-      ).ok,
-      false
     );
     const failing = new StubFacilitator(false);
     assert.equal(
       (await failing.settle({ x: 1 }, ACCEPT as never)).success,
       false
     );
+  });
+
+  it("preserves description, mimeType, extra, and extensions for citation", () => {
+    const raw = Buffer.from(
+      JSON.stringify({
+        x402Version: 2,
+        resource: {
+          url: "https://api.example.com/data",
+          description: "Premium data",
+          mimeType: "application/json",
+        },
+        accepts: [{ ...ACCEPT, extra: { name: "USDC", version: "2" } }],
+        extensions: { info: "x" },
+      }),
+      "utf8"
+    ).toString("base64");
+    const parsed = parsePaymentRequired(raw);
+    assert.equal(parsed.resource.description, "Premium data");
+    assert.equal(parsed.resource.mimeType, "application/json");
+    assert.deepEqual(parsed.accepts[0]?.extra, { name: "USDC", version: "2" });
+    assert.deepEqual(parsed.extensions, { info: "x" });
   });
 });

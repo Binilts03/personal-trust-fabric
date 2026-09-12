@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-/** Canonical JSON: sorted object keys, UTF-8, no whitespace. Maps/Sets rejected (non-canonical). */
+/** Canonical JSON: sorted object keys, UTF-8, no whitespace. Maps/Sets rejected (non-canonical). Numbers must be finite. */
 export function canonicalize(value: unknown): string {
   if (value === null) return "null";
   const t = typeof value;
@@ -18,6 +18,14 @@ export function canonicalize(value: unknown): string {
     return JSON.stringify({
       "/": { bytes: Buffer.from(value).toString("base64") },
     });
+  }
+  if (
+    value instanceof Map ||
+    value instanceof Set ||
+    value instanceof WeakMap ||
+    value instanceof WeakSet
+  ) {
+    throw new Error("canonical: Map/Set not allowed (non-canonical)");
   }
   if (Array.isArray(value)) {
     return `[${value.map((v) => canonicalize(v)).join(",")}]`;

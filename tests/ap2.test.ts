@@ -91,7 +91,10 @@ function mandateSet(
     tamperCheckout?: boolean;
     cnfMismatch?: boolean;
     expiredOpen?: boolean;
+    expiredClosed?: boolean;
     kbAud?: string;
+    kbNonce?: string | null;
+    kbWithoutExp?: boolean;
     autonomous?: boolean;
   } = {}
 ) {
@@ -127,11 +130,13 @@ function mandateSet(
     USER.priv
   );
   const closedSigner = overrides.autonomous === true ? AGENT.priv : USER.priv;
+  const closedExp = overrides.expiredClosed ? NOW - 500 : NOW + 600;
   const closedCheckout = sdwrap(
     {
       vct: "mandate.checkout.1",
       checkout_jwt: shownJwt,
       checkout_hash: checkoutHash,
+      exp: closedExp,
     },
     closedSigner
   );
@@ -143,17 +148,23 @@ function mandateSet(
       payee: { id: "did:test:payee", name: "Shop" },
       payment_amount: { amount: 4250, currency: "INR" },
       payment_instrument: { id: "card-1", type: "card" },
+      exp: closedExp,
     },
     closedSigner,
     [disc]
   );
   let kbPayment: string | undefined;
   if (overrides.autonomous === true) {
-    const kbPayload = {
+    const kbPayload: Record<string, unknown> = {
       aud: overrides.kbAud ?? EXPECTED_AUD,
-      nonce: "kb-nonce-1",
       sd_hash: sha256b64u(closedPayment),
     };
+    if (overrides.kbNonce !== null) {
+      kbPayload["nonce"] = overrides.kbNonce ?? "kb-nonce-1";
+    }
+    if (overrides.kbWithoutExp !== true) {
+      kbPayload["exp"] = NOW + 300;
+    }
     const input = `${b64u(JSON.stringify({ alg: "ES256", typ: "kb+jwt" }))}.${b64u(JSON.stringify(kbPayload))}`;
     kbPayment = `${input}.${signEs256(AGENT.priv, input)}`;
   }
@@ -205,6 +216,7 @@ describe("AP2 mandate-pair verifier adapter (ptf-v02/03)", () => {
     const verified = verifyMandatePair(set, {
       ...KEYS,
       expectedAud: EXPECTED_AUD,
+      expectedNonce: "kb-nonce-1",
       nowSec: NOW,
     });
     assert.equal(verified.mode, "autonomous");
@@ -239,6 +251,34 @@ describe("AP2 mandate-pair verifier adapter (ptf-v02/03)", () => {
         {
           ...KEYS,
           expectedAud: EXPECTED_AUD,
+          nowSec: NOW,
+        }
+      )
+    );
+  });
+
+  it("rejects expired closed mandates, KB-JWTs without expiry, and foreign nonces", () => {
+    assert.throws(() =>
+      verifyMandatePair(mandateSet({ expiredClosed: true }), {
+        ...KEYS,
+        expectedAud: EXPECTED_AUD,
+        nowSec: NOW,
+      })
+    );
+    assert.throws(() =>
+      verifyMandatePair(mandateSet({ autonomous: true, kbWithoutExp: true }), {
+        ...KEYS,
+        expectedAud: EXPECTED_AUD,
+        nowSec: NOW,
+      })
+    );
+    assert.throws(() =>
+      verifyMandatePair(
+        mandateSet({ autonomous: true, kbNonce: "session-b" }),
+        {
+          ...KEYS,
+          expectedAud: EXPECTED_AUD,
+          expectedNonce: "session-a",
           nowSec: NOW,
         }
       )

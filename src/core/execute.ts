@@ -49,12 +49,19 @@ export interface Receipt {
   readonly at: number;
 }
 
-/** Runs only after the capability was redeemed. Callers enforce redeem-before-execute. */
+/**
+ * Runs only with proof of redemption: pass the successful `authorize` result.
+ * The type gate turns a forgotten redeem into a compile error instead of a
+ * silent payment. (It cannot prove freshness — redeem immediately before executing.)
+ */
 export async function executeAndReceipt(
   executor: PaymentExecutor,
   instruction: PaymentInstruction,
+  redemption: { readonly ok: true },
   at: number
 ): Promise<Receipt> {
+  if (redemption.ok !== true)
+    throw new Error("execute: redemption required before execution");
   const settled = await executor.executePayment(instruction);
   return {
     receiptId: `rcpt-${randomHex(8)}`,

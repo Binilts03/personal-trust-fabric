@@ -15,11 +15,16 @@ export interface ProposalView {
   readonly maxUses?: number;
 }
 
-/** Strip ANSI escape sequences and control characters (keeps newline/tab). */
+/**
+ * Strip terminal control sequences and C0/C1 control characters.
+ * Printable Unicode (including non-English names) is preserved: only bytes
+ * that can restyle a terminal or smuggle control semantics are removed.
+ */
 export function sanitizeField(value: string): string {
   return value
-    .replace(/\[[0-9;]*[A-Za-z]/g, "")
-    .replace(/[^\x09\x0a\x20-\x7e]/g, "");
+    .replace(/\x1b\[[0-9;?]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
 }
 
 function line(label: string, value: string): string {
@@ -35,6 +40,9 @@ export function renderProposal(view: ProposalView): string {
       ? [line("Amount", `${d.amount} ${d.currency ?? ""}`.trim())]
       : []),
     line("Recipient", d.recipient),
+    ...(d.claims !== undefined && d.claims.length > 0
+      ? [line("Claims", d.claims.map(sanitizeField).join(", "))]
+      : []),
     line("Purpose", d.purpose),
     line("Resource", d.resource),
     line("Agent", d.agent),

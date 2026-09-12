@@ -43,10 +43,22 @@ export class RecipientRegistry {
     ]);
   }
 
+  /**
+   * Rotate to a new key. Retired (revoked) aliases stay retired: rotation
+   * after revocation throws, so in-flight capabilities bound to the old key
+   * fail closed at the recipient gate instead of silently rebinding.
+   * Smooth rollover without breakage means issuing under the new alias
+   * before revoking the old — rotation itself is a hard cutover.
+   */
   rotate(alias: string, key: Uint8Array, at?: number): void {
     const chain = this.bindings.get(alias);
     if (chain === undefined)
       throw new Error(`registry: unknown alias ${alias}`);
+    if (chain.some((b) => b.revoked)) {
+      throw new Error(
+        `registry: ${alias} is revoked and stays retired (use a new alias)`
+      );
+    }
     if (key.length !== 32)
       throw new Error("registry: Ed25519 public keys are 32 bytes");
     for (const b of chain) b.superseded = true;

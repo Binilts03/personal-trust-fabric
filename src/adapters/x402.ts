@@ -27,6 +27,7 @@ export interface ParsedChallenge {
     readonly mimeType?: string;
   };
   readonly accepts: readonly PaymentRequirement[];
+  readonly extensions?: Readonly<Record<string, unknown>>;
 }
 
 export class X402Error extends Error {
@@ -74,6 +75,9 @@ export function parsePaymentRequired(headerB64: string): ParsedChallenge {
   const url = reqString(resource, "url");
   if (!url.startsWith("https://") && !url.startsWith("http://"))
     throw new X402Error("resource url must be http(s)");
+  const description = resource["description"];
+  const mimeType = resource["mimeType"];
+  const extensions = json["extensions"];
   const accepts = json["accepts"];
   if (!Array.isArray(accepts) || accepts.length === 0)
     throw new X402Error("accepts must be non-empty");
@@ -84,6 +88,7 @@ export function parsePaymentRequired(headerB64: string): ParsedChallenge {
     const maxTimeout = entry["maxTimeoutSeconds"];
     if (typeof maxTimeout !== "number" || !(maxTimeout > 0))
       throw new X402Error("missing/invalid maxTimeoutSeconds");
+    const extra = entry["extra"];
     return {
       scheme: reqString(entry, "scheme"),
       network: reqString(entry, "network"),
@@ -91,9 +96,21 @@ export function parsePaymentRequired(headerB64: string): ParsedChallenge {
       asset: reqString(entry, "asset"),
       payTo: reqString(entry, "payTo"),
       maxTimeoutSeconds: maxTimeout,
+      ...(extra !== undefined
+        ? { extra: isRecord(extra) ? extra : { value: extra } }
+        : {}),
     };
   });
-  return { x402Version: 2, resource: { url }, accepts: requirements };
+  return {
+    x402Version: 2,
+    resource: {
+      url,
+      ...(typeof description === "string" ? { description } : {}),
+      ...(typeof mimeType === "string" ? { mimeType } : {}),
+    },
+    accepts: requirements,
+    ...(isRecord(extensions) ? { extensions } : {}),
+  };
 }
 
 export interface DemandContext {
@@ -135,13 +152,21 @@ export interface SettlementResult {
   readonly success: boolean;
   readonly transaction: string;
   readonly network: string;
+  /** Sender recovered from the payment authorization — never the merchant. */
   readonly payer: string;
+  readonly amount?: string;
+  readonly asset?: string;
   readonly errorReason?: string;
 }
 
 export function checkSettlement(
   result: SettlementResult,
-  expected: { readonly network: string; readonly payTo: string }
+  expected: {
+    readonly network: string;
+    readonly payer: string;
+    readonly amount?: string;
+    readonly asset?: string;
+  }
 ): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
   if (!result.success)
     return { ok: false, reason: result.errorReason ?? "settlement failed" };
@@ -149,8 +174,12 @@ export function checkSettlement(
     return { ok: false, reason: "missing transaction" };
   if (result.network !== expected.network)
     return { ok: false, reason: "network mismatch" };
-  if (result.payer !== expected.payTo)
+  if (result.payer !== expected.payer)
     return { ok: false, reason: "payer mismatch" };
+  if (expected.amount !== undefined && result.amount !== expected.amount)
+    return { ok: false, reason: "amount mismatch" };
+  if (expected.asset !== undefined && result.asset !== expected.asset)
+    return { ok: false, reason: "asset mismatch" };
   return { ok: true };
 }
 
@@ -167,7 +196,10 @@ export interface X402Facilitator {
 }
 
 export class StubFacilitator implements X402Facilitator {
-  constructor(private readonly valid: boolean) {}
+  constructor(
+    private readonly valid: boolean,
+    private readonly payer = "0xstub-payer"
+  ) {}
   async verify(
     _payload: unknown,
     _requirements: PaymentRequirement
@@ -191,7 +223,9 @@ export class StubFacilitator implements X402Facilitator {
       success: true,
       transaction: "0xstub",
       network: requirements.network,
-      payer: requirements.payTo,
+      payer: this.payer,
+      amount: requirements.amount,
+      asset: requirements.asset,
     };
   }
 }

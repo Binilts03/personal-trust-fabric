@@ -139,4 +139,53 @@ describe("selective disclosure with holder binding (ptf-v01/03)", () => {
     assert.ok(v01ClaimCatalog.some((c) => c.name === "ca_status"));
     assert.ok(v01ClaimCatalog.some((c) => c.name === "age_over_18"));
   });
+
+  it("binds credential expiry into the presentation and enforces it at verify", () => {
+    const { holder } = keys();
+    const pres = Disclose.present(
+      { ...credential(), exp: NOW + 120 },
+      { verifier: HOSPITAL, nonce: "n-5", requested: ["ca_status"] },
+      { recipient: HOSPITAL, allowed: ["ca_status"] },
+      { id: HOLDER, privateKey: holder.privateKey },
+      NOW
+    );
+    assert.equal(pres.credExp, NOW + 120);
+    assert.equal(
+      Disclose.verify(pres, {
+        holderKey: holder.publicKeyRaw,
+        expectedAud: HOSPITAL,
+        nowSec: NOW,
+      }).ok,
+      true
+    );
+    const expired = Disclose.verify(pres, {
+      holderKey: holder.publicKeyRaw,
+      expectedAud: HOSPITAL,
+      nowSec: NOW + 200,
+    });
+    assert.equal(expired.ok, false);
+    if (!expired.ok) assert.equal(expired.reason, "expired");
+  });
+
+  it("denies presentation replay when the host tracks nonces", () => {
+    const { holder } = keys();
+    const pres = Disclose.present(
+      credential(),
+      { verifier: HOSPITAL, nonce: "n-6", requested: ["ca_status"] },
+      { recipient: HOSPITAL, allowed: ["ca_status"] },
+      { id: HOLDER, privateKey: holder.privateKey },
+      NOW
+    );
+    const seen = new Set<string>();
+    const base = {
+      holderKey: holder.publicKeyRaw,
+      expectedAud: HOSPITAL,
+      nowSec: NOW,
+      usedNonces: seen,
+    };
+    assert.equal(Disclose.verify(pres, base).ok, true);
+    const replay = Disclose.verify(pres, base);
+    assert.equal(replay.ok, false);
+    if (!replay.ok) assert.equal(replay.reason, "replay");
+  });
 });

@@ -1,13 +1,14 @@
-import { createHash, createPublicKey, verify } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { AuthorityDemand } from "../core/authority.js";
+import { b64uDecode, publicKeyFromP256Jwk, verifyEs256Key } from "./jws.js";
 
 /**
- * AP2 mandate-pair verifier — evidence in, never authority out (ADR-0005).
- * Checks follow the deep read (`docs/research/2026-09-09-deep-payments-x402-ap2.md`):
- * SD-JWT shape → checkout_hash recompute → transaction_id linkage → cnf.jwk
- * identity across the open pair → KB-JWT binding for autonomous mode →
- * open expiry → real ES256 throughout. Key material arrives via explicit
- * parameters; nothing is fetched and nothing is resolved.
+ * AP2 mandate-pair verifier: evidence in, never authority out (ADR-0005).
+ * Checks follow the deep read (docs/research/2026-09-09-deep-payments-x402-ap2.md):
+ * SD-JWT shape, checkout_hash recompute, transaction_id linkage, cnf.jwk
+ * identity across the open pair, KB-JWT binding for autonomous mode,
+ * open/closed/KB expiry, real ES256 throughout. Key material arrives via
+ * explicit parameters; nothing is fetched and nothing is resolved.
  * Amounts are minor units end-to-end (same atomic-unit rule as x402).
  */
 
@@ -49,32 +50,10 @@ export class Ap2Error extends Error {
   }
 }
 
-const b64uDecode = (s: string): Buffer => Buffer.from(s, "base64url");
 const sha256b64u = (ascii: string): string =>
   createHash("sha256").update(ascii, "ascii").digest().toString("base64url");
 
-function rawToDer(raw: Buffer): Buffer {
-  if (raw.length !== 64) throw new Ap2Error("ES256 signature must be 64 bytes");
-  const norm = (b: Buffer): Buffer => {
-    const t = b[0] === 0 ? b.slice(1) : b;
-    return t.length < 32 ? Buffer.concat([Buffer.alloc(32 - t.length), t]) : t;
-  };
-  const r = norm(raw.slice(0, 32));
-  const s = norm(raw.slice(32, 64));
-  const enc = (b: Buffer): Buffer =>
-    b[0] !== undefined && b[0] >= 0x80
-      ? Buffer.concat([Buffer.from([0]), b])
-      : b;
-  const rb = enc(r);
-  const sb = enc(s);
-  return Buffer.concat([
-    Buffer.from([0x30, 2 + rb.length + 2 + sb.length, 0x02, rb.length]),
-    rb,
-    Buffer.from([0x02, sb.length]),
-    sb,
-  ]);
-}
-
+/** JWK-shape verification via the shared JWS module; malformed keys verify false. */
 function verifyEs256(
   jwk: EcJwk,
   signingInput: string,
@@ -82,13 +61,7 @@ function verifyEs256(
 ): boolean {
   if (jwk.kty !== "EC" || jwk.crv !== "P-256") return false;
   try {
-    const key = createPublicKey({ key: jwk as never, format: "jwk" });
-    return verify(
-      "sha256",
-      Buffer.from(signingInput, "ascii"),
-      key,
-      rawToDer(b64uDecode(sigB64u))
-    );
+    return verifyEs256Key(publicKeyFromP256Jwk(jwk), signingInput, sigB64u);
   } catch {
     return false;
   }
@@ -182,10 +155,15 @@ function parseMinorAmount(value: unknown): number {
   return n;
 }
 
-/** Verify the full mandate set. Throws on the first failure — fail-closed, no partial trust. */
+/** Verify the full mandate set. Throws on the first failure: fail-closed, no partial trust. */
 export function verifyMandatePair(
   set: MandateSet,
-  opts: Ap2Keys & { readonly expectedAud: string; readonly nowSec: number }
+  opts: Ap2Keys & {
+    readonly expectedAud: string;
+    readonly nowSec: number;
+    /** Session nonce the KB-JWT must carry. Absent = presence-only (document the replay window). */
+    readonly expectedNonce?: string;
+  }
 ): VerifiedMandate {
   const openCheckout = parseSdJwt(set.openCheckout, "open-checkout");
   const openPayment = parseSdJwt(set.openPayment, "open-payment");
@@ -226,7 +204,7 @@ export function verifyMandatePair(
   if (agentJwk.kty !== "EC" || agentJwk.crv !== "P-256")
     throw new Ap2Error("cnf.jwk must be a P-256 key");
 
-  // Closed checkout: linkage recompute first, then merchant signature.
+  // Closed checkout: linkage recompute first, then merchant signature, then freshness.
   requireVct(closedCheckout.payload, "mandate.checkout.1", "closed-checkout");
   const checkoutJwt = closedCheckout.payload["checkout_jwt"];
   if (typeof checkoutJwt !== "string" || checkoutJwt.length === 0)
@@ -235,6 +213,7 @@ export function verifyMandatePair(
   if (closedCheckout.payload["checkout_hash"] !== recomputed) {
     throw new Ap2Error("closed-checkout: checkout_hash mismatch");
   }
+  checkExp(closedCheckout.payload, opts.nowSec, "closed-checkout");
   const merchantSegs = checkoutJwt.split(".");
   if (merchantSegs.length !== 3)
     throw new Ap2Error("checkout_jwt: malformed JWS");
@@ -249,9 +228,21 @@ export function verifyMandatePair(
   if (merchantHeader["alg"] !== "ES256")
     throw new Ap2Error("checkout_jwt: only ES256 accepted");
   checkSig(checkoutJwt, opts.merchantKey, "checkout_jwt");
+  let merchantPayload: Record<string, unknown>;
+  try {
+    merchantPayload = JSON.parse(
+      b64uDecode(merchantSegs[1] as string).toString("utf8")
+    ) as Record<string, unknown>;
+  } catch {
+    throw new Ap2Error("checkout_jwt: malformed payload");
+  }
+  if (merchantPayload["exp"] !== undefined) {
+    checkExp(merchantPayload, opts.nowSec, "checkout_jwt");
+  }
 
-  // Closed payment: bound to the verified cart, fields extracted.
+  // Closed payment: bound to the verified cart, fresh, fields extracted.
   requireVct(closedPayment.payload, "mandate.payment.1", "closed-payment");
+  checkExp(closedPayment.payload, opts.nowSec, "closed-payment");
   if (closedPayment.payload["transaction_id"] !== recomputed) {
     throw new Ap2Error("closed-payment: transaction_id not bound to checkout");
   }
@@ -284,7 +275,9 @@ export function verifyMandatePair(
       set.kbPayment,
       agentJwk,
       closedPayment.presented,
-      opts.expectedAud
+      opts.expectedAud,
+      opts.expectedNonce,
+      opts.nowSec
     );
   } else {
     throw new Ap2Error("closed mandates signed by neither user nor agent key");
@@ -318,7 +311,9 @@ function verifyKb(
   kbRaw: string,
   agentJwk: EcJwk,
   presentedSdJwt: string,
-  expectedAud: string
+  expectedAud: string,
+  expectedNonce: string | undefined,
+  nowSec: number
 ): void {
   const segs = kbRaw.split(".");
   if (segs.length !== 3) throw new Ap2Error("KB-JWT: malformed JWS");
@@ -344,6 +339,11 @@ function verifyKb(
   ) {
     throw new Ap2Error("KB-JWT: nonce required");
   }
+  if (expectedNonce !== undefined && payload["nonce"] !== expectedNonce) {
+    throw new Ap2Error("KB-JWT: nonce not bound to this session");
+  }
+  // KB-JWTs always expire: freshness is part of the binding, not optional.
+  checkExp(payload, nowSec, "KB-JWT");
   if (payload["sd_hash"] !== sha256b64u(presentedSdJwt))
     throw new Ap2Error("KB-JWT: sd_hash mismatch");
   if (!verifyEs256(agentJwk, `${segs[0]}.${segs[1]}`, segs[2] as string)) {
@@ -359,7 +359,7 @@ export interface Ap2DemandContext {
   readonly termsDigest: string;
 }
 
-/** Verified mandate → PTF demand + capability args. Still evidence: must pass Authority + Capabilities. */
+/** Verified mandate -> PTF demand + capability args. Still evidence: must pass Authority + Capabilities. */
 export function toAp2PaymentDemand(
   verified: VerifiedMandate,
   ctx: Ap2DemandContext

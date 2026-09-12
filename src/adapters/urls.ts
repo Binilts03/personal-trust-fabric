@@ -21,11 +21,34 @@ function ipv4Octets(host: string): number[] | null {
 
 /** WHATWG keeps brackets in IPv6 hostnames ([::1]); strip them before matching. */
 function bareHost(host: string): string {
-  return host
+  const h = host
     .toLowerCase()
     .replace(/\.$/, "")
     .replace(/^\[/, "")
     .replace(/\]$/, "");
+  // IPv4-mapped IPv6 arrives in hex WHATWG form (::ffff:a00:1) or dotted
+  // (::ffff:10.0.0.1): judge the embedded IPv4 address in both cases.
+  if (h.startsWith("::ffff:")) {
+    const tail = h.slice("::ffff:".length);
+    if (/^(\d+\.){3}\d+$/.test(tail)) return tail;
+    const groups = tail.split(":").filter((g) => g.length > 0);
+    if (groups.length >= 2) {
+      const hi = Number.parseInt(groups[groups.length - 2] as string, 16);
+      const lo = Number.parseInt(groups[groups.length - 1] as string, 16);
+      if (
+        Number.isInteger(hi) &&
+        Number.isInteger(lo) &&
+        hi >= 0 &&
+        hi <= 0xffff &&
+        lo >= 0 &&
+        lo <= 0xffff
+      ) {
+        const v = hi * 65536 + lo;
+        return `${(v >>> 24) & 255}.${(v >>> 16) & 255}.${(v >>> 8) & 255}.${v & 255}`;
+      }
+    }
+  }
+  return h;
 }
 
 /** Loopback only: localhost, 127/8, ::1. Everything else sensitive stays blocked. */
@@ -39,6 +62,10 @@ export function isLoopbackHost(host: string): boolean {
 
 function isAlwaysBlockedHost(host: string): boolean {
   const h = bareHost(host);
+  // Unspecified and loopback are never fetchable: loopback HTTP is allowed
+  // only through the explicit redirect exception below, never here.
+  if (h === "::" || h === "0.0.0.0") return true;
+  if (isLoopbackHost(h)) return true;
   const octets = ipv4Octets(h);
   if (octets !== null) {
     const a = octets[0] as number;
@@ -60,8 +87,8 @@ function isAlwaysBlockedHost(host: string): boolean {
 }
 
 /**
- * Fail-closed URL check. HTTPS required unless `allowLoopbackHttp` and a
- * loopback host (the MCP redirect case). Returns the parsed URL on success.
+ * Fail-closed URL check. HTTPS only, except explicit loopback-HTTP callers
+ * (the MCP redirect case). Returns the parsed URL on success.
  */
 export function assertSafeUrl(
   raw: string,
@@ -77,13 +104,15 @@ export function assertSafeUrl(
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new UrlError(`${what}: only http(s) allowed`);
   }
-  if (isAlwaysBlockedHost(url.hostname))
-    throw new UrlError(`${what}: blocked network range`);
   if (
     url.protocol === "http:" &&
-    !(allowLoopbackHttp && isLoopbackHost(url.hostname))
+    allowLoopbackHttp &&
+    isLoopbackHost(url.hostname)
   ) {
-    throw new UrlError(`${what}: http allowed for loopback only`);
+    return url;
   }
+  if (isAlwaysBlockedHost(url.hostname))
+    throw new UrlError(`${what}: blocked network range`);
+  if (url.protocol !== "https:") throw new UrlError(`${what}: https required`);
   return url;
 }

@@ -106,6 +106,42 @@ function isCovered(broad: `/${string}`, narrow: `/${string}`): boolean {
   );
 }
 
+function isPayCmd(cmd: `/${string}`): boolean {
+  return cmd === "/pay" || cmd.startsWith("/pay/");
+}
+
+/** Fail-loud numeric validation: NaN/Infinity must never become authority. */
+function checkBoundsShape(
+  v: {
+    readonly amountMax?: number;
+    readonly nbf?: number;
+    readonly exp?: number;
+    readonly maxUses?: number;
+  },
+  what: string
+): void {
+  if (
+    v.amountMax !== undefined &&
+    (!Number.isFinite(v.amountMax) || v.amountMax <= 0)
+  ) {
+    throw new Error(`${what}: amountMax must be a positive finite number`);
+  }
+  for (const [name, bound] of [
+    ["nbf", v.nbf],
+    ["exp", v.exp],
+  ] as const) {
+    if (bound !== undefined && (!Number.isInteger(bound) || bound < 0)) {
+      throw new Error(`${what}: ${name} must be a non-negative epoch integer`);
+    }
+  }
+  if (
+    v.maxUses !== undefined &&
+    (!Number.isInteger(v.maxUses) || v.maxUses < 1)
+  ) {
+    throw new Error(`${what}: maxUses must be an integer >= 1`);
+  }
+}
+
 function claimsEqual(
   a: readonly string[] | undefined,
   b: readonly string[] | undefined
@@ -191,24 +227,42 @@ export class Authority {
   private readonly grants = new Map<string, StandingGrant>();
   private readonly approvals = new Map<string, OneTimeApproval>();
   private readonly policies = new Map<string, PolicyConstraint>();
-  private readonly revoked = new Set<string>();
+  private readonly revoked = new Map<string, number | null>();
   private readonly used = new Map<string, number>();
+  private readonly issued = new Map<string, Set<string>>();
   private readonly nowSec: () => number;
+  private readonly onRevoke:
+    ((capabilityRevocationIds: string[]) => void) | undefined;
 
-  constructor(opts: { readonly nowSec?: () => number } = {}) {
+  constructor(
+    opts: {
+      readonly nowSec?: () => number;
+      readonly onRevoke?: (capabilityRevocationIds: string[]) => void;
+    } = {}
+  ) {
     this.nowSec = opts.nowSec ?? (() => Math.floor(Date.now() / 1000));
+    this.onRevoke = opts.onRevoke;
   }
 
   addGrant(g: StandingGrant): void {
     if (g.id.length === 0) throw new Error("grant id required");
     if (g.cmd === "/" || !g.cmd.startsWith("/"))
       throw new Error("grant: wildcard cmd forbidden");
+    checkBoundsShape(g, `grant ${g.id}`);
+    if (
+      isPayCmd(g.cmd) &&
+      (g.amountMax === undefined || g.currency === undefined)
+    ) {
+      throw new Error(
+        `grant ${g.id}: /pay grants require an amountMax ceiling and currency`
+      );
+    }
     this.grants.set(g.id, g);
   }
 
   addApproval(a: OneTimeApproval): void {
     if (a.id.length === 0) throw new Error("approval id required");
-    if (a.maxUses < 1) throw new Error("approval maxUses must be >= 1");
+    checkBoundsShape(a, `approval ${a.id}`);
     this.approvals.set(a.id, a);
   }
 
@@ -228,6 +282,19 @@ export class Authority {
     readonly ttlSec: number;
     readonly maxUses?: number;
   }): OneTimeApproval {
+    if (!Number.isFinite(params.ttlSec) || params.ttlSec <= 0) {
+      throw new Error(
+        "createApproval: ttlSec must be a positive finite number"
+      );
+    }
+    if (
+      params.amount !== undefined &&
+      (!Number.isFinite(params.amount) || params.amount <= 0)
+    ) {
+      throw new Error(
+        "createApproval: amount must be a positive finite number"
+      );
+    }
     const approval: OneTimeApproval = {
       id: params.id,
       principal: params.principal,
@@ -249,11 +316,35 @@ export class Authority {
 
   addPolicy(p: PolicyConstraint): void {
     if (p.id.length === 0) throw new Error("policy id required");
+    checkBoundsShape(p, `policy ${p.id}`);
     this.policies.set(p.id, p);
   }
 
-  revoke(id: string): void {
-    this.revoked.add(id);
+  /**
+   * Record which capability revocation ids were minted under an authority id,
+   * so `revoke` fans out to everything derived from it (spec story 4).
+   * The host calls this at mint time and wires `onRevoke` to its Capabilities.
+   */
+  noteIssued(authorityId: string, capabilityRevocationId: string): void {
+    const set = this.issued.get(authorityId) ?? new Set<string>();
+    set.add(capabilityRevocationId);
+    this.issued.set(authorityId, set);
+  }
+
+  revoke(id: string, exp?: number): void {
+    this.revoked.set(id, exp ?? null);
+    const derived = this.issued.get(id);
+    if (derived !== undefined && this.onRevoke !== undefined) {
+      this.onRevoke([...derived]);
+    }
+  }
+
+  /** Drop revocation entries whose authority is known-expired. */
+  prune(nowSec?: number): void {
+    const now = nowSec ?? this.nowSec();
+    for (const [id, exp] of this.revoked) {
+      if (exp !== null && now > exp + SKEW_SEC) this.revoked.delete(id);
+    }
   }
 
   evaluate(

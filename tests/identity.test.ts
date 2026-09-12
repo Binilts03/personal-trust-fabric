@@ -70,7 +70,7 @@ describe("recipient binding registry with rotation (ptf-v02/01)", () => {
         amountMax: 50,
         currency: "INR",
         exp: NOW + 300,
-        maxUses: 1,
+        maxUses: 5,
         termsDigest: digest,
       },
       p.privateKey
@@ -94,5 +94,22 @@ describe("recipient binding registry with rotation (ptf-v02/01)", () => {
     reg.revoke(MERCHANT);
     assert.equal(reg.resolve(MERCHANT), null);
     assert.equal((reg.history(MERCHANT) ?? []).length, 1);
+
+    const stale = caps.authorize([cap], demand, {
+      consume: true,
+      proof,
+    });
+    assert.equal(stale.ok, false);
+    if (!stale.ok) assert.equal(stale.reason, "recipient");
+  });
+
+  it("revoked aliases stay retired: rotation after revocation throws", () => {
+    const reg = new RecipientRegistry(() => NOW);
+    const oldKp = generateEd25519Keypair();
+    const newKp = generateEd25519Keypair();
+    reg.register(MERCHANT, oldKp.publicKeyRaw);
+    reg.revoke(MERCHANT);
+    assert.throws(() => reg.rotate(MERCHANT, newKp.publicKeyRaw));
+    assert.equal(reg.resolve(MERCHANT), null);
   });
 });

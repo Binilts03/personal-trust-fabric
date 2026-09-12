@@ -108,10 +108,9 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       key: merchant.publicKeyRaw,
       sig: signBytes(merchant.privateKey, cidBytes),
     };
-    assert.equal(
-      caps.authorize([cap], demand, { consume: true, proof }).ok,
-      true
-    );
+    const redeemed = caps.authorize([cap], demand, { consume: true, proof });
+    assert.equal(redeemed.ok, true);
+    if (!redeemed.ok) throw new Error("redeem must succeed in this fixture");
 
     const executor = new FakePaymentExecutor();
     const receipt = await executeAndReceipt(
@@ -124,12 +123,12 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
         resource: "invoice:inv_8472",
         purpose: "pay invoice",
       },
+      redeemed,
       NOW
     );
     assert.equal(receipt.amount, 1790);
     assert.equal(receipt.recipient, MERCHANT);
     assert.equal(executor.calls.length, 1);
-
     const audit = new Audit(() => NOW);
     audit.append({
       actor: AGENT,
@@ -232,5 +231,58 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
     assert.equal(unkeyed.verifyChain(), false);
 
     assert.throws(() => new Audit(() => NOW, { hmacKey: new Uint8Array(8) }));
+  });
+
+  it("refuses execution without a successful redemption result", async () => {
+    const executor = new FakePaymentExecutor();
+    const instruction = {
+      capabilityId: "cid-x",
+      recipient: MERCHANT,
+      amount: 10,
+      currency: "INR",
+      resource: "r",
+      purpose: "p",
+    };
+    await assert.rejects(() =>
+      executeAndReceipt(executor, instruction, { ok: false } as never, NOW)
+    );
+    assert.equal(executor.calls.length, 0);
+  });
+
+  it("instructions and receipts carry a fixed field set with no room for secrets", async () => {
+    const executor = new FakePaymentExecutor();
+    const instruction = {
+      capabilityId: "cid-x",
+      recipient: MERCHANT,
+      amount: 10,
+      currency: "INR",
+      resource: "r",
+      purpose: "p",
+    };
+    assert.deepEqual(Object.keys(instruction).sort(), [
+      "amount",
+      "capabilityId",
+      "currency",
+      "purpose",
+      "recipient",
+      "resource",
+    ]);
+    const receipt = await executeAndReceipt(
+      executor,
+      instruction,
+      { ok: true },
+      NOW
+    );
+    assert.deepEqual(Object.keys(receipt).sort(), [
+      "amount",
+      "at",
+      "capabilityId",
+      "currency",
+      "purpose",
+      "receiptId",
+      "recipient",
+      "resource",
+      "transaction",
+    ]);
   });
 });

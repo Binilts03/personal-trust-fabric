@@ -7,10 +7,10 @@ import {
   generateEd25519Keypair,
   leafCidHex,
   parsePaymentRequired,
+  signBytes,
   termsDigestOf,
   toX402PaymentDemand,
 } from "../../src/index.js";
-import { signBytes } from "../../src/core/crypto.js";
 
 const NOW = 1_700_000_000;
 const P = "did:test:p";
@@ -246,5 +246,42 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
     });
     assert.equal(demand.recipient, X);
     assert.notEqual(demand.recipient, M);
+
+    const caps = new Capabilities({
+      resolveKey: (id) => k.keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const digest = termsDigestOf({ swap: 1 });
+    const cap = caps.issue(
+      null,
+      {
+        iss: P,
+        aud: A,
+        sub: P,
+        cmd: "/pay",
+        pol: [["<=", ".amount", 50]],
+        purpose: "p",
+        resource: "r",
+        recipient: M,
+        amountMax: 50,
+        currency: "USDC",
+        exp: NOW + 300,
+        maxUses: 1,
+        termsDigest: digest,
+      },
+      k.p.privateKey
+    );
+    const swapped = caps.authorize(
+      [cap],
+      {
+        cmd: "/pay",
+        args: { amount: demand.amount, currency: "USDC" },
+        recipient: demand.recipient,
+        termsDigest: digest,
+      },
+      { consume: false }
+    );
+    assert.equal(swapped.ok, false);
+    if (!swapped.ok) assert.equal(swapped.reason, "recipient");
   });
 });

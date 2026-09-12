@@ -51,6 +51,15 @@ describe("A2A card, task, and push guards (ptf-v03/02)", () => {
       })
     );
     assert.throws(() => checkAgentCard({ ...baseCard(), skills: [] }));
+    assert.throws(() =>
+      checkAgentCard({
+        ...baseCard(),
+        provider: { organization: "Shop Inc", url: "http://10.0.0.9/x" },
+      })
+    );
+    assert.throws(() =>
+      checkAgentCard({ ...baseCard(), documentationUrl: "javascript:alert(1)" })
+    );
   });
 
   it("verifies card signatures and rejects forgeries and unknown keys", () => {
@@ -82,6 +91,22 @@ describe("A2A card, task, and push guards (ptf-v03/02)", () => {
     };
     assert.throws(() => verifyCardSignatures(forged, resolve));
     assert.throws(() => verifyCardSignatures(signed, () => null));
+
+    const rogue = generateEd25519Keypair();
+    const rogueSig = signAgentCard(card, "rogue-key", {
+      alg: "EdDSA",
+      privateKey: rogue.privateKey,
+    });
+    assert.throws(() =>
+      verifyCardSignatures(
+        { ...card, signatures: [sigEc, rogueSig] },
+        (kid) => {
+          if (kid === "ec-key-1")
+            return { alg: "ES256" as const, key: ec.publicKey as KeyObject };
+          return null;
+        }
+      )
+    );
   });
 
   it("enforces the task-state machine with immutable terminals", () => {

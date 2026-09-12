@@ -297,4 +297,67 @@ describe("capability invariants under randomization (ptf-v01/05)", () => {
       { numRuns: 25 }
     );
   });
+
+  it("hostile demand mutations always deny", () => {
+    fc.assert(
+      fc.property(
+        fc
+          .record({
+            recipientSwap: fc.boolean(),
+            digestFlip: fc.boolean(),
+            amountBump: fc.boolean(),
+            currencySwap: fc.boolean(),
+            bigAmount: fc.integer({ min: 2001, max: 1_000_000 }),
+          })
+          .filter(
+            (w) =>
+              w.recipientSwap || w.digestFlip || w.amountBump || w.currencySwap
+          ),
+        (w) => {
+          const k = kit();
+          const digest = termsDigestOf({ t: "hostile" });
+          const caps = new Capabilities({
+            resolveKey: (id) => k.keys.get(id) ?? null,
+            nowSec: () => NOW,
+          });
+          const root = caps.issue(
+            null,
+            {
+              iss: P,
+              aud: AGENTS[0],
+              sub: P,
+              cmd: "/pay",
+              pol: [["<=", ".amount", 2000]],
+              purpose: "p",
+              resource: "r",
+              recipient: MERCHANT,
+              amountMax: 2000,
+              currency: "INR",
+              exp: NOW + 3600,
+              maxUses: 5,
+              termsDigest: digest,
+            },
+            key(k, P)
+          );
+          const flipped =
+            digest.slice(0, 63) + (digest[63] === "0" ? "1" : "0");
+          const result = caps.authorize(
+            [root],
+            {
+              cmd: "/pay",
+              args: {
+                amount: w.amountBump ? w.bigAmount : 100,
+                currency: w.currencySwap ? "XXX" : "INR",
+              },
+              recipient: w.recipientSwap ? "did:test:attacker" : MERCHANT,
+              termsDigest: w.digestFlip ? flipped : digest,
+            },
+            { consume: false }
+          );
+          assert.equal(result.ok, false);
+        }
+      ),
+      { numRuns: 25 }
+    );
+  });
 });

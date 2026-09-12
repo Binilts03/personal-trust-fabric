@@ -68,26 +68,42 @@ function fail(
 }
 
 export class MapRevocationStore implements RevocationStore {
-  private readonly revoked = new Set<string>();
+  private readonly revoked = new Map<string, number | null>();
   has(id: string): boolean {
     return this.revoked.has(id);
   }
-  add(id: string): void {
-    this.revoked.add(id);
+  add(id: string, exp?: number): void {
+    this.revoked.set(id, exp ?? null);
+  }
+  prune(nowSec: number): void {
+    for (const [id, exp] of this.revoked) {
+      if (exp !== null && nowSec > exp + CLOCK_SKEW_SEC)
+        this.revoked.delete(id);
+    }
   }
 }
 
 export class MapUseLedger implements UseLedger {
-  private readonly used = new Map<string, number>();
+  private readonly used = new Map<
+    string,
+    { left: number; exp: number | null }
+  >();
   remaining(chainId: string): number | null {
     const v = this.used.get(chainId);
-    return v === undefined ? null : v;
+    return v === undefined ? null : v.left;
   }
-  consume(chainId: string, maxUses: number): number {
-    const prev = this.used.get(chainId) ?? maxUses;
+  consume(chainId: string, maxUses: number, exp?: number): number {
+    const prev = this.used.get(chainId)?.left ?? maxUses;
     const next = prev - 1;
-    this.used.set(chainId, next);
+    this.used.set(chainId, { left: next, exp: exp ?? null });
     return next;
+  }
+  prune(nowSec: number): void {
+    for (const [id, entry] of this.used) {
+      if (entry.exp !== null && nowSec > entry.exp + CLOCK_SKEW_SEC) {
+        this.used.delete(id);
+      }
+    }
   }
 }
 
@@ -177,6 +193,23 @@ export class Capabilities {
       if (shape !== null)
         return fail({ ok: false, reason: "forbidden-shape", detail: shape });
     }
+    // Authenticity before interpretation: signatures first, then chain semantics.
+    for (const link of chain) {
+      const pub = this.resolveKey(link.payload.iss);
+      if (pub === null)
+        return fail({
+          ok: false,
+          reason: "sig",
+          detail: `unknown issuer ${link.payload.iss}`,
+        });
+      if (!verifyBytes(pub, utf8(canonicalize(link.payload)), link.sig)) {
+        return fail({
+          ok: false,
+          reason: "sig",
+          detail: `bad signature from ${link.payload.iss}`,
+        });
+      }
+    }
     if (root.payload.iss !== root.payload.sub) {
       return fail({
         ok: false,
@@ -208,22 +241,6 @@ export class Capabilities {
           reason: "policy",
           detail: `link ${i}: ${narrow}`,
         });
-    }
-    for (const link of chain) {
-      const pub = this.resolveKey(link.payload.iss);
-      if (pub === null)
-        return fail({
-          ok: false,
-          reason: "sig",
-          detail: `unknown issuer ${link.payload.iss}`,
-        });
-      if (!verifyBytes(pub, utf8(canonicalize(link.payload)), link.sig)) {
-        return fail({
-          ok: false,
-          reason: "sig",
-          detail: `bad signature from ${link.payload.iss}`,
-        });
-      }
     }
     for (const link of chain) {
       const p = link.payload;
@@ -324,9 +341,19 @@ export class Capabilities {
       });
     }
 
-    const chainId = payloadCid(canonicalize(leaf.payload));
-    const remaining = this.uses.remaining(chainId) ?? leaf.payload.maxUses;
-    if (remaining <= 0) return fail({ ok: false, reason: "uses-exhausted" });
+    // Uses are a subtree budget: every link's remaining uses are checked and,
+    // on redeem, decremented — a single-use root cannot fan out through children.
+    const links = chain.map((link) => ({
+      cid: payloadCid(canonicalize(link.payload)),
+      maxUses: link.payload.maxUses,
+      exp: link.payload.exp,
+    }));
+    let remaining = Number.POSITIVE_INFINITY;
+    for (const l of links) {
+      const left = this.uses.remaining(l.cid) ?? l.maxUses;
+      if (left <= 0) return fail({ ok: false, reason: "uses-exhausted" });
+      if (left < remaining) remaining = left;
+    }
 
     if (opts.consume === true) {
       if (opts.proof === undefined)
@@ -349,7 +376,7 @@ export class Capabilities {
           detail: "proof key differs from binding",
         });
       }
-      const cidBytes = new Uint8Array(Buffer.from(chainId, "hex"));
+      const cidBytes = new Uint8Array(Buffer.from(leafCidHex(leaf), "hex"));
       if (!verifyBytes(opts.proof.key, cidBytes, opts.proof.sig)) {
         return fail({
           ok: false,
@@ -357,16 +384,17 @@ export class Capabilities {
           detail: "bad recipient signature",
         });
       }
+      for (const l of links) this.uses.consume(l.cid, l.maxUses, l.exp);
       return {
         ok: true,
-        remaining: this.uses.consume(chainId, leaf.payload.maxUses),
+        remaining: remaining - 1,
       };
     }
     return { ok: true, remaining };
   }
 
-  revoke(revocationId: string): void {
-    this.revocations.add(revocationId);
+  revoke(revocationId: string, exp?: number): void {
+    this.revocations.add(revocationId, exp);
   }
 }
 
@@ -390,6 +418,11 @@ function checkLinkShape(p: CapabilityPayload): string | null {
       return "/pay needs positive amountMax";
     if (p.currency === undefined || p.currency.length === 0)
       return "/pay needs currency";
+  }
+  try {
+    canonicalize(p);
+  } catch {
+    return "payload not serializable";
   }
   return null;
 }
@@ -439,9 +472,12 @@ function checkNarrowing(
   if (par.currency !== undefined && child.currency !== par.currency)
     return "currency is fixed";
   if (par.claims !== undefined) {
-    const allowed = new Set(child.claims ?? []);
-    if (!par.claims.every((c) => allowed.has(c)))
+    const allowed = new Set(par.claims);
+    const childClaims = child.claims ?? [];
+    if (!childClaims.every((c) => allowed.has(c)))
       return "claims may only subset";
+  } else if (child.claims !== undefined && child.claims.length > 0) {
+    return "claims require a parent allowance to narrow";
   } else if (
     child.claims !== undefined &&
     (child.cmd === "/pay" || child.cmd.startsWith("/pay/"))

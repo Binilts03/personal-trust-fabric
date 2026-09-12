@@ -87,6 +87,21 @@ export function checkAgentCard(card: unknown): void {
   const provider = card["provider"];
   if (!isRecord(provider)) throw new A2aError("card: provider required");
   reqString(provider, "organization", "card: provider");
+  if (provider["url"] !== undefined) {
+    assertSafeUrl(
+      reqString(provider, "url", "card: provider"),
+      "card: provider url"
+    );
+  }
+  for (const field of ["documentationUrl", "iconUrl"] as const) {
+    if (card[field] !== undefined) {
+      assertSafeUrl(reqString(card, field, "card"), `card: ${field}`);
+    }
+  }
+  const capabilities = card["capabilities"];
+  if (capabilities !== undefined && !isRecord(capabilities)) {
+    throw new A2aError("card: capabilities must be an object");
+  }
   reqStringArray(card, "defaultInputModes", "card");
   reqStringArray(card, "defaultOutputModes", "card");
   const skills = card["skills"];
@@ -185,8 +200,9 @@ export function signAgentCard(
 
 /**
  * Verify card signatures over the canonical form minus `signatures`.
- * At least one signature must verify; unknown kids, alg mismatches, and
- * non-allowlisted algorithms throw. Returns the count of valid signatures.
+ * Every listed signature must verify — a forged entry fails the set, since a
+ * mixed set signals tampering, not redundancy. Unknown kids, alg mismatches,
+ * and non-allowlisted algorithms throw. Returns the count of valid signatures.
  */
 export function verifyCardSignatures(
   card: Record<string, unknown> & {
@@ -221,7 +237,8 @@ export function verifyCardSignatures(
       found.alg === "ES256"
         ? verifyEs256Key(found.key, canonical, sigBytes.toString("base64url"))
         : verifyBytes(found.key, utf8(canonical), new Uint8Array(sigBytes));
-    if (ok) valid += 1;
+    if (!ok) throw new A2aError(`invalid card signature from ${kid}`);
+    valid += 1;
   }
   if (valid === 0) throw new A2aError("no valid card signature");
   return { verified: valid };

@@ -1,6 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Authority, termsDigestOf } from "../src/index.js";
+import {
+  Authority,
+  Capabilities,
+  generateEd25519Keypair,
+  leafCidHex,
+  signBytes,
+  termsDigestOf,
+} from "../src/index.js";
 
 const NOW = 1_700_000_000;
 const PRINCIPAL = "did:test:principal";
@@ -118,6 +125,8 @@ describe("policy authority with digest-bound approval (ptf-v01/01)", () => {
       principal: PRINCIPAL,
       agent: AGENT,
       cmd: "/pay",
+      amountMax: 2000,
+      currency: "INR",
       exp: NOW - 3600,
     });
     const expired = auth.evaluate(demand("ab".repeat(32)));
@@ -129,6 +138,8 @@ describe("policy authority with digest-bound approval (ptf-v01/01)", () => {
       principal: PRINCIPAL,
       agent: AGENT,
       cmd: "/pay",
+      amountMax: 2000,
+      currency: "INR",
       maxUses: 1,
     });
     assert.equal(
@@ -144,6 +155,8 @@ describe("policy authority with digest-bound approval (ptf-v01/01)", () => {
       principal: PRINCIPAL,
       agent: AGENT,
       cmd: "/pay",
+      amountMax: 2000,
+      currency: "INR",
     });
     auth.revoke("doomed");
     const revoked = auth.evaluate(demand("ef".repeat(32)));
@@ -158,9 +171,137 @@ describe("policy authority with digest-bound approval (ptf-v01/01)", () => {
       principal: PRINCIPAL,
       agent: OTHER_AGENT,
       cmd: "/pay",
+      amountMax: 2000,
+      currency: "INR",
     });
     const wrongAgent = auth.evaluate(demand("12".repeat(32)));
     assert.equal(wrongAgent.allow, false);
     if (!wrongAgent.allow) assert.equal(wrongAgent.reason, "no-authority");
+  });
+
+  it("rejects non-finite numbers and ceiling-less payment grants at registration", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    assert.throws(() =>
+      auth.addGrant({
+        id: "nan",
+        principal: PRINCIPAL,
+        cmd: "/pay",
+        amountMax: NaN,
+        currency: "INR",
+      })
+    );
+    assert.throws(() =>
+      auth.addGrant({
+        id: "inf",
+        principal: PRINCIPAL,
+        cmd: "/pay",
+        amountMax: Infinity,
+        currency: "INR",
+      })
+    );
+    assert.throws(() =>
+      auth.addGrant({
+        id: "noceiling",
+        principal: PRINCIPAL,
+        cmd: "/pay",
+        currency: "INR",
+      })
+    );
+    assert.throws(() =>
+      auth.addGrant({
+        id: "nocur",
+        principal: PRINCIPAL,
+        cmd: "/pay",
+        amountMax: 100,
+      })
+    );
+    assert.throws(() =>
+      auth.addGrant({
+        id: "neverexp",
+        principal: PRINCIPAL,
+        cmd: "/disclose",
+        exp: NaN,
+      })
+    );
+    assert.throws(() =>
+      auth.createApproval({
+        id: "badttl",
+        principal: PRINCIPAL,
+        agent: AGENT,
+        cmd: "/pay",
+        purpose: "p",
+        resource: "r",
+        recipient: MERCHANT,
+        terms: {},
+        ttlSec: Infinity,
+      })
+    );
+  });
+
+  it("revoking a grant invalidates already-issued capabilities derived from it", () => {
+    const principal = generateEd25519Keypair();
+    const agent = generateEd25519Keypair();
+    const merchant = generateEd25519Keypair();
+    const keys = new Map([
+      [PRINCIPAL, principal.publicKeyRaw],
+      [AGENT, agent.publicKeyRaw],
+      [MERCHANT, merchant.publicKeyRaw],
+    ]);
+    const caps = new Capabilities({
+      resolveKey: (id) => keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const auth = new Authority({
+      nowSec: () => NOW,
+      onRevoke: (ids) => {
+        for (const id of ids) caps.revoke(id);
+      },
+    });
+    auth.addGrant({
+      id: "grocery",
+      principal: PRINCIPAL,
+      agent: AGENT,
+      cmd: "/pay",
+      amountMax: 2000,
+      currency: "INR",
+      exp: NOW + 3600,
+    });
+    const digest = termsDigestOf({ invoice: "inv-1", amount: 100 });
+    const cap = caps.issue(
+      null,
+      {
+        iss: PRINCIPAL,
+        aud: AGENT,
+        sub: PRINCIPAL,
+        cmd: "/pay",
+        pol: [["<=", ".amount", 2000]],
+        purpose: "p",
+        resource: "r",
+        recipient: MERCHANT,
+        amountMax: 2000,
+        currency: "INR",
+        exp: NOW + 300,
+        maxUses: 5,
+        termsDigest: digest,
+      },
+      principal.privateKey
+    );
+    auth.noteIssued("grocery", cap.payload.revocationId);
+    const ask = {
+      cmd: "/pay" as const,
+      args: { amount: 100, currency: "INR" },
+      recipient: MERCHANT,
+      termsDigest: digest,
+    };
+    const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
+    const proof = {
+      key: merchant.publicKeyRaw,
+      sig: signBytes(merchant.privateKey, cidBytes),
+    };
+    assert.equal(caps.authorize([cap], ask, { consume: true, proof }).ok, true);
+    auth.revoke("grocery");
+    const denied = caps.authorize([cap], ask, { consume: false });
+    assert.equal(denied.ok, false);
+    if (!denied.ok) assert.equal(denied.reason, "revoked");
   });
 });

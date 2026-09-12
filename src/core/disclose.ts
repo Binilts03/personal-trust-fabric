@@ -46,13 +46,21 @@ export interface Presentation {
   readonly verifier: string;
   readonly nonce: string;
   readonly iat: number;
+  /** Credential expiry at issuance, when the credential had one. Enforced at verify. */
+  readonly credExp?: number;
   readonly disclosures: readonly Disclosure[];
   /** Holder Ed25519 signature over canonical presentation sans sig. Empty = bearer. */
   readonly sig: Uint8Array;
 }
 
 export type DiscloseDenyReason =
-  "unsigned" | "bad-signature" | "audience" | "stale" | "digest-mismatch";
+  | "unsigned"
+  | "bad-signature"
+  | "audience"
+  | "stale"
+  | "expired"
+  | "replay"
+  | "digest-mismatch";
 
 export type VerifyResult =
   | { readonly ok: true; readonly disclosed: readonly string[] }
@@ -110,6 +118,7 @@ export const Disclose = {
       verifier: req.verifier,
       nonce: req.nonce,
       iat: nowSec,
+      ...(cred.exp !== undefined ? { credExp: cred.exp } : {}),
       disclosures,
     };
     return {
@@ -125,6 +134,12 @@ export const Disclose = {
       readonly expectedAud: string;
       readonly maxAgeSec?: number;
       readonly nowSec: number;
+      /**
+       * Host-managed replay cache. When provided, a repeated nonce is denied
+       * and fresh nonces are recorded. The store itself lives with the host;
+       * without it, replay inside the freshness window is possible.
+       */
+      readonly usedNonces?: Set<string>;
     }
   ): VerifyResult {
     if (pres.sig.length !== 64) return { ok: false, reason: "unsigned" };
@@ -136,6 +151,17 @@ export const Disclose = {
       opts.nowSec > pres.iat + maxAge
     ) {
       return { ok: false, reason: "stale" };
+    }
+    if (opts.usedNonces !== undefined) {
+      if (opts.usedNonces.has(pres.nonce))
+        return { ok: false, reason: "replay" };
+      opts.usedNonces.add(pres.nonce);
+    }
+    if (
+      pres.credExp !== undefined &&
+      opts.nowSec > pres.credExp + FUTURE_SKEW_SEC
+    ) {
+      return { ok: false, reason: "expired" };
     }
     for (const d of pres.disclosures) {
       if (sha256Hex(canonicalize([d.salt, d.name, d.value])) !== d.digest) {

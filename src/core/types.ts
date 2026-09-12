@@ -58,6 +58,11 @@ export interface CapabilityPayload {
   readonly termsDigest: string;
   readonly revocationId: string;
   readonly parentRevocationId: string | null;
+  /**
+   * Signed but non-authoritative annotations (challenges, references, labels).
+   * Attenuation deliberately ignores meta: it can neither grant nor narrow.
+   * Verifiers MUST NOT treat meta as authority.
+   */
   readonly meta?: Readonly<Record<string, unknown>>;
 }
 
@@ -102,10 +107,14 @@ export type KeyResolver = (id: KeyId) => Uint8Array | null;
 
 export interface RevocationStore {
   has(id: string): boolean;
-  add(id: string): void;
+  add(id: string, exp?: number): void;
+  /** Drop entries known-expired before nowSec. Stores without expiries are unaffected. */
+  prune?(nowSec: number): void;
 }
 
 export interface UseLedger {
   remaining(chainId: string): number | null;
-  consume(chainId: string, maxUses: number): number;
+  consume(chainId: string, maxUses: number, exp?: number): number;
+  /** Drop entries known-expired before nowSec. */
+  prune?(nowSec: number): void;
 }

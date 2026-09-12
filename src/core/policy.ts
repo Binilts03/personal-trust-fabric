@@ -115,7 +115,7 @@ export function evalPredicate(pred: Predicate, args: unknown): boolean {
       }
       case "or": {
         const stmts = pred[1];
-        if (stmts.length === 0) return true;
+        if (stmts.length === 0) return false;
         return stmts.some((s) => evalPredicate(s, args));
       }
       case "not":
