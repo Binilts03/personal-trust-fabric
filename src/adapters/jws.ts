@@ -10,24 +10,34 @@ export const b64uEncode = (data: Uint8Array | Buffer | string): string =>
 
 export const b64uDecode = (s: string): Buffer => Buffer.from(s, "base64url");
 
-function rawToDer(raw: Buffer): Buffer {
+/** Raw R||S to DER. Exported for unit-testing the minimal-encoding edge cases. */
+export function rawToDer(raw: Buffer): Buffer {
   if (raw.length !== 64) throw new Error("jws: ES256 signatures are 64 bytes");
-  const norm = (b: Buffer): Buffer => {
-    const t = b[0] === 0 ? b.slice(1) : b;
-    return t.length < 32 ? Buffer.concat([Buffer.alloc(32 - t.length), t]) : t;
+  // Reduce to minimal form FIRST: strip leading zeros only while the next
+  // byte's top bit is clear (otherwise the value would turn negative).
+  // Padding back to 32 and then encoding naively emits `02 20 00...` for
+  // 31-byte values, which strict DER parsers reject.
+  const minimal = (b: Buffer): Buffer => {
+    let v = b;
+    while (v.length > 1 && v[0] === 0 && (v[1] as number) < 0x80) {
+      v = v.slice(1);
+    }
+    return v;
   };
-  const enc = (b: Buffer): Buffer =>
-    b[0] !== undefined && b[0] >= 0x80
-      ? Buffer.concat([Buffer.from([0]), b])
-      : b;
-  const r = enc(norm(raw.slice(0, 32)));
-  const s = enc(norm(raw.slice(32, 64)));
-  return Buffer.concat([
-    Buffer.from([0x30, 2 + r.length + 2 + s.length, 0x02, r.length]),
-    r,
-    Buffer.from([0x02, s.length]),
-    s,
-  ]);
+  const enc = (b: Buffer): Buffer => {
+    const v = minimal(b);
+    const p =
+      v[0] !== undefined && v[0] >= 0x80
+        ? Buffer.concat([Buffer.from([0]), v])
+        : v;
+    return Buffer.concat([Buffer.from([0x02, p.length]), p]);
+  };
+  const r = enc(raw.slice(0, 32));
+  const s = enc(raw.slice(32, 64));
+  const total = r.length + s.length;
+  const totalEnc =
+    total < 128 ? Buffer.from([total]) : Buffer.from([0x81, total]);
+  return Buffer.concat([Buffer.from([0x30]), totalEnc, r, s]);
 }
 
 export interface ParsedCompactJws {
