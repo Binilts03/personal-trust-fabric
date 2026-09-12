@@ -4,6 +4,10 @@
   "description": "User-owned trust and delegated-authority layer for the agentic web (PTF v0.1)",
   "license": "Apache-2.0",
   "type": "module",
+  "bin": {
+    "ptf": "./dist/src/cli.js",
+    "ptf-mcp-server": "./dist/src/mcp-server.js"
+  },
   "keywords": [
     "trust",
     "delegation",
@@ -34,5 +38,9 @@
     "lint-staged": "^17.5.1",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.6.2"
   }
 }

@@ -8,3 +8,4 @@
 | [0004](0004-disclosure-intersection-binding.md) | Disclosure as intersection with holder binding                             | accepted | 2026-09-08 |
 | [0005](0005-external-protocols-as-evidence.md)  | External protocols as evidence, never authority                            | accepted | 2026-09-08 |
 | [0006](0006-recipient-auth-before-execution.md) | Recipient authentication before protected execution, audit without secrets | accepted | 2026-09-08 |
+| [0007](0007-mcp-server-official-sdk.md)         | MCP server as the LLM-facing interface, official SDK as its transport      | accepted | 2026-09-12 |
