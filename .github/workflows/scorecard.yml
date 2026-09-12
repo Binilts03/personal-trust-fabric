@@ -38,6 +38,7 @@ jobs:
           name: SARIF file
           path: results.sarif
           retention-days: 5
-      - uses: github/codeql-action/upload-sarif@v4.38.0
-        with:
-          sarif_file: results.sarif
+      # NOTE: no codeql-action/upload-sarif step — the code-scanning API needs
+      # GitHub Advanced Security, unavailable on private repos without it.
+      # Results live in the run artifacts above. Re-add the upload step if GHAS
+      # is enabled or the repo goes public.
