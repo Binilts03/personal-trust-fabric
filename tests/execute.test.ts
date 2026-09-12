@@ -1,0 +1,236 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import type { KeyObject } from "node:crypto";
+import {
+  Audit,
+  Authority,
+  Capabilities,
+  FakePaymentExecutor,
+  canonicalize,
+  executeAndReceipt,
+  generateEd25519Keypair,
+  leafCidHex,
+  signBytes,
+  termsDigestOf,
+} from "../src/index.js";
+
+const NOW = 1_700_000_000;
+const PRINCIPAL = "did:test:principal";
+const AGENT = "did:test:agent";
+const MERCHANT = "did:test:merchant";
+const ATTACKER = "did:test:attacker";
+const PAN_SENTINEL = "4111-SECRET-PAN-never-leaves-host";
+
+function parties() {
+  const principal = generateEd25519Keypair();
+  const agent = generateEd25519Keypair();
+  const merchant = generateEd25519Keypair();
+  const attacker = generateEd25519Keypair();
+  const keys = new Map([
+    [PRINCIPAL, principal.publicKeyRaw],
+    [AGENT, agent.publicKeyRaw],
+    [MERCHANT, merchant.publicKeyRaw],
+    [ATTACKER, attacker.publicKeyRaw],
+  ]);
+  return { principal, agent, merchant, attacker, keys };
+}
+
+function issueCap(caps: Capabilities, priv: KeyObject, digest: string) {
+  return caps.issue(
+    null,
+    {
+      iss: PRINCIPAL,
+      aud: AGENT,
+      sub: PRINCIPAL,
+      cmd: "/pay",
+      pol: [["<=", ".amount", 2000]],
+      purpose: "pay invoice",
+      resource: "invoice:inv_8472",
+      recipient: MERCHANT,
+      amountMax: 2000,
+      currency: "INR",
+      exp: NOW + 300,
+      maxUses: 1,
+      termsDigest: digest,
+    },
+    priv
+  );
+}
+
+describe("protected payment execution with receipts and secretness audit (ptf-v01/02)", () => {
+  it("runs propose → approve → redeem-with-proof → receipt → chained audit", async () => {
+    const { principal, merchant, keys } = parties();
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant({
+      id: "g1",
+      principal: PRINCIPAL,
+      agent: AGENT,
+      cmd: "/pay",
+      amountMax: 2000,
+      currency: "INR",
+      exp: NOW + 600,
+    });
+    const digest = termsDigestOf({
+      invoice: "inv_8472",
+      amount: 1790,
+      currency: "INR",
+    });
+
+    const decision = auth.evaluate(
+      {
+        principal: PRINCIPAL,
+        agent: AGENT,
+        cmd: "/pay",
+        purpose: "pay invoice",
+        resource: "invoice:inv_8472",
+        recipient: MERCHANT,
+        amount: 1790,
+        currency: "INR",
+        termsDigest: digest,
+      },
+      { consume: true }
+    );
+    assert.equal(decision.allow, true);
+
+    const caps = new Capabilities({
+      resolveKey: (id) => keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const cap = issueCap(caps, principal.privateKey, digest);
+    const demand = {
+      cmd: "/pay" as const,
+      args: { amount: 1790, currency: "INR" },
+      recipient: MERCHANT,
+      termsDigest: digest,
+    };
+    const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
+    const proof = {
+      key: merchant.publicKeyRaw,
+      sig: signBytes(merchant.privateKey, cidBytes),
+    };
+    assert.equal(
+      caps.authorize([cap], demand, { consume: true, proof }).ok,
+      true
+    );
+
+    const executor = new FakePaymentExecutor();
+    const receipt = await executeAndReceipt(
+      executor,
+      {
+        capabilityId: leafCidHex(cap),
+        recipient: MERCHANT,
+        amount: 1790,
+        currency: "INR",
+        resource: "invoice:inv_8472",
+        purpose: "pay invoice",
+      },
+      NOW
+    );
+    assert.equal(receipt.amount, 1790);
+    assert.equal(receipt.recipient, MERCHANT);
+    assert.equal(executor.calls.length, 1);
+
+    const audit = new Audit(() => NOW);
+    audit.append({
+      actor: AGENT,
+      action: "redeem",
+      authorityId: "g1",
+      capabilityId: receipt.capabilityId,
+    });
+    audit.append({
+      actor: "executor",
+      action: "execute",
+      capabilityId: receipt.capabilityId,
+      detail: receipt.transaction,
+    });
+    assert.equal(audit.verifyChain(), true);
+
+    const blob = canonicalize(receipt) + audit.toJSONL();
+    assert.ok(!blob.includes(PAN_SENTINEL));
+  });
+
+  it("denies replay and wrong-recipient redemption before any execution", async () => {
+    const { principal, merchant, attacker, keys } = parties();
+    const caps = new Capabilities({
+      resolveKey: (id) => keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const digest = termsDigestOf({ invoice: "inv_9", amount: 10 });
+    const cap = issueCap(caps, principal.privateKey, digest);
+    const demand = {
+      cmd: "/pay" as const,
+      args: { amount: 10, currency: "INR" },
+      recipient: MERCHANT,
+      termsDigest: digest,
+    };
+    const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
+    const proof = {
+      key: merchant.publicKeyRaw,
+      sig: signBytes(merchant.privateKey, cidBytes),
+    };
+
+    assert.equal(
+      caps.authorize([cap], demand, { consume: true, proof }).ok,
+      true
+    );
+    const replay = caps.authorize([cap], demand, { consume: true, proof });
+    assert.equal(replay.ok, false);
+    if (!replay.ok) assert.equal(replay.reason, "uses-exhausted");
+
+    const badProof = {
+      key: attacker.publicKeyRaw,
+      sig: signBytes(attacker.privateKey, cidBytes),
+    };
+    const wrongRecipient = caps.authorize(
+      [cap],
+      { ...demand, recipient: ATTACKER },
+      { consume: true, proof: badProof }
+    );
+    assert.equal(wrongRecipient.ok, false);
+    if (!wrongRecipient.ok) assert.equal(wrongRecipient.reason, "recipient");
+  });
+
+  it("detects audit-chain tampering", () => {
+    const audit = new Audit(() => NOW);
+    audit.append({ actor: AGENT, action: "redeem", capabilityId: "cid-1" });
+    audit.append({
+      actor: "executor",
+      action: "execute",
+      capabilityId: "cid-1",
+    });
+    assert.equal(audit.verifyChain(), true);
+    const lines = audit.toJSONL().trim().split("\n");
+    const tampered = JSON.parse(lines[0] as string) as Record<string, unknown>;
+    tampered["action"] = "refund";
+    lines[0] = JSON.stringify(tampered);
+    const forged = new Audit(() => NOW);
+    for (const line of lines) forged.ingest(line);
+    assert.equal(forged.verifyChain(), false);
+  });
+
+  it("chains audit entries with HMAC when keyed, and rejects key confusion", () => {
+    const key = new Uint8Array(32).fill(7);
+    const audit = new Audit(() => NOW, { hmacKey: key });
+    audit.append({ actor: AGENT, action: "redeem", capabilityId: "cid-1" });
+    audit.append({
+      actor: "executor",
+      action: "execute",
+      capabilityId: "cid-1",
+    });
+    assert.equal(audit.verifyChain(), true);
+    assert.ok(!audit.toJSONL().includes(Buffer.from(key).toString("hex")));
+
+    const wrongKey = new Audit(() => NOW, {
+      hmacKey: new Uint8Array(32).fill(8),
+    });
+    for (const line of audit.toJSONL().trim().split("\n"))
+      wrongKey.ingest(line);
+    assert.equal(wrongKey.verifyChain(), false);
+
+    const unkeyed = new Audit(() => NOW);
+    for (const line of audit.toJSONL().trim().split("\n")) unkeyed.ingest(line);
+    assert.equal(unkeyed.verifyChain(), false);
+
+    assert.throws(() => new Audit(() => NOW, { hmacKey: new Uint8Array(8) }));
+  });
+});

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+evidence/*
+!evidence/.gitkeep
+.scratch/
+*.tsbuildinfo

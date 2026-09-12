@@ -1,0 +1,38 @@
+{
+  "name": "personal-trust-fabric",
+  "version": "0.1.0",
+  "description": "User-owned trust and delegated-authority layer for the agentic web (PTF v0.1)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "trust",
+    "delegation",
+    "capabilities",
+    "authorization",
+    "agents",
+    "x402",
+    "ap2"
+  ],
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/tests/*.test.js\"",
+    "eval": "npm run build && node --test \"dist/tests/eval/*.test.js\"",
+    "dev-local": "bash scripts/dev-local.sh up",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "fast-check": "^3.23.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.5.1",
+    "prettier": "^3.9.6",
+    "typescript": "^5.6.0"
+  }
+}
