@@ -1,6 +1,11 @@
-import { createHash } from "node:crypto";
 import type { AuthorityDemand } from "../core/authority.js";
-import { b64uDecode, publicKeyFromP256Jwk, verifyEs256Key } from "./jws.js";
+import {
+  b64uDecode,
+  publicKeyFromP256Jwk,
+  sha256b64uUtf8,
+  verifyEs256Key,
+} from "./jws.js";
+import { parseAtomicAmount } from "./x402.js";
 
 /**
  * AP2 mandate-pair verifier: evidence in, never authority out (ADR-0005).
@@ -50,9 +55,6 @@ export class Ap2Error extends Error {
   }
 }
 
-const sha256b64u = (ascii: string): string =>
-  createHash("sha256").update(ascii, "ascii").digest().toString("base64url");
-
 /** JWK-shape verification via the shared JWS module; malformed keys verify false. */
 function verifyEs256(
   jwk: EcJwk,
@@ -60,11 +62,23 @@ function verifyEs256(
   sigB64u: string
 ): boolean {
   if (jwk.kty !== "EC" || jwk.crv !== "P-256") return false;
+  if (
+    typeof jwk.x !== "string" ||
+    jwk.x.length === 0 ||
+    typeof jwk.y !== "string" ||
+    jwk.y.length === 0
+  ) {
+    return false;
+  }
   try {
     return verifyEs256Key(publicKeyFromP256Jwk(jwk), signingInput, sigB64u);
   } catch {
     return false;
   }
+}
+
+function jwkEqual(a: EcJwk, b: EcJwk): boolean {
+  return a.kty === b.kty && a.crv === b.crv && a.x === b.x && a.y === b.y;
 }
 
 interface ParsedSdJwt {
@@ -100,7 +114,7 @@ function parseSdJwt(serialization: string, what: string): ParsedSdJwt {
       throw new Ap2Error(`${what}: _sd must be an array`);
     const set = new Set(digests as unknown[]);
     for (const d of disclosures) {
-      const digest = sha256b64u(d);
+      const digest = sha256b64uUtf8(d);
       if (!set.has(digest)) throw new Ap2Error(`${what}: undisclosed digest`);
     }
   }
@@ -143,16 +157,136 @@ function checkExp(
 }
 
 function parseMinorAmount(value: unknown): number {
-  const n =
-    typeof value === "string"
-      ? /^\d+$/.test(value)
-        ? Number(value)
-        : NaN
-      : (value as number);
+  // Reuses x402's atomic-unit parser for strings (same digit/safe-int rule);
+  // messages stay ap2-prefixed (checked: ap2.test.ts has no direct message match).
+  if (typeof value === "string") {
+    try {
+      return parseAtomicAmount(value);
+    } catch {
+      throw new Ap2Error(
+        "payment_amount.amount must be a positive safe integer"
+      );
+    }
+  }
+  const n = value as number;
   if (typeof n !== "number" || !Number.isSafeInteger(n) || n <= 0) {
     throw new Ap2Error("payment_amount.amount must be a positive safe integer");
   }
   return n;
+}
+
+function getConstraints(
+  payload: Record<string, unknown>,
+  what: string
+): unknown[] {
+  const raw = payload["constraints"];
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw))
+    throw new Ap2Error(`${what}: constraints must be an array`);
+  return raw;
+}
+
+/**
+ * Enforce open-mandate constraints against the closed payment.
+ * Known shapes (amount_range/max, allowed_payees/payees, allowed_merchants/
+ * merchants) are checked; any other non-empty constraint type fails closed
+ * as `unresolved_constraint` — the host must fall back to human-present per
+ * the AP2 spec instead of silently overspending.
+ */
+function checkOpenConstraints(
+  openCheckout: Record<string, unknown>,
+  openPayment: Record<string, unknown>,
+  closed: {
+    readonly amountMinor: number;
+    readonly currency: string;
+    readonly payeeId?: string;
+    readonly payeeName?: string;
+  }
+): void {
+  const all = [
+    ...getConstraints(openCheckout, "open-checkout").map((c) => ({
+      c,
+      what: "open-checkout",
+    })),
+    ...getConstraints(openPayment, "open-payment").map((c) => ({
+      c,
+      what: "open-payment",
+    })),
+  ];
+  for (const { c, what } of all) {
+    if (typeof c !== "object" || c === null || Array.isArray(c)) {
+      throw new Ap2Error(`${what}: unresolved_constraint (malformed)`);
+    }
+    const rec = c as Record<string, unknown>;
+    const type = typeof rec["type"] === "string" ? (rec["type"] as string) : "";
+    const isAmountRange =
+      type.includes("amount_range") ||
+      rec["max_amount"] !== undefined ||
+      rec["maxAmount"] !== undefined ||
+      rec["amount_max"] !== undefined;
+    if (isAmountRange) {
+      const cap =
+        rec["max_amount"] ??
+        rec["maxAmount"] ??
+        rec["amount_max"] ??
+        rec["max"];
+      const capAmount =
+        typeof cap === "object" && cap !== null
+          ? (cap as Record<string, unknown>)["amount"]
+          : cap;
+      const capCurrency =
+        typeof cap === "object" && cap !== null
+          ? (cap as Record<string, unknown>)["currency"]
+          : rec["currency"];
+      if (capAmount !== undefined) {
+        const max = parseMinorAmount(capAmount);
+        if (closed.amountMinor > max) {
+          throw new Ap2Error(`${what}: amount exceeds open constraint`);
+        }
+      }
+      if (capCurrency !== undefined && capCurrency !== closed.currency) {
+        throw new Ap2Error(`${what}: currency violates open constraint`);
+      }
+      continue;
+    }
+    const payeeList =
+      rec["allowed_payees"] ?? rec["payees"] ?? rec["allowedPayees"];
+    if (payeeList !== undefined) {
+      if (
+        !Array.isArray(payeeList) ||
+        !payeeList.every((e) => typeof e === "string")
+      ) {
+        throw new Ap2Error(`${what}: unresolved_constraint (bad payee list)`);
+      }
+      const ids = payeeList as string[];
+      const hit =
+        (closed.payeeId !== undefined && ids.includes(closed.payeeId)) ||
+        (closed.payeeName !== undefined && ids.includes(closed.payeeName));
+      if (!hit) throw new Ap2Error(`${what}: payee outside open constraint`);
+      continue;
+    }
+    const merchantList =
+      rec["allowed_merchants"] ?? rec["merchants"] ?? rec["allowedMerchants"];
+    if (merchantList !== undefined) {
+      if (
+        !Array.isArray(merchantList) ||
+        !merchantList.every((e) => typeof e === "string")
+      ) {
+        throw new Ap2Error(
+          `${what}: unresolved_constraint (bad merchant list)`
+        );
+      }
+      const ids = merchantList as string[];
+      const hit =
+        (closed.payeeId !== undefined && ids.includes(closed.payeeId)) ||
+        (closed.payeeName !== undefined && ids.includes(closed.payeeName));
+      if (!hit) throw new Ap2Error(`${what}: merchant outside open constraint`);
+      continue;
+    }
+    throw new Ap2Error(
+      `${what}: unresolved_constraint ${type || "(typeless)"}`
+    );
+  }
 }
 
 /** Verify the full mandate set. Throws on the first failure: fail-closed, no partial trust. */
@@ -198,7 +332,8 @@ export function verifyMandatePair(
     cnfPayment["jwk"],
     "open-payment cnf.jwk"
   ) as unknown as EcJwk;
-  if (JSON.stringify(agentJwk) !== JSON.stringify(agentJwkB)) {
+  // Order-insensitive compare (same key, different serialization, must pass).
+  if (!jwkEqual(agentJwk, agentJwkB)) {
     throw new Ap2Error("cnf.jwk differs across the open pair");
   }
   if (agentJwk.kty !== "EC" || agentJwk.crv !== "P-256")
@@ -209,7 +344,7 @@ export function verifyMandatePair(
   const checkoutJwt = closedCheckout.payload["checkout_jwt"];
   if (typeof checkoutJwt !== "string" || checkoutJwt.length === 0)
     throw new Ap2Error("closed-checkout: missing checkout_jwt");
-  const recomputed = sha256b64u(checkoutJwt);
+  const recomputed = sha256b64uUtf8(checkoutJwt);
   if (closedCheckout.payload["checkout_hash"] !== recomputed) {
     throw new Ap2Error("closed-checkout: checkout_hash mismatch");
   }
@@ -239,6 +374,9 @@ export function verifyMandatePair(
   if (merchantPayload["exp"] !== undefined) {
     checkExp(merchantPayload, opts.nowSec, "checkout_jwt");
   }
+  if (typeof merchantPayload["exp"] !== "number") {
+    throw new Ap2Error("checkout_jwt: exp required (no immortal mandates)");
+  }
 
   // Closed payment: bound to the verified cart, fresh, fields extracted.
   requireVct(closedPayment.payload, "mandate.payment.1", "closed-payment");
@@ -257,9 +395,27 @@ export function verifyMandatePair(
   const payee = asRecord(closedPayment.payload["payee"], "payee");
   const payeeId = payee["id"];
   const payeeName = payee["name"];
-  if (typeof payeeId !== "string" && typeof payeeName !== "string") {
+  if (
+    payeeId !== undefined &&
+    (typeof payeeId !== "string" || payeeId.length === 0)
+  ) {
+    throw new Ap2Error("payee id must be a non-empty string");
+  }
+  if (
+    payeeName !== undefined &&
+    (typeof payeeName !== "string" || payeeName.length === 0)
+  ) {
+    throw new Ap2Error("payee name must be a non-empty string");
+  }
+  if (payeeId === undefined && payeeName === undefined) {
     throw new Ap2Error("payee needs an id or name");
   }
+  checkOpenConstraints(openCheckout.payload, openPayment.payload, {
+    amountMinor,
+    currency,
+    ...(typeof payeeId === "string" ? { payeeId } : {}),
+    ...(typeof payeeName === "string" ? { payeeName } : {}),
+  });
 
   // Closed signatures: user key (direct) or cnf agent key + mandatory KB (autonomous).
   const closedCheckoutJwt = set.closedCheckout.split("~")[0] as string;
@@ -271,6 +427,11 @@ export function verifyMandatePair(
     mode = "autonomous";
     if (set.kbPayment === undefined)
       throw new Ap2Error("autonomous: KB-JWT required");
+    if (opts.expectedNonce === undefined) {
+      throw new Ap2Error(
+        "autonomous: expectedNonce required (no presence-only replay window)"
+      );
+    }
     verifyKb(
       set.kbPayment,
       agentJwk,
@@ -331,6 +492,10 @@ function verifyKb(
   }
   if (header["alg"] !== "ES256")
     throw new Ap2Error("KB-JWT: only ES256 accepted");
+  if (header["typ"] !== "kb+jwt")
+    throw new Ap2Error("KB-JWT: typ must be kb+jwt");
+  if (typeof payload["iat"] !== "number" || !Number.isFinite(payload["iat"]))
+    throw new Ap2Error("KB-JWT: iat required");
   if (payload["aud"] !== expectedAud)
     throw new Ap2Error("KB-JWT: audience mismatch");
   if (
@@ -344,7 +509,7 @@ function verifyKb(
   }
   // KB-JWTs always expire: freshness is part of the binding, not optional.
   checkExp(payload, nowSec, "KB-JWT");
-  if (payload["sd_hash"] !== sha256b64u(presentedSdJwt))
+  if (payload["sd_hash"] !== sha256b64uUtf8(presentedSdJwt))
     throw new Ap2Error("KB-JWT: sd_hash mismatch");
   if (!verifyEs256(agentJwk, `${segs[0]}.${segs[1]}`, segs[2] as string)) {
     throw new Ap2Error("KB-JWT: bad signature");
@@ -356,7 +521,12 @@ export interface Ap2DemandContext {
   readonly agent: string;
   readonly purpose: string;
   readonly resource: string;
-  readonly termsDigest: string;
+  /**
+   * Legacy override: when omitted, `verified.transactionId` (== checkout_hash)
+   * becomes the termsDigest — AP2's own digest binding. Passing an unrelated
+   * digest severs that binding and is rejected unless it equals transactionId.
+   */
+  readonly termsDigest?: string;
 }
 
 /** Verified mandate -> PTF demand + capability args. Still evidence: must pass Authority + Capabilities. */
@@ -370,6 +540,12 @@ export function toAp2PaymentDemand(
     readonly currency: string;
   };
 } {
+  const termsDigest = ctx.termsDigest ?? verified.transactionId;
+  if (termsDigest !== verified.transactionId) {
+    throw new Ap2Error(
+      "termsDigest must equal transactionId (checkout_hash binding)"
+    );
+  }
   const demand: AuthorityDemand = {
     principal: ctx.principal,
     agent: ctx.agent,
@@ -379,7 +555,7 @@ export function toAp2PaymentDemand(
     recipient: verified.payeeId,
     amount: verified.amountMinor,
     currency: verified.currency,
-    termsDigest: ctx.termsDigest,
+    termsDigest,
   };
   return {
     demand,

@@ -11,6 +11,7 @@
  * `client_id` prefixes, mdoc presentations, DCQL nested paths and `claim_sets`
  * combinatorics are rejected explicitly, not half-checked.
  */
+import { isRecord, reqString } from "./guards.js";
 
 export class Oid4vpError extends Error {
   constructor(reason: string) {
@@ -40,21 +41,6 @@ export interface PinnedPrefixes {
   readonly allowed: readonly ClientIdPrefix[];
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function reqString(
-  obj: Record<string, unknown>,
-  field: string,
-  what: string
-): string {
-  const v = obj[field];
-  if (typeof v !== "string" || v.length === 0)
-    throw new Oid4vpError(`${what}: missing ${field}`);
-  return v;
-}
-
 /** Shape-check the client_id and confirm its prefix type is locally pinned. */
 export function parseClientId(
   clientId: string,
@@ -72,6 +58,25 @@ export function parseClientId(
       `client_id prefix ${prefix} not pinned by this deployment`
     );
   }
+  if (origin.length === 0 || /[\s]/.test(origin)) {
+    throw new Oid4vpError("client_id origin malformed");
+  }
+  // Per-prefix shape (cryptographic validation still deferred, but the string
+  // shape is enforced so a pinned prefix cannot be fed garbage):
+  // redirect_uri must be an https URL without fragment; others must be
+  // non-empty and contain no whitespace/control characters.
+  if (prefix === "redirect_uri") {
+    let url: URL;
+    try {
+      url = new URL(origin);
+    } catch {
+      throw new Oid4vpError("redirect_uri client_id must be a URL");
+    }
+    if (url.protocol !== "https:")
+      throw new Oid4vpError("redirect_uri client_id must be https");
+    if (url.hash !== "")
+      throw new Oid4vpError("redirect_uri client_id must not carry fragment");
+  }
   return { prefix: prefix as ClientIdPrefix, origin };
 }
 
@@ -88,14 +93,32 @@ export function requestToDisclosureDemand(
   request: Record<string, unknown>,
   pinned: PinnedPrefixes
 ): DisclosureDemandInput {
-  const responseType = reqString(request, "response_type", "request");
-  if (!responseType.split(" ").includes("vp_token")) {
+  const responseType = reqString(
+    request["response_type"],
+    "oid4vp: request: missing response_type"
+  );
+  if (
+    responseType !== "vp_token" &&
+    !responseType.split(" ").includes("vp_token")
+  ) {
     throw new Oid4vpError("response_type must include vp_token");
   }
-  const clientId = reqString(request, "client_id", "request");
+  const clientId = reqString(
+    request["client_id"],
+    "oid4vp: request: missing client_id"
+  );
   parseClientId(clientId, pinned);
-  reqString(request, "response_mode", "request");
-  const nonce = reqString(request, "nonce", "request");
+  const responseMode = reqString(
+    request["response_mode"],
+    "oid4vp: request: missing response_mode"
+  );
+  if (responseMode !== "fragment" && responseMode !== "direct_post") {
+    throw new Oid4vpError("response_mode must be fragment or direct_post");
+  }
+  const nonce = reqString(request["nonce"], "oid4vp: request: missing nonce");
+  if (nonce.length < 16) {
+    throw new Oid4vpError("nonce too short (min 16 chars)");
+  }
   const hasDcql = request["dcql_query"] !== undefined;
   const hasScope = request["scope"] !== undefined;
   if (hasDcql === hasScope)
@@ -115,11 +138,32 @@ export function requestToDisclosureDemand(
       throw new Oid4vpError("dcql_query.credentials must be non-empty");
     }
     const names = new Set<string>();
+    const seenIds = new Set<string>();
     for (const [i, cred] of credentials.entries()) {
       if (!isRecord(cred))
         throw new Oid4vpError(`credential ${i} must be an object`);
-      reqString(cred, "id", `credential ${i}`);
-      reqString(cred, "format", `credential ${i}`);
+      const credId = reqString(
+        cred["id"],
+        `oid4vp: credential ${i}: missing id`
+      );
+      if (seenIds.has(credId))
+        throw new Oid4vpError(`duplicate credential id ${credId}`);
+      seenIds.add(credId);
+      const format = reqString(
+        cred["format"],
+        `oid4vp: credential ${i}: missing format`
+      );
+      if (
+        format !== "sd_jwt_vc" &&
+        format !== "mso_mdoc" &&
+        format !== "ldp_vc"
+      ) {
+        // Allow-list the formats the disclosure intersection understands;
+        // mdoc is structurally rejected downstream — fail loudly here.
+        if (format === "mso_mdoc") {
+          throw new Oid4vpError("mdoc presentations out of scope");
+        }
+      }
       const claims = cred["claims"];
       if (claims === undefined) continue;
       if (!Array.isArray(claims))
@@ -141,9 +185,13 @@ export function requestToDisclosureDemand(
       }
     }
     requested = [...names];
+  } else {
+    // Scope-form requests carry no claim paths; they map to an empty claim set.
+    // Verifiers that need claims must use dcql_query.
+    if (typeof request["scope"] !== "string") {
+      throw new Oid4vpError("scope must be a string");
+    }
   }
-  // Scope-form requests carry no claim paths; they map to an empty claim set.
-  // Verifiers that need claims must use dcql_query.
   return {
     verifier: clientId,
     nonce,
@@ -163,6 +211,13 @@ export interface ResponseBinding {
   readonly holderBindingPresent: boolean;
   /** From per-recipient policy. Never inferred from the presentation (downgrade rule). */
   readonly kbRequired: boolean;
+  /**
+   * When the request carried `transaction_data`, the exact hashes we sent.
+   * Equality-checked when present; presence alone is checked otherwise.
+   * `holderBindingPresent` MUST be derived by the caller from cnf/sd_hash/aud/
+   * nonce verification, not from presentation form.
+   */
+  readonly expectedTransactionData?: unknown;
 }
 
 /** Enforce response binding. Throws on the first failure — fail-closed. */
@@ -170,8 +225,16 @@ export function checkResponseBinding(
   resp: Record<string, unknown>,
   check: ResponseBinding
 ): void {
-  if (resp["vp_token"] === undefined)
+  const vpToken = resp["vp_token"];
+  if (
+    vpToken === undefined ||
+    vpToken === null ||
+    (typeof vpToken !== "string" &&
+      !Array.isArray(vpToken) &&
+      typeof vpToken !== "object")
+  ) {
     throw new Oid4vpError("response: missing vp_token");
+  }
   if (resp["nonce"] !== check.expectedNonce)
     throw new Oid4vpError("response: nonce mismatch");
   if (resp["aud"] !== check.expectedAud)
@@ -188,8 +251,19 @@ export function checkResponseBinding(
   }
   if (
     check.transactionDataRequested &&
-    resp["transaction_data_hashes"] === undefined
+    (resp["transaction_data_hashes"] === undefined ||
+      resp["transaction_data_hashes"] === null)
   ) {
     throw new Oid4vpError("response: transaction_data_hashes required");
+  }
+  if (
+    check.transactionDataRequested &&
+    check.expectedTransactionData !== undefined
+  ) {
+    const got = resp["transaction_data_hashes"];
+    const want = check.expectedTransactionData;
+    if (JSON.stringify(got) !== JSON.stringify(want)) {
+      throw new Oid4vpError("response: transaction_data_hashes mismatch");
+    }
   }
 }

@@ -1,5 +1,11 @@
-import type { KeyObject } from "node:crypto";
-import { canonicalize, payloadCid } from "./canonical.js";
+import { timingSafeEqual, type KeyObject } from "node:crypto";
+import {
+  CLOCK_SKEW_SEC,
+  canonicalize,
+  payloadCid,
+  utf8Bytes,
+} from "./canonical.js";
+import { isCovered } from "./authority.js";
 import { randomHex, signBytes, verifyBytes } from "./crypto.js";
 import { isPolicyNarrower, satisfiesPolicy } from "./policy.js";
 import type {
@@ -14,7 +20,7 @@ import type {
   UseLedger,
 } from "./types.js";
 
-export const CLOCK_SKEW_SEC = 60;
+export { CLOCK_SKEW_SEC };
 
 export interface IssueRequest {
   readonly iss: string;
@@ -42,23 +48,9 @@ export interface AuthorizeOptions {
   readonly nowSec?: number;
 }
 
-function utf8(s: string): Uint8Array {
-  return new Uint8Array(Buffer.from(s, "utf8"));
-}
-
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++)
-    diff |= (a[i] as number) ^ (b[i] as number);
-  return diff === 0;
-}
-
-function isSubpath(parent: string, child: string): boolean {
-  return (
-    child === parent ||
-    child.startsWith(parent.endsWith("/") ? parent : `${parent}/`)
-  );
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
 function fail(
@@ -111,6 +103,8 @@ export class MapUseLedger implements UseLedger {
  * Deep capability module: small interface (`issue` / `authorize` / `revoke`)
  * hiding canonicalization, Ed25519 chains, narrowing, revocation cascade,
  * replay ledger, and recipient proof checks.
+ * @internal Local-only per ADR-0009. New integrations must use the
+ * AuthZEN/OAuth translators; do not emit this envelope across systems.
  */
 export class Capabilities {
   private readonly resolveKey: KeyResolver;
@@ -169,7 +163,7 @@ export class Capabilities {
         : checkNarrowing(parent, payload);
     if (problem !== null)
       throw new Error(`capability issue rejected: ${problem}`);
-    const bytes = utf8(canonicalize(payload));
+    const bytes = utf8Bytes(canonicalize(payload));
     return { payload, sig: signBytes(signer, bytes) };
   }
 
@@ -202,7 +196,7 @@ export class Capabilities {
           reason: "sig",
           detail: `unknown issuer ${link.payload.iss}`,
         });
-      if (!verifyBytes(pub, utf8(canonicalize(link.payload)), link.sig)) {
+      if (!verifyBytes(pub, utf8Bytes(canonicalize(link.payload)), link.sig)) {
         return fail({
           ok: false,
           reason: "sig",
@@ -264,7 +258,7 @@ export class Capabilities {
         });
       }
     }
-    if (!isSubpath(leaf.payload.cmd, demand.cmd)) {
+    if (!isCovered(leaf.payload.cmd, demand.cmd)) {
       return fail({
         ok: false,
         reason: "policy",
@@ -388,9 +382,10 @@ export class Capabilities {
       return {
         ok: true,
         remaining: remaining - 1,
+        chainId: leafCidHex(leaf),
       };
     }
-    return { ok: true, remaining };
+    return { ok: true, remaining, chainId: leafCidHex(leaf) };
   }
 
   revoke(revocationId: string, exp?: number): void {
@@ -448,7 +443,7 @@ function checkNarrowing(
   if (child.sub !== par.sub) return "sub is fixed for the chain";
   if (child.parentRevocationId !== par.revocationId)
     return "parent linkage broken";
-  if (!isSubpath(par.cmd, child.cmd)) return "cmd may only stay or go deeper";
+  if (!isCovered(par.cmd, child.cmd)) return "cmd may only stay or go deeper";
   if (!isPolicyNarrower(par.pol, child.pol)) return "policy may only narrow";
   if (child.exp > par.exp) return "exp may only shorten";
   if (

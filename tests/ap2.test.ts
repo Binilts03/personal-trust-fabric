@@ -99,7 +99,7 @@ function mandateSet(
   } = {}
 ) {
   const checkoutJwt = jwt(
-    { iss: "did:test:merchant", cart: ["widget"] },
+    { iss: "did:test:merchant", cart: ["widget"], exp: NOW + 600 },
     MERCHANT.priv
   );
   const shownJwt = overrides.tamperCheckout
@@ -158,6 +158,7 @@ function mandateSet(
     const kbPayload: Record<string, unknown> = {
       aud: overrides.kbAud ?? EXPECTED_AUD,
       sd_hash: sha256b64u(closedPayment),
+      iat: NOW,
     };
     if (overrides.kbNonce !== null) {
       kbPayload["nonce"] = overrides.kbNonce ?? "kb-nonce-1";
@@ -204,7 +205,7 @@ describe("AP2 mandate-pair verifier adapter (ptf-v02/03)", () => {
       agent: "did:test:a",
       purpose: "buy widget",
       resource: "order:1",
-      termsDigest: "00".repeat(32),
+      termsDigest: verified.transactionId,
     });
     assert.equal(demand.recipient, "did:test:payee");
     assert.equal(demand.amount, 4250);

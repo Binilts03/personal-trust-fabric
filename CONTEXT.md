@@ -31,7 +31,7 @@ A one-time human authorization of a concrete proposal, digest-bound to its exact
 _Avoid_: Consent dialog, permission prompt
 
 **Capability**:
-A short-lived, bound right to perform one authorized operation: principal, agent, recipient, purpose, action, resource, amount, claims, expiry, max uses, terms digest.
+A short-lived, bound right to perform one authorized operation: principal, agent, recipient, purpose, action, resource, amount, claims, expiry, max uses, terms digest. Local-only @internal per ADR-0009; interop uses adapters/authzen.ts, oauth-agent.ts, sd-jwt.ts.
 _Avoid_: Token (too generic), credential, ticket
 
 **Attenuation**:
@@ -75,3 +75,21 @@ _Avoid_: Authorization, instruction
 **Presentation**:
 A minimal disclosure answering a verifier request: requested ∩ available ∩ allowed claims, bound to audience, nonce, and freshness.
 _Avoid_: Credential share, full disclosure
+
+### Interop (edge only, never authority)
+
+**AuthZEN / SARC / PDP**:
+PTF `Authority` acts as PDP speaking the AuthZEN Subject-Action-Resource-Context shape; a demand projects to SARC and the decision (allow-with-citation or deny) still comes from `Authority.evaluate`.
+_Avoid_: External PDP, policy outsourcing
+
+**RFC8693 `sub` / `act`**:
+Standard delegation vocabulary: `sub` (principal) fixed across delegation, `act` (actor chain) append-only, scope subset-only, expiry clamped, sender `cnf` required.
+_Avoid_: Lateral delegation, scope widening
+
+**SD-JWT / KB-JWT / `sd_hash`**:
+A PTF presentation projects to standard SD-JWT `_sd`/disclosures; the holder proves possession with a KB-JWT bound via `sd_hash` to the presented disclosures. Emission is host-side, evidence-only.
+_Avoid_: PTF-issued credential, bearer disclosure
+
+**`jti`**:
+Audit interop record id: `jti` is the hash of the canonical `AuditEntry`; unkeyed verify recomputes it, keyed mode stays opaque. No independent anchoring in v0.1.
+_Avoid_: Ledger proof, witness receipt

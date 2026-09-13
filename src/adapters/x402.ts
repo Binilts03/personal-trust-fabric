@@ -1,4 +1,5 @@
 import type { AuthorityDemand } from "../core/authority.js";
+import { isRecord, reqString } from "./guards.js";
 
 /**
  * x402 v2 adapter — evidence in, never authority out (ADR-0005).
@@ -36,17 +37,6 @@ export class X402Error extends Error {
   }
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
-
-function reqString(obj: Record<string, unknown>, field: string): string {
-  const v = obj[field];
-  if (typeof v !== "string" || v.length === 0)
-    throw new X402Error(`missing/invalid ${field}`);
-  return v;
-}
-
 /** Atomic-unit integer string → number. Rejects decimals and unsafe magnitudes. */
 export function parseAtomicAmount(raw: string): number {
   if (!/^\d+$/.test(raw))
@@ -61,6 +51,13 @@ export function parseAtomicAmount(raw: string): number {
 
 /** Decode + validate a base64 `PAYMENT-REQUIRED` header. Throws before touching authority. */
 export function parsePaymentRequired(headerB64: string): ParsedChallenge {
+  if (
+    headerB64.length === 0 ||
+    headerB64.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(headerB64)
+  ) {
+    throw new X402Error("header is not base64 JSON");
+  }
   let json: unknown;
   try {
     json = JSON.parse(Buffer.from(headerB64, "base64").toString("utf8"));
@@ -72,7 +69,10 @@ export function parsePaymentRequired(headerB64: string): ParsedChallenge {
     throw new X402Error("only x402Version 2 supported");
   const resource = json["resource"];
   if (!isRecord(resource)) throw new X402Error("missing resource");
-  const url = reqString(resource, "url");
+  const url = reqString(
+    (resource as Record<string, unknown>)["url"],
+    "x402: missing/invalid url"
+  );
   if (!url.startsWith("https://") && !url.startsWith("http://"))
     throw new X402Error("resource url must be http(s)");
   const description = resource["description"];
@@ -83,18 +83,35 @@ export function parsePaymentRequired(headerB64: string): ParsedChallenge {
     throw new X402Error("accepts must be non-empty");
   const requirements: PaymentRequirement[] = accepts.map((entry: unknown) => {
     if (!isRecord(entry)) throw new X402Error("accept entry must be an object");
-    const amount = reqString(entry, "amount");
+    const amount = reqString(entry["amount"], "x402: missing/invalid amount");
     parseAtomicAmount(amount);
     const maxTimeout = entry["maxTimeoutSeconds"];
-    if (typeof maxTimeout !== "number" || !(maxTimeout > 0))
+    if (
+      typeof maxTimeout !== "number" ||
+      !Number.isInteger(maxTimeout) ||
+      !Number.isFinite(maxTimeout) ||
+      maxTimeout <= 0 ||
+      maxTimeout > 86400
+    )
       throw new X402Error("missing/invalid maxTimeoutSeconds");
+    const scheme = reqString(entry["scheme"], "x402: missing/invalid scheme");
+    if (scheme !== "exact" && scheme !== "upto")
+      throw new X402Error(`unsupported scheme ${scheme}`);
+    const network = reqString(
+      entry["network"],
+      "x402: missing/invalid network"
+    );
+    if (!network.includes(":"))
+      throw new X402Error(
+        "network must be a namespaced id (e.g. eip155:84532)"
+      );
     const extra = entry["extra"];
     return {
-      scheme: reqString(entry, "scheme"),
-      network: reqString(entry, "network"),
+      scheme,
+      network,
       amount,
-      asset: reqString(entry, "asset"),
-      payTo: reqString(entry, "payTo"),
+      asset: reqString(entry["asset"], "x402: missing/invalid asset"),
+      payTo: reqString(entry["payTo"], "x402: missing/invalid payTo"),
       maxTimeoutSeconds: maxTimeout,
       ...(extra !== undefined
         ? { extra: isRecord(extra) ? extra : { value: extra } }
@@ -120,6 +137,31 @@ export interface DemandContext {
   readonly resource: string;
   readonly currency: string;
   readonly termsDigest: string;
+  /**
+   * Bind the challenge URL to the demand: when the caller parsed a
+   * `PAYMENT-REQUIRED` challenge, pass `parsed.resource.url` here. Mismatch
+   * throws instead of authorizing a different resource for this challenge.
+   * Asset/network/scheme stay on `accepted` and MUST be folded into the
+   * caller's `termsDigest` (see `requirementMatches`): authority cannot tell
+   * USDC/Base from junk-token/evil-chain on payTo+amount alone.
+   */
+  readonly expectedResourceUrl?: string;
+  readonly expectedAsset?: string;
+  readonly expectedNetwork?: string;
+}
+
+/**
+ * Exact-match the requirement the principal is willing to pay against the
+ * `accepts` entry. Seller-side check per the deep read: amount/asset/payTo/
+ * network must match exactly before any demand is built.
+ */
+export function requirementMatches(
+  accepted: PaymentRequirement,
+  expected: { readonly asset: string; readonly network: string }
+): boolean {
+  return (
+    accepted.asset === expected.asset && accepted.network === expected.network
+  );
 }
 
 /** One accepted requirement → PTF demand + capability args. Still evidence: must pass Authority + Capabilities. */
@@ -131,8 +173,26 @@ export function toX402PaymentDemand(
   readonly capabilityArgs: {
     readonly amount: number;
     readonly currency: string;
+    readonly asset: string;
+    readonly network: string;
+    readonly scheme: string;
   };
 } {
+  if (
+    ctx.expectedResourceUrl !== undefined &&
+    ctx.resource !== ctx.expectedResourceUrl
+  ) {
+    throw new X402Error("resource does not match challenge url");
+  }
+  if (ctx.expectedAsset !== undefined && accepted.asset !== ctx.expectedAsset) {
+    throw new X402Error("asset mismatch: requirement not selected by policy");
+  }
+  if (
+    ctx.expectedNetwork !== undefined &&
+    accepted.network !== ctx.expectedNetwork
+  ) {
+    throw new X402Error("network mismatch: requirement not selected by policy");
+  }
   const amount = parseAtomicAmount(accepted.amount);
   const demand: AuthorityDemand = {
     principal: ctx.principal,
@@ -145,7 +205,16 @@ export function toX402PaymentDemand(
     currency: ctx.currency,
     termsDigest: ctx.termsDigest,
   };
-  return { demand, capabilityArgs: { amount, currency: ctx.currency } };
+  return {
+    demand,
+    capabilityArgs: {
+      amount,
+      currency: ctx.currency,
+      asset: accepted.asset,
+      network: accepted.network,
+      scheme: accepted.scheme,
+    },
+  };
 }
 
 export interface SettlementResult {
@@ -168,10 +237,14 @@ export function checkSettlement(
     readonly asset?: string;
   }
 ): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
+  if (typeof result !== "object" || result === null)
+    return { ok: false, reason: "malformed settlement" };
   if (!result.success)
     return { ok: false, reason: result.errorReason ?? "settlement failed" };
-  if (result.transaction.length === 0)
+  if (typeof result.transaction !== "string" || result.transaction.length === 0)
     return { ok: false, reason: "missing transaction" };
+  if (typeof result.network !== "string" || typeof result.payer !== "string")
+    return { ok: false, reason: "malformed settlement" };
   if (result.network !== expected.network)
     return { ok: false, reason: "network mismatch" };
   if (result.payer !== expected.payer)
@@ -183,7 +256,7 @@ export function checkSettlement(
   return { ok: true };
 }
 
-/** Facilitator boundary. Production wiring is out of v0.1; tests use the stub. */
+/** Facilitator boundary. Production wiring is out of v0.1; tests use the stub in tests/fakes.ts. */
 export interface X402Facilitator {
   verify(
     payload: unknown,
@@ -193,39 +266,4 @@ export interface X402Facilitator {
     payload: unknown,
     requirements: PaymentRequirement
   ): Promise<SettlementResult>;
-}
-
-export class StubFacilitator implements X402Facilitator {
-  constructor(
-    private readonly valid: boolean,
-    private readonly payer = "0xstub-payer"
-  ) {}
-  async verify(
-    _payload: unknown,
-    _requirements: PaymentRequirement
-  ): Promise<{ readonly isValid: boolean }> {
-    return { isValid: this.valid };
-  }
-  async settle(
-    _payload: unknown,
-    requirements: PaymentRequirement
-  ): Promise<SettlementResult> {
-    if (!this.valid) {
-      return {
-        success: false,
-        transaction: "",
-        network: requirements.network,
-        payer: "",
-        errorReason: "insufficient_funds",
-      };
-    }
-    return {
-      success: true,
-      transaction: "0xstub",
-      network: requirements.network,
-      payer: this.payer,
-      amount: requirements.amount,
-      asset: requirements.asset,
-    };
-  }
 }

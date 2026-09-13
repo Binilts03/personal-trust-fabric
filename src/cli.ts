@@ -9,6 +9,7 @@ import {
   FakePaymentExecutor,
   FileAuditLog,
   RecipientRegistry,
+  atomicWrite,
   executeAndReceipt,
   generateEd25519Keypair,
   leafCidHex,
@@ -41,10 +42,6 @@ function toPrivateKey(der: Uint8Array): KeyObject {
   return privateKeyFromPkcs8(der);
 }
 
-function pubHexOf(pub: KeyObject): string {
-  return Buffer.from(rawPublicKey(pub)).toString("hex");
-}
-
 const COMMANDS = [
   "init",
   "keygen",
@@ -54,9 +51,40 @@ const COMMANDS = [
   "disclose",
   "audit",
   "revoke",
+  "help",
+  "version",
 ] as const;
 
-const BOOLEAN_FLAGS = new Set(["yes", "verify"]);
+const BOOLEAN_FLAGS = new Set(["yes", "verify", "help", "version"]);
+
+export const PTF_VERSION = "0.1.0";
+
+export function helpText(): string {
+  return [
+    "ptf — Personal Trust Fabric operator CLI (use without possession)",
+    "",
+    "usage: ptf [--dir D] <command> [flags]   |   ptf --help   |   ptf --version",
+    "",
+    "commands:",
+    "  init                                   create store (refuses to overwrite)",
+    "  keygen --alias NAME                    generate Ed25519 key into encrypted keystore",
+    "  recipient --alias NAME --key HEX       register 32-byte recipient key",
+    "  grant --id ID --principal P --cmd /pay [--agent A] [--amount-max N] [--currency C] [--exp-in S] [--max-uses N] [--purpose T] [--resource R] [--recipient R]",
+    "  pay --principal P --agent A --recipient R --amount N --currency C --resource R [--purpose T] [--terms-json JSON] [--yes]",
+    "  disclose --holder H --verifier V --claims a,b --credential JSON [--allowed a,b] [--yes]",
+    "  audit [--verify]                       verify hash chain (needs no passphrase)",
+    "  revoke (--grant ID | --recipient ALIAS)",
+    "  help                                   print this help",
+    "",
+    "env: PTF_PASSPHRASE (required for keygen/pay/disclose only; never passed as a flag)",
+    "examples:",
+    "  PTF_PASSPHRASE=hunter2 ptf --dir ./ptf-store init",
+    "  PTF_PASSPHRASE=hunter2 ptf keygen --alias you",
+    "  ptf grant --id g1 --principal you --cmd /pay --amount-max 2000 --currency INR",
+    "  PTF_PASSPHRASE=hunter2 ptf pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes",
+    "docs: README.md, docs/audit/README.md",
+  ].join("\n");
+}
 
 export interface ParsedArgs {
   readonly command: string;
@@ -65,6 +93,12 @@ export interface ParsedArgs {
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    return { command: "help", dir: "./ptf-store", flags: {} };
+  }
+  if (argv.includes("--version") || argv.includes("-V")) {
+    return { command: "version", dir: "./ptf-store", flags: {} };
+  }
   let dir = "./ptf-store";
   const tokens: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -108,8 +142,60 @@ export function parseArgs(argv: string[]): ParsedArgs {
     flags[name] = next;
     i++;
   }
+  const allowed = ALLOWED_FLAGS[command];
+  if (allowed !== undefined) {
+    for (const name of Object.keys(flags)) {
+      if (!allowed.has(name)) {
+        throw new Error(
+          `unknown flag --${name} for ${command} (see: ptf help)`
+        );
+      }
+    }
+  }
   return { command, dir, flags };
 }
+
+const ALLOWED_FLAGS: Record<string, Set<string>> = {
+  init: new Set(),
+  keygen: new Set(["alias"]),
+  recipient: new Set(["alias", "key"]),
+  grant: new Set([
+    "id",
+    "principal",
+    "agent",
+    "cmd",
+    "purpose",
+    "resource",
+    "recipient",
+    "amount-max",
+    "currency",
+    "exp-in",
+    "max-uses",
+  ]),
+  pay: new Set([
+    "agent",
+    "principal",
+    "recipient",
+    "amount",
+    "currency",
+    "resource",
+    "purpose",
+    "terms-json",
+    "yes",
+  ]),
+  disclose: new Set([
+    "holder",
+    "verifier",
+    "claims",
+    "credential",
+    "allowed",
+    "yes",
+  ]),
+  audit: new Set(["verify"]),
+  revoke: new Set(["grant", "recipient"]),
+  help: new Set(),
+  version: new Set(),
+};
 
 export interface CliIo {
   readLine(): string;
@@ -164,10 +250,9 @@ function persistKeys(
   keys: Record<string, Uint8Array>
 ): void {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
+  atomicWrite(
     join(dir, "keystore.json"),
-    `${JSON.stringify(sealKeystore(keys, passphraseFrom(env)))}\n`,
-    "utf8"
+    `${JSON.stringify(sealKeystore(keys, passphraseFrom(env)))}\n`
   );
 }
 
@@ -191,10 +276,24 @@ function loadCtx(
   const kp = join(dir, "keystore.json");
   let keys: Record<string, Uint8Array> = {};
   if (existsSync(kp)) {
+    if (!needKeys) {
+      // Read-only commands must not demand the passphrase: leave keys empty.
+      return { dir, auth, reg, audit, keys };
+    }
+    let raw: string;
+    try {
+      raw = readFileSync(kp, "utf8");
+    } catch {
+      throw new Error(`keystore missing: ${kp}`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch {
+      throw new Error(`keystore corrupt: ${kp}`);
+    }
     keys = openKeystore(
-      JSON.parse(readFileSync(kp, "utf8")) as Parameters<
-        typeof openKeystore
-      >[0],
+      parsed as Parameters<typeof openKeystore>[0],
       passphraseFrom(env)
     );
   } else if (needKeys) {
@@ -211,7 +310,24 @@ export async function run(
   const { command, dir, flags } = parseArgs(argv);
   const now = () => io.now();
 
+  if (command === "help") {
+    io.print(helpText());
+    return 0;
+  }
+  if (command === "version") {
+    io.print(`ptf ${PTF_VERSION}`);
+    return 0;
+  }
+
   if (command === "init") {
+    if (
+      existsSync(join(dir, "authority.json")) ||
+      existsSync(join(dir, "registry.json"))
+    ) {
+      throw new Error(
+        `store already exists at ${dir} (refusing to overwrite grants)`
+      );
+    }
     mkdirSync(dir, { recursive: true });
     saveAuthority(dir, new Authority({ nowSec: now }));
     saveRegistry(dir, new RecipientRegistry(now));
@@ -231,7 +347,9 @@ export async function run(
       kp.privateKey.export({ format: "der", type: "pkcs8" })
     );
     persistKeys(dir, env, ctx.keys);
-    io.print(`${alias}: ${pubHexOf(kp.publicKey)}`);
+    io.print(
+      `${alias}: ${Buffer.from(rawPublicKey(kp.publicKey)).toString("hex")}`
+    );
     return 0;
   }
 
@@ -295,11 +413,18 @@ export async function run(
     const resource = str(flags, "resource");
     const purpose = opt(flags, "purpose") ?? "payment";
     const termsRaw = opt(flags, "terms-json");
-    const terms =
-      termsRaw !== undefined
-        ? (JSON.parse(termsRaw) as unknown)
-        : { resource, amount, currency };
+    let terms: unknown;
+    if (termsRaw !== undefined) {
+      try {
+        terms = JSON.parse(termsRaw) as unknown;
+      } catch {
+        throw new Error("usage: --terms-json must be valid JSON");
+      }
+    } else {
+      terms = { resource, amount, currency };
+    }
     const digest = termsDigestOf(terms);
+    const capExp = now() + 300;
     const demand = {
       principal,
       agent,
@@ -311,13 +436,29 @@ export async function run(
       currency,
       termsDigest: digest,
     };
+    // Fail fast before spending authority: keys must exist first.
+    const principalSeed = ctx.keys[principal];
+    if (principalSeed === undefined) {
+      throw new Error(`no key for principal ${principal}`);
+    }
+    const recipientSeed = ctx.keys[recipient];
+    if (recipientSeed === undefined) {
+      throw new Error(
+        `no local key for recipient ${recipient} (v0.1 CLI pays self-controlled identities only)`
+      );
+    }
     const preview = ctx.auth.evaluate(demand, { nowSec: now() });
     if (!preview.allow) {
       io.print(`denied before approval: ${preview.reason}`);
       return 1;
     }
     io.print(
-      renderProposal({ demand, citations: preview.citations, maxUses: 1 })
+      renderProposal({
+        demand,
+        citations: preview.citations,
+        maxUses: 1,
+        expiresAt: capExp,
+      })
     );
     const answer = flags["yes"] === true ? "yes" : io.readLine();
     if (parseDecision(answer) !== "approve") {
@@ -331,10 +472,6 @@ export async function run(
     if (!decision.allow) {
       io.print(`denied at redeem time: ${decision.reason}`);
       return 1;
-    }
-    const principalSeed = ctx.keys[principal];
-    if (principalSeed === undefined) {
-      throw new Error(`no key for principal ${principal}`);
     }
     const capabilities = new Capabilities({
       resolveKey: (id: string) => ctx.reg.resolve(id),
@@ -353,18 +490,12 @@ export async function run(
         recipient,
         amountMax: amount,
         currency,
-        exp: now() + 300,
+        exp: capExp,
         maxUses: 1,
         termsDigest: digest,
       },
       toPrivateKey(principalSeed)
     );
-    const recipientSeed = ctx.keys[recipient];
-    if (recipientSeed === undefined) {
-      throw new Error(
-        `no local key for recipient ${recipient} (cannot prove receipt)`
-      );
-    }
     const recipientPriv = toPrivateKey(recipientSeed);
     const recipientPub = publicKeyFromPrivate(recipientPriv);
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
@@ -420,21 +551,61 @@ export async function run(
     const holder = str(flags, "holder");
     const verifier = str(flags, "verifier");
     const requested = str(flags, "claims").split(",");
-    const credential = JSON.parse(str(flags, "credential")) as {
+    let credential: {
       issuer: string;
       subject: string;
       claims: Record<string, unknown>;
     };
+    try {
+      credential = JSON.parse(str(flags, "credential")) as {
+        issuer: string;
+        subject: string;
+        claims: Record<string, unknown>;
+      };
+    } catch {
+      throw new Error("usage: --credential must be valid JSON");
+    }
     const allowed = (opt(flags, "allowed") ?? requested.join(",")).split(",");
-    io.print(`requesting [${requested.join(", ")}] for ${verifier}`);
+    const terms = { verifier, claims: [...requested].sort() };
+    const digest = termsDigestOf(terms);
+    const demand = {
+      principal: holder,
+      agent: holder,
+      cmd: "/disclose" as const,
+      purpose: "disclose",
+      resource: `credential:${credential.issuer}`,
+      recipient: verifier,
+      claims: requested,
+      termsDigest: digest,
+    };
+    const holderSeed = ctx.keys[holder];
+    if (holderSeed === undefined) {
+      throw new Error(`no key for holder ${holder}`);
+    }
+    const preview = ctx.auth.evaluate(demand, { nowSec: now() });
+    if (!preview.allow) {
+      io.print(`denied before approval: ${preview.reason}`);
+      return 1;
+    }
+    io.print(
+      renderProposal({
+        demand,
+        citations: preview.citations,
+        maxUses: 1,
+      })
+    );
     const answer = flags["yes"] === true ? "yes" : io.readLine();
     if (parseDecision(answer) !== "approve") {
       io.print("denied by human");
       return 1;
     }
-    const holderSeed = ctx.keys[holder];
-    if (holderSeed === undefined) {
-      throw new Error(`no key for holder ${holder}`);
+    const decision = ctx.auth.evaluate(demand, {
+      consume: true,
+      nowSec: now(),
+    });
+    if (!decision.allow) {
+      io.print(`denied at redeem time: ${decision.reason}`);
+      return 1;
     }
     const holderPriv = toPrivateKey(holderSeed);
     const pres = Disclose.present(

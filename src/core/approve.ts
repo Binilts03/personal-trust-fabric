@@ -24,6 +24,7 @@ export function sanitizeField(value: string): string {
   return value
     .replace(/\x1b\[[0-9;?]*[@-~]/g, "")
     .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .replace(/[\r\n\t]+/g, " ")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
 }
 
@@ -47,8 +48,15 @@ export function renderProposal(view: ProposalView): string {
     line("Resource", d.resource),
     line("Agent", d.agent),
     line("Principal", d.principal),
-    ...(view.expiresAt !== undefined
-      ? [line("Expires", new Date(view.expiresAt * 1000).toISOString())]
+    ...(view.expiresAt !== undefined && Number.isFinite(view.expiresAt)
+      ? [
+          line(
+            "Expires",
+            Number.isFinite(new Date(view.expiresAt * 1000).getTime())
+              ? new Date(view.expiresAt * 1000).toISOString()
+              : "(invalid expiry — confirm before approving)"
+          ),
+        ]
       : ["Expires: (no expiry shown — confirm before approving)"]),
     ...(view.maxUses !== undefined ? [line("Uses", String(view.maxUses))] : []),
     line("Terms digest", d.termsDigest),

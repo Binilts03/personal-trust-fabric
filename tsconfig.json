@@ -14,7 +14,8 @@
     "sourceMap": true,
     "outDir": "dist",
     "rootDir": ".",
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "stripInternal": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

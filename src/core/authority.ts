@@ -1,4 +1,4 @@
-import { termsDigestOf } from "./canonical.js";
+import { CLOCK_SKEW_SEC, termsDigestOf } from "./canonical.js";
 
 /**
  * Policy authority — default-deny evaluation over explicit grants and approvals.
@@ -9,7 +9,7 @@ import { termsDigestOf } from "./canonical.js";
  * permit, else deny), schema-style checks at add-time rather than per-request.
  */
 
-const SKEW_SEC = 60; // parity with capability CLOCK_SKEW_SEC; clocks are never exact.
+const SKEW_SEC = CLOCK_SKEW_SEC;
 
 export interface AuthorityDemand {
   readonly principal: string;
@@ -99,7 +99,7 @@ export type AuthorityDecision =
       readonly policyId?: string;
     };
 
-function isCovered(broad: `/${string}`, narrow: `/${string}`): boolean {
+export function isCovered(broad: `/${string}`, narrow: `/${string}`): boolean {
   return (
     narrow === broad ||
     narrow.startsWith(broad.endsWith("/") ? broad : `${broad}/`)

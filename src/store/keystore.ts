@@ -43,19 +43,19 @@ function passBytes(passphrase: string): Buffer {
 function checkKdf(kdf: KeystoreFile["kdf"]): { salt: Buffer } {
   if (
     kdf.name !== "scrypt" ||
-    !Number.isInteger(kdf.N) ||
-    (kdf.N & (kdf.N - 1)) !== 0 ||
-    kdf.N <= 1 ||
-    kdf.N > 2 ** 20 ||
-    !Number.isInteger(kdf.r) ||
-    kdf.r < 1 ||
-    !Number.isInteger(kdf.p) ||
-    kdf.p < 1
+    kdf.N !== SCRYPT_N ||
+    kdf.r !== SCRYPT_R ||
+    kdf.p !== SCRYPT_P
   ) {
-    throw new Error("keystore: unsafe KDF parameters");
+    throw new Error(
+      `keystore: KDF parameters must be scrypt N=${SCRYPT_N} r=${SCRYPT_R} p=${SCRYPT_P}`
+    );
+  }
+  if (typeof kdf.saltHex !== "string" || !/^[0-9a-fA-F]+$/.test(kdf.saltHex)) {
+    throw new Error("keystore: salt corrupt");
   }
   const salt = Buffer.from(kdf.saltHex, "hex");
-  if (salt.length < 8) throw new Error("keystore: salt too short");
+  if (salt.length !== SALT_BYTES) throw new Error("keystore: salt corrupt");
   return { salt };
 }
 
@@ -114,11 +114,32 @@ export function openKeystore(
   }
   const { salt } = checkKdf(file.kdf);
   const key = scryptSync(passBytes(passphrase), salt, KEY_BYTES, {
-    N: file.kdf.N,
-    r: file.kdf.r,
-    p: file.kdf.p,
+    N: SCRYPT_N,
+    r: SCRYPT_R,
+    p: SCRYPT_P,
     maxmem: SCRYPT_MAXMEM,
   });
+  for (const [field, want] of [
+    ["ivHex", IV_BYTES * 2],
+    ["tagHex", 16 * 2],
+  ] as const) {
+    const v = (file as unknown as Record<string, unknown>)[field];
+    if (
+      typeof v !== "string" ||
+      v.length !== want ||
+      !/^[0-9a-fA-F]+$/.test(v)
+    ) {
+      throw new Error("keystore: file corrupt");
+    }
+  }
+  if (
+    typeof file.ctHex !== "string" ||
+    file.ctHex.length === 0 ||
+    file.ctHex.length % 2 !== 0 ||
+    !/^[0-9a-fA-F]+$/.test(file.ctHex)
+  ) {
+    throw new Error("keystore: file corrupt");
+  }
   let plain: string;
   try {
     const decipher = createDecipheriv(
@@ -149,6 +170,9 @@ export function openKeystore(
     parsed as Record<string, unknown>
   )) {
     if (typeof hex !== "string") throw new Error("keystore: payload corrupt");
+    if (!/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2 !== 0) {
+      throw new Error("keystore: payload corrupt");
+    }
     out[alias] = new Uint8Array(Buffer.from(hex, "hex"));
   }
   return out;

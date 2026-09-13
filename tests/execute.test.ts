@@ -203,8 +203,13 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
     tampered["action"] = "refund";
     lines[0] = JSON.stringify(tampered);
     const forged = new Audit(() => NOW);
-    for (const line of lines) forged.ingest(line);
-    assert.equal(forged.verifyChain(), false);
+    // Fail-closed ingest: forged entries are rejected at load, not merely
+    // flagged by verifyChain.
+    assert.throws(() => {
+      for (const line of lines) forged.ingest(line);
+    }, /hash mismatch|prevHash|seq/);
+    assert.equal(forged.verifyChain(), true);
+    assert.equal(forged.toJSONL(), "");
   });
 
   it("chains audit entries with HMAC when keyed, and rejects key confusion", () => {
@@ -222,13 +227,16 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
     const wrongKey = new Audit(() => NOW, {
       hmacKey: new Uint8Array(32).fill(8),
     });
-    for (const line of audit.toJSONL().trim().split("\n"))
-      wrongKey.ingest(line);
-    assert.equal(wrongKey.verifyChain(), false);
+    assert.throws(() => {
+      for (const line of audit.toJSONL().trim().split("\n"))
+        wrongKey.ingest(line);
+    }, /hash mismatch/);
 
     const unkeyed = new Audit(() => NOW);
-    for (const line of audit.toJSONL().trim().split("\n")) unkeyed.ingest(line);
-    assert.equal(unkeyed.verifyChain(), false);
+    assert.throws(() => {
+      for (const line of audit.toJSONL().trim().split("\n"))
+        unkeyed.ingest(line);
+    }, /hash mismatch/);
 
     assert.throws(() => new Audit(() => NOW, { hmacKey: new Uint8Array(8) }));
   });
@@ -270,7 +278,7 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
     const receipt = await executeAndReceipt(
       executor,
       instruction,
-      { ok: true },
+      { ok: true, chainId: "cid-x" },
       NOW
     );
     assert.deepEqual(Object.keys(receipt).sort(), [

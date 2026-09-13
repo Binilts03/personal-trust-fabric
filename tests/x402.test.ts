@@ -5,10 +5,10 @@ import {
   checkSettlement,
   generateEd25519Keypair,
   parsePaymentRequired,
-  StubFacilitator,
   termsDigestOf,
   toX402PaymentDemand,
 } from "../src/index.js";
+import { StubFacilitator } from "./fakes.js";
 
 const NOW = 1_700_000_000;
 const PRINCIPAL = "did:test:principal";
@@ -55,7 +55,13 @@ describe("x402 v2 adapter as evidence (ptf-v01/04)", () => {
     });
     assert.equal(demand.recipient, PAYTO);
     assert.equal(demand.amount, 10000);
-    assert.deepEqual(capabilityArgs, { amount: 10000, currency: "USDC" });
+    assert.deepEqual(capabilityArgs, {
+      amount: 10000,
+      currency: "USDC",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      network: "eip155:84532",
+      scheme: "exact",
+    });
   });
 
   it("rejects malformed challenges before any authority is involved", () => {

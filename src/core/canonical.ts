@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
 
+/** Single clock-skew budget (60s). Canonical home; authority/disclose/capability share it. */
+export const CLOCK_SKEW_SEC = 60;
+
+/** UTF-8 bytes helper (deduplicated from capability/disclose/a2a). */
+export function utf8Bytes(s: string): Uint8Array {
+  return new Uint8Array(Buffer.from(s, "utf8"));
+}
+
 /** Canonical JSON: sorted object keys, UTF-8, no whitespace. Maps/Sets rejected (non-canonical). Numbers must be finite. */
 export function canonicalize(value: unknown): string {
   if (value === null) return "null";
@@ -31,6 +39,13 @@ export function canonicalize(value: unknown): string {
     return `[${value.map((v) => canonicalize(v)).join(",")}]`;
   }
   if (t === "object") {
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new Error("canonical: only plain objects allowed");
+    }
+    if (Object.getOwnPropertySymbols(value).length > 0) {
+      throw new Error("canonical: symbol keys not allowed");
+    }
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));

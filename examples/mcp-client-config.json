@@ -1,0 +1,14 @@
+{
+  "$comment": "Claude Desktop / MCP Inspector config for the PTF server. Copy into claude_desktop_config.json under mcpServers, then restart the client. PTF_STORE_DIR must point at an initialized store (ptf init); PTF_PASSPHRASE must be set in env, never in this file.",
+  "mcpServers": {
+    "personal-trust-fabric": {
+      "command": "node",
+      "args": ["./dist/src/mcp-server.js"],
+      "cwd": "/path/to/personal-trust-fabric",
+      "env": {
+        "PTF_STORE_DIR": "./ptf-store",
+        "PTF_PASSPHRASE": "change-me-via-env-only"
+      }
+    }
+  }
+}

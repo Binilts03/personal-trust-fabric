@@ -31,4 +31,18 @@ describe("operator CLI argument parsing (prod-03)", () => {
       /unexpected positional/
     );
   });
+
+  it("supports --help/--version and rejects unknown flags", () => {
+    assert.equal(parseArgs(["--help"]).command, "help");
+    assert.equal(parseArgs(["--version"]).command, "version");
+    assert.equal(parseArgs(["help"]).command, "help");
+    assert.throws(
+      () => parseArgs(["pay", "--frobnicate", "x"]),
+      /unknown flag/
+    );
+    assert.throws(
+      () => parseArgs(["grant", "--id", "g", "--nope", "v"]),
+      /unknown flag/
+    );
+  });
 });

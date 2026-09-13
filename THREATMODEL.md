@@ -10,10 +10,11 @@ Principal secrets (payment instruments, signing keys, credentials), Authority St
 2. PTF ↔ recipient (authenticated via Identity Binding + Ed25519 proof before execution).
 3. PTF ↔ external protocol (x402/AP2/OpenID4VP/MCP/A2A treated as evidence, never authority).
 4. PTF ↔ human approver (digest-bound proposal; any term change = new approval).
+5. Standards edge (`authzen`/`oauth-agent`/`sd-jwt`/`audit-interop` projections) ↔ `Authority.evaluate`: projections are evidence in, decision in `Authority.evaluate`.
 
 ## Attackers in scope
 
-Prompt-injected agent requesting `pay attacker ₹100k`; malicious tool description / WebMCP output; substituted recipient key; replayed capability; oversharing verifier; compromised adapter; log scraper.
+Prompt-injected agent requesting `pay attacker ₹100k`; malicious tool description / WebMCP output; substituted recipient key; replayed capability; oversharing verifier; compromised adapter; log scraper; `act` chain confusion; `aud` widening; trusting `ptf_digest` without recompute.
 
 ## Out of scope for v0.1
 

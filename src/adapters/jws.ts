@@ -1,4 +1,9 @@
-import { createPublicKey, verify, type KeyObject } from "node:crypto";
+import {
+  createHash,
+  createPublicKey,
+  verify,
+  type KeyObject,
+} from "node:crypto";
 
 /**
  * Shared JWS utilities for the edge adapters (A2A cards today).
@@ -8,7 +13,19 @@ import { createPublicKey, verify, type KeyObject } from "node:crypto";
 export const b64uEncode = (data: Uint8Array | Buffer | string): string =>
   Buffer.from(data as Uint8Array).toString("base64url");
 
+export function b64uDecodeStrict(s: string, what = "jws"): Buffer {
+  if (s.length === 0 || !/^[A-Za-z0-9_-]*={0,2}$/.test(s) || /[\s]/.test(s)) {
+    throw new Error(`jws: ${what} is not base64url`);
+  }
+  return Buffer.from(s, "base64url");
+}
+
 export const b64uDecode = (s: string): Buffer => Buffer.from(s, "base64url");
+
+/** Single sha256(utf8) → base64url helper (deduplicated from sd-jwt/ap2). UTF-8 matches ASCII for ASCII inputs. */
+export function sha256b64uUtf8(s: string): string {
+  return createHash("sha256").update(s, "utf8").digest().toString("base64url");
+}
 
 /** Raw R||S to DER. Exported for unit-testing the minimal-encoding edge cases. */
 export function rawToDer(raw: Buffer): Buffer {
@@ -95,7 +112,11 @@ export function publicKeyFromP256Jwk(jwk: {
   crv: string;
   x: string;
   y: string;
+  d?: unknown;
 }): KeyObject {
+  if ((jwk as Record<string, unknown>)["d"] !== undefined) {
+    throw new Error("jws: private material must never enter the verifier");
+  }
   return createPublicKey({ key: jwk as never, format: "jwk" });
 }
 

@@ -2,10 +2,14 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  openSync,
+  closeSync,
+  fsyncSync,
   readFileSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { Authority } from "../core/authority.js";
 import { Audit, type AuditEntry, type AuditEvent } from "../core/execute.js";
@@ -14,14 +18,26 @@ import { RecipientRegistry } from "../core/identity.js";
 
 /**
  * Durable JSON stores for a single operator (prod-01).
- * Atomic writes via tmp-file rename; no locking — concurrent writers are out
- * of scope (see the production spec). Corrupt or missing files fail closed.
+ * Atomic writes via tmp-file rename with a per-write random suffix;
+ * fsync best-effort (POSIX durable, Windows rename is not atomic-replace —
+ * single-operator ceiling documented in the prod spec). No locking —
+ * concurrent writers (e.g. two MCP clients) can lost-update; use one writer
+ * or external locking. Corrupt or missing files fail closed.
  */
-
-function atomicWrite(path: string, content: string): void {
+export function atomicWrite(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, content, "utf8");
+  const tmp = `${path}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
+  const fd = openSync(tmp, "w", 0o600);
+  try {
+    writeFileSync(fd, content, "utf8");
+    try {
+      fsyncSync(fd);
+    } catch {
+      // Windows/odd FS: best effort only.
+    }
+  } finally {
+    closeSync(fd);
+  }
   renameSync(tmp, path);
 }
 
@@ -76,9 +92,10 @@ export class FileAuditLog {
 
   static open(
     path: string,
-    nowSec: () => number = () => Math.floor(Date.now() / 1000)
+    nowSec: () => number = () => Math.floor(Date.now() / 1000),
+    opts: { readonly hmacKey?: Uint8Array } = {}
   ): FileAuditLog {
-    const audit = new Audit(nowSec);
+    const audit = new Audit(nowSec, opts);
     if (existsSync(path)) {
       const lines = readFileSync(path, "utf8").split("\n");
       for (const line of lines) {
@@ -88,6 +105,9 @@ export class FileAuditLog {
         } catch {
           throw new Error(`audit log corrupt: ${path}`);
         }
+      }
+      if (!audit.verifyChain()) {
+        throw new Error(`audit log corrupt: ${path} (chain broken)`);
       }
     }
     return new FileAuditLog(audit, path);

@@ -1,5 +1,10 @@
 import type { KeyObject } from "node:crypto";
-import { canonicalize, sha256Hex } from "./canonical.js";
+import {
+  CLOCK_SKEW_SEC,
+  canonicalize,
+  sha256Hex,
+  utf8Bytes,
+} from "./canonical.js";
 import { randomHex, signBytes, verifyBytes } from "./crypto.js";
 
 /**
@@ -66,20 +71,7 @@ export type VerifyResult =
   | { readonly ok: true; readonly disclosed: readonly string[] }
   | { readonly ok: false; readonly reason: DiscloseDenyReason };
 
-/** v0.1 claim catalog seed. Validity-critical claims stay always-visible, never disclosed. */
-export const v01ClaimCatalog = [
-  {
-    name: "ca_status",
-    description: "Professional standing, e.g. active/suspended",
-  },
-  { name: "age_over_18", description: "Boolean age predicate, no birthdate" },
-] as const;
-
-const FUTURE_SKEW_SEC = 60;
-
-function utf8(s: string): Uint8Array {
-  return new Uint8Array(Buffer.from(s, "utf8"));
-}
+const FUTURE_SKEW_SEC = CLOCK_SKEW_SEC;
 
 export const Disclose = {
   present(
@@ -99,7 +91,7 @@ export const Disclose = {
 
     const allowed = new Set(allow.allowed);
     const names = req.requested.filter(
-      (n) => n in cred.claims && allowed.has(n)
+      (n) => Object.hasOwn(cred.claims, n) && allowed.has(n)
     );
     const disclosures: Disclosure[] = names.map((name) => {
       const value = (cred.claims as Record<string, unknown>)[name];
@@ -123,7 +115,7 @@ export const Disclose = {
     };
     return {
       ...unsigned,
-      sig: signBytes(holder.privateKey, utf8(canonicalize(unsigned))),
+      sig: signBytes(holder.privateKey, utf8Bytes(canonicalize(unsigned))),
     };
   },
 
@@ -155,7 +147,6 @@ export const Disclose = {
     if (opts.usedNonces !== undefined) {
       if (opts.usedNonces.has(pres.nonce))
         return { ok: false, reason: "replay" };
-      opts.usedNonces.add(pres.nonce);
     }
     if (
       pres.credExp !== undefined &&
@@ -170,8 +161,13 @@ export const Disclose = {
     }
     const { sig, ...unsigned } = pres;
     void sig;
-    if (!verifyBytes(opts.holderKey, utf8(canonicalize(unsigned)), pres.sig)) {
+    if (
+      !verifyBytes(opts.holderKey, utf8Bytes(canonicalize(unsigned)), pres.sig)
+    ) {
       return { ok: false, reason: "bad-signature" };
+    }
+    if (opts.usedNonces !== undefined) {
+      opts.usedNonces.add(pres.nonce);
     }
     return { ok: true, disclosed: pres.disclosures.map((d) => d.name) };
   },

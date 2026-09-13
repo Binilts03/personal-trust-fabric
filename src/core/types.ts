@@ -1,5 +1,9 @@
 /**
  * PTF capability types — decision 01 (`ptf/cap@0.1`).
+ * @internal Local decision receipt only (ADR-0009). Do NOT use as wire:
+ * use `adapters/authzen.ts` (AuthZEN SARC) and `adapters/oauth-agent.ts`
+ * (RFC8693 attenuation) for interop. Retained so existing tests and local
+ * redemption keep working without forking a standard.
  * UCAN-delegation semantics over canonical-JSON bytes (not DAG-CBOR byte-compatible).
  * Key ids are opaque strings (`did:key:…`, `did:jwk:…`, `did:web:…`, or test ids).
  * Core never resolves DIDs — callers supply keys via KeyResolver (Identity Binding lives outside core).
@@ -95,7 +99,7 @@ export type DenyReason =
   | "forbidden-shape";
 
 export type AuthorizeResult =
-  | { readonly ok: true; readonly remaining: number }
+  | { readonly ok: true; readonly remaining: number; readonly chainId: string }
   | {
       readonly ok: false;
       readonly reason: DenyReason;

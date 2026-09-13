@@ -4,6 +4,14 @@
   "description": "User-owned trust and delegated-authority layer for the agentic web (PTF v0.1)",
   "license": "Apache-2.0",
   "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
   "bin": {
     "ptf": "./dist/src/cli.js",
     "ptf-mcp-server": "./dist/src/mcp-server.js"
@@ -18,8 +26,22 @@
     "ap2"
   ],
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Binilts03/personal-trust-fabric.git"
+  },
+  "homepage": "https://github.com/Binilts03/personal-trust-fabric#readme",
+  "bugs": {
+    "url": "https://github.com/Binilts03/personal-trust-fabric/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=22"
   },
@@ -28,6 +50,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/tests/*.test.js\"",
     "eval": "npm run build && node --test \"dist/tests/eval/*.test.js\"",
+    "prepublishOnly": "npm run typecheck && npm test && npm run eval",
     "dev-local": "bash scripts/dev-local.sh up",
     "prepare": "husky"
   },

@@ -51,17 +51,22 @@ export interface Receipt {
 
 /**
  * Runs only with proof of redemption: pass the successful `authorize` result.
- * The type gate turns a forgotten redeem into a compile error instead of a
- * silent payment. (It cannot prove freshness — redeem immediately before executing.)
+ * The result is bound to the redeemed leaf (`chainId` must equal
+ * `instruction.capabilityId`); a bare `{ok:true}` or a redemption for a
+ * different capability is rejected. (It cannot prove freshness — redeem
+ * immediately before executing.)
  */
 export async function executeAndReceipt(
   executor: PaymentExecutor,
   instruction: PaymentInstruction,
-  redemption: { readonly ok: true },
+  redemption: { readonly ok: true; readonly chainId: string },
   at: number
 ): Promise<Receipt> {
   if (redemption.ok !== true)
     throw new Error("execute: redemption required before execution");
+  if (redemption.chainId !== instruction.capabilityId) {
+    throw new Error("execute: redemption is not bound to this instruction");
+  }
   const settled = await executor.executePayment(instruction);
   return {
     receiptId: `rcpt-${randomHex(8)}`,
@@ -97,7 +102,7 @@ export interface AuditEntry extends Required<
   readonly hash: string;
 }
 
-const GENESIS = "GENESIS";
+export const GENESIS = "GENESIS";
 
 function entryHash(
   prevHash: string,
@@ -167,16 +172,51 @@ export class Audit {
     if (
       typeof raw["hash"] !== "string" ||
       typeof raw["prevHash"] !== "string" ||
-      typeof raw["seq"] !== "number"
+      typeof raw["seq"] !== "number" ||
+      !Number.isInteger(raw["seq"] as number) ||
+      typeof raw["at"] !== "number" ||
+      typeof raw["actor"] !== "string" ||
+      typeof raw["action"] !== "string" ||
+      (raw["authorityId"] !== undefined &&
+        typeof raw["authorityId"] !== "string") ||
+      (raw["capabilityId"] !== undefined &&
+        typeof raw["capabilityId"] !== "string") ||
+      (raw["detail"] !== undefined && typeof raw["detail"] !== "string")
     ) {
       throw new Error("audit: malformed entry");
+    }
+    const seq = raw["seq"] as number;
+    if (seq !== this.entries.length) {
+      throw new Error("audit: seq gap — refusing to ingest");
+    }
+    const expectedPrev =
+      this.entries.length === 0
+        ? GENESIS
+        : (this.entries[this.entries.length - 1] as AuditEntry).hash;
+    if (raw["prevHash"] !== expectedPrev) {
+      throw new Error("audit: prevHash mismatch — refusing to ingest");
+    }
+    const { hash, ...body } = raw as unknown as AuditEntry & {
+      readonly hash: string;
+    };
+    void hash;
+    if (
+      entryHash(
+        raw["prevHash"] as string,
+        body as Omit<AuditEntry, "hash">,
+        this.hmacKey
+      ) !== raw["hash"]
+    ) {
+      throw new Error("audit: hash mismatch — refusing forged entry");
     }
     this.entries.push(raw as unknown as AuditEntry);
   }
 
   verifyChain(): boolean {
     let prev = GENESIS;
-    for (const e of this.entries) {
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i] as AuditEntry;
+      if (e.seq !== i) return false;
       if (e.prevHash !== prev) return false;
       const { hash, ...body } = e;
       void hash;

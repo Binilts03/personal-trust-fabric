@@ -89,6 +89,13 @@ function isAlwaysBlockedHost(host: string): boolean {
 /**
  * Fail-closed URL check. HTTPS only, except explicit loopback-HTTP callers
  * (the MCP redirect case). Returns the parsed URL on success.
+ *
+ * DNS LIMIT (documented, not code-fixable here): this checks the hostname
+ * string only. An attacker domain resolving to a private IP, or a clean URL
+ * 302-redirecting to one, still passes. Callers that fetch must pin DNS,
+ * disable redirect-following (or re-check every hop), and prefer an egress
+ * proxy (see deep read). `userinfo` (user:pass@) is always rejected — it
+ * leaks via logs and confuses origin equality.
  */
 export function assertSafeUrl(
   raw: string,
@@ -100,6 +107,9 @@ export function assertSafeUrl(
     url = new URL(raw);
   } catch {
     throw new UrlError(`${what}: malformed URL`);
+  }
+  if (url.username !== "" || url.password !== "") {
+    throw new UrlError(`${what}: userinfo not allowed`);
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new UrlError(`${what}: only http(s) allowed`);

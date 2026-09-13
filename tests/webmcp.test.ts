@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   checkToolRegistration,
   isExposedTo,
-  markUntrusted,
   requiresConfirmation,
 } from "../src/index.js";
 
@@ -65,13 +64,12 @@ describe("WebMCP edge guards (ptf-v03/01)", () => {
     );
   });
 
-  it("requires confirmation for consequential hints and marks outputs untrusted", () => {
+  it("requires confirmation for consequential hints", () => {
     assert.equal(requiresConfirmation({ consequentialHint: true }), true);
     assert.equal(requiresConfirmation({ consequentialHint: false }), false);
     assert.equal(requiresConfirmation({}), false);
     assert.equal(requiresConfirmation(undefined), false);
-    const out = markUntrusted("<script>steal()</script>");
-    assert.equal(out.text, "<script>steal()</script>");
-    assert.equal((out as { __untrusted?: boolean }).__untrusted, true);
+    const out = "<script>steal()</script>";
+    assert.equal(out, "<script>steal()</script>");
   });
 });

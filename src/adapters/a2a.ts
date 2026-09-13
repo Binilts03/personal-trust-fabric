@@ -1,6 +1,8 @@
 import type { KeyObject } from "node:crypto";
 import { sign } from "node:crypto";
+import { canonicalize, utf8Bytes } from "../core/canonical.js";
 import { signBytes, verifyBytes } from "../core/crypto.js";
+import { isRecord, reqString } from "./guards.js";
 import { b64uEncode, esDerToRaw, verifyEs256Key } from "./jws.js";
 import { assertSafeUrl } from "./urls.js";
 
@@ -11,8 +13,13 @@ import { assertSafeUrl } from "./urls.js";
  *
  * JCS subset (documented limit): plain JSON values only (objects with string keys,
  * arrays, strings, safe-integer numbers, booleans, null). `undefined` fields are
- * dropped as defaults. Full RFC 8785 number/unicode edge cases are rejected
- * rather than mis-encoded. Signatures cover raw canonical bytes.
+ * dropped as defaults. Lone surrogates are rejected (JSON.stringify would pass
+ * them through); other unicode is preserved as-is. Full RFC 8785 number
+ * normalization beyond safe-integers is rejected rather than mis-encoded.
+ * Signatures cover raw canonical bytes. `jku` is rejected — keys arrive via
+ * explicit `resolve`, never by URL. Card/key expiry and revocation must be
+ * checked by the host (`resolve` MUST use HTTPS and refuse expired/revoked
+ * keys); this module checks structure + signatures only.
  */
 
 export class A2aError extends Error {
@@ -34,17 +41,6 @@ const KNOWN_FLOWS = new Set([
   "deviceCode",
 ]);
 
-function reqString(
-  obj: Record<string, unknown>,
-  field: string,
-  what: string
-): string {
-  const v = obj[field];
-  if (typeof v !== "string" || v.length === 0)
-    throw new A2aError(`${what}: missing ${field}`);
-  return v;
-}
-
 function reqStringArray(
   obj: Record<string, unknown>,
   field: string,
@@ -54,23 +50,21 @@ function reqStringArray(
   if (
     !Array.isArray(v) ||
     v.length === 0 ||
-    !v.every((e) => typeof e === "string")
+    !v.every((e) => typeof e === "string" && (e as string).length > 0)
   ) {
     throw new A2aError(`${what}: ${field} must be a non-empty string array`);
   }
   return v as string[];
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
 /** Structural validation. Says nothing about trust — pair with signature verification. */
 export function checkAgentCard(card: unknown): void {
   if (!isRecord(card)) throw new A2aError("card must be an object");
-  reqString(card, "name", "card");
-  reqString(card, "description", "card");
-  reqString(card, "version", "card");
+  if ("jku" in card)
+    throw new A2aError("card must not carry jku (resolve keys explicitly)");
+  reqString(card["name"], "a2a: card: missing name");
+  reqString(card["description"], "a2a: card: missing description");
+  reqString(card["version"], "a2a: card: missing version");
   const ifaces = card["supportedInterfaces"];
   if (!Array.isArray(ifaces) || ifaces.length === 0)
     throw new A2aError("card: supportedInterfaces required");
@@ -78,24 +72,36 @@ export function checkAgentCard(card: unknown): void {
     if (!isRecord(entry))
       throw new A2aError(`card: interface ${i} must be an object`);
     assertSafeUrl(
-      reqString(entry, "url", `card: interface ${i}`),
+      reqString(entry["url"], `a2a: card: interface ${i}: missing url`),
       `card: interface ${i} url`
     );
-    reqString(entry, "protocolBinding", `card: interface ${i}`);
-    reqString(entry, "protocolVersion", `card: interface ${i}`);
+    reqString(
+      entry["protocolBinding"],
+      `a2a: card: interface ${i}: missing protocolBinding`
+    );
+    reqString(
+      entry["protocolVersion"],
+      `a2a: card: interface ${i}: missing protocolVersion`
+    );
   }
   const provider = card["provider"];
   if (!isRecord(provider)) throw new A2aError("card: provider required");
-  reqString(provider, "organization", "card: provider");
+  reqString(
+    provider["organization"],
+    "a2a: card: provider: missing organization"
+  );
   if (provider["url"] !== undefined) {
     assertSafeUrl(
-      reqString(provider, "url", "card: provider"),
+      reqString(provider["url"], "a2a: card: provider: missing url"),
       "card: provider url"
     );
   }
   for (const field of ["documentationUrl", "iconUrl"] as const) {
     if (card[field] !== undefined) {
-      assertSafeUrl(reqString(card, field, "card"), `card: ${field}`);
+      assertSafeUrl(
+        reqString(card[field], `a2a: card: missing ${field}`),
+        `card: ${field}`
+      );
     }
   }
   const capabilities = card["capabilities"];
@@ -110,9 +116,12 @@ export function checkAgentCard(card: unknown): void {
   for (const [i, skill] of skills.entries()) {
     if (!isRecord(skill))
       throw new A2aError(`card: skill ${i} must be an object`);
-    reqString(skill, "id", `card: skill ${i}`);
-    reqString(skill, "name", `card: skill ${i}`);
-    reqString(skill, "description", `card: skill ${i}`);
+    reqString(skill["id"], `a2a: card: skill ${i}: missing id`);
+    reqString(skill["name"], `a2a: card: skill ${i}: missing name`);
+    reqString(
+      skill["description"],
+      `a2a: card: skill ${i}: missing description`
+    );
   }
   const schemes = card["securitySchemes"];
   if (schemes !== undefined) {
@@ -121,7 +130,10 @@ export function checkAgentCard(card: unknown): void {
     for (const [name, scheme] of Object.entries(schemes)) {
       if (!isRecord(scheme))
         throw new A2aError(`card: scheme ${name} must be an object`);
-      const type = reqString(scheme, "type", `card: scheme ${name}`);
+      const type = reqString(
+        scheme["type"],
+        `a2a: card: scheme ${name}: missing type`
+      );
       if (!KNOWN_SCHEMES.has(type))
         throw new A2aError(`card: unknown scheme ${type}`);
       const flows = scheme["flows"];
@@ -142,21 +154,40 @@ export function checkAgentCard(card: unknown): void {
 
 /** JCS-subset canonicalization: sorted keys, no whitespace, safe integers only. */
 export function canonicalJcs(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "string") return JSON.stringify(value) as string;
-  if (typeof value === "boolean") return value ? "true" : "false";
+  validateJcs(value);
+  return canonicalize(value);
+}
+
+function validateJcs(value: unknown): void {
+  if (value === null) return;
+  if (typeof value === "string") {
+    if (/[\uD800-\uDFFF]/.test(value)) {
+      throw new A2aError("JCS subset: lone surrogates rejected");
+    }
+    return;
+  }
+  if (typeof value === "boolean") return;
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value))
       throw new A2aError("JCS subset: numbers must be safe integers");
-    return JSON.stringify(value) as string;
+    return;
   }
-  if (Array.isArray(value))
-    return `[${value.map((v) => canonicalJcs(v)).join(",")}]`;
+  if (Array.isArray(value)) {
+    for (const v of value) validateJcs(v);
+    return;
+  }
   if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJcs(v)}`).join(",")}}`;
+    if (
+      value instanceof Uint8Array ||
+      value instanceof Map ||
+      value instanceof Set
+    ) {
+      throw new A2aError("JCS subset: unsupported value");
+    }
+    for (const [, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v !== undefined) validateJcs(v);
+    }
+    return;
   }
   throw new A2aError("JCS subset: unsupported value");
 }
@@ -175,23 +206,23 @@ export interface CardSignature {
   readonly signature: string;
 }
 
-function utf8(s: string): Uint8Array {
-  return new Uint8Array(Buffer.from(s, "utf8"));
-}
-
 /** Sign a card (minus `signatures`) for distribution. Hosts use this to publish. */
 export function signAgentCard(
   card: Record<string, unknown>,
   kid: string,
   key: { readonly alg: "ES256" | "EdDSA"; readonly privateKey: KeyObject }
 ): CardSignature {
-  const canonical = canonicalJcs(card);
+  const { signatures, ...unsigned } = card;
+  if (signatures !== undefined) {
+    throw new A2aError("signAgentCard: card must not already carry signatures");
+  }
+  const canonical = canonicalJcs(unsigned);
   const sig =
     key.alg === "ES256"
       ? esDerToRaw(
           sign("sha256", Buffer.from(canonical, "utf8"), key.privateKey)
         )
-      : Buffer.from(signBytes(key.privateKey, utf8(canonical)));
+      : Buffer.from(signBytes(key.privateKey, utf8Bytes(canonical)));
   return {
     protected: { alg: key.alg, kid, typ: "JOSE" },
     signature: b64uEncode(sig),
@@ -215,15 +246,33 @@ export function verifyCardSignatures(
     throw new A2aError("unsigned card");
   const { signatures, ...rest } = card;
   void signatures;
+  // `jku` must never ride along: keys arrive via explicit resolve, never by URL.
+  if ("jku" in rest) {
+    throw new A2aError("card must not carry jku (resolve keys explicitly)");
+  }
   const canonical = canonicalJcs(rest);
   let valid = 0;
-  for (const sig of sigs) {
-    const alg = sig.protected.alg;
-    const kid = sig.protected.kid;
+  for (const entry of sigs) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new A2aError("malformed card signature entry");
+    }
+    const rec = entry as Record<string, unknown>;
+    const prot = rec["protected"];
+    if (typeof prot !== "object" || prot === null || Array.isArray(prot)) {
+      throw new A2aError("signature missing alg/kid");
+    }
+    if ("jku" in (prot as Record<string, unknown>)) {
+      throw new A2aError("signature must not carry jku");
+    }
+    const alg = (prot as Record<string, unknown>)["alg"];
+    const kid = (prot as Record<string, unknown>)["kid"];
+    const sigB64 = rec["signature"];
     if (
       typeof alg !== "string" ||
       typeof kid !== "string" ||
-      kid.length === 0
+      kid.length === 0 ||
+      typeof sigB64 !== "string" ||
+      sigB64.length === 0
     ) {
       throw new A2aError("signature missing alg/kid");
     }
@@ -232,11 +281,22 @@ export function verifyCardSignatures(
     const found = resolve(kid);
     if (found === null) throw new A2aError(`unknown signing key ${kid}`);
     if (found.alg !== alg) throw new A2aError(`algorithm mismatch for ${kid}`);
-    const sigBytes = Buffer.from(sig.signature, "base64url");
+    let sigBytes: Buffer;
+    try {
+      sigBytes = Buffer.from(sigB64, "base64url");
+    } catch {
+      throw new A2aError(`malformed card signature from ${kid}`);
+    }
+    if (sigBytes.length === 0)
+      throw new A2aError(`malformed card signature from ${kid}`);
     const ok =
       found.alg === "ES256"
         ? verifyEs256Key(found.key, canonical, sigBytes.toString("base64url"))
-        : verifyBytes(found.key, utf8(canonical), new Uint8Array(sigBytes));
+        : verifyBytes(
+            found.key,
+            utf8Bytes(canonical),
+            new Uint8Array(sigBytes)
+          );
     if (!ok) throw new A2aError(`invalid card signature from ${kid}`);
     valid += 1;
   }

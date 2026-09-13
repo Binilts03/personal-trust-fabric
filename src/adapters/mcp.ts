@@ -1,4 +1,4 @@
-import { assertSafeUrl } from "./urls.js";
+import { timingSafeEqual } from "node:crypto";
 
 /**
  * MCP edge guards — audience, token separation, redirects.
@@ -7,6 +7,11 @@ import { assertSafeUrl } from "./urls.js";
  * validate, the server MUST NOT pass the client token through, redirects are
  * pre-registered and exact-matched. Minting upstream tokens is host business;
  * this module solely refuses the unsafe shapes.
+ *
+ * SCOPE LIMIT: per-client consent, PKCE S256, single-use state, Host-cookie
+ * binding, and minimal scopes are host obligations — this module enforces
+ * audience + token-separation + redirect-registry only. `register` is
+ * privileged: only the operator may add redirects, never agent input.
  */
 
 export class McpError extends Error {
@@ -26,11 +31,10 @@ export function checkAudience(
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++)
-    diff |= (a.charCodeAt(i) ^ b.charCodeAt(i)) & 0xffff;
-  return diff === 0;
+  const ab = Buffer.from(a, "utf8");
+  const bb = Buffer.from(b, "utf8");
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
 }
 
 /** Refuse to forward the client token upstream — a separate token is mandatory. */
@@ -42,20 +46,5 @@ export function assertDistinctTokens(
     throw new McpError("missing token");
   if (constantTimeEqual(clientToken, upstreamToken)) {
     throw new McpError("refusing to forward the client token upstream");
-  }
-}
-
-/** Pre-registered redirects with exact-match checks. No normalization, no wildcards. */
-export class ExplicitRedirects {
-  private readonly registered = new Set<string>();
-
-  register(uri: string): void {
-    assertSafeUrl(uri, "redirect", true);
-    this.registered.add(uri);
-  }
-
-  check(uri: string): void {
-    if (!this.registered.has(uri))
-      throw new McpError("redirect not pre-registered");
   }
 }

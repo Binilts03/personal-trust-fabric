@@ -4,7 +4,6 @@ import {
   Disclose,
   canonicalize,
   generateEd25519Keypair,
-  v01ClaimCatalog,
 } from "../src/index.js";
 
 const ISSUER = "did:test:ca-authority";
@@ -125,7 +124,7 @@ describe("selective disclosure with holder binding (ptf-v01/03)", () => {
     if (!stale.ok) assert.equal(stale.reason, "stale");
   });
 
-  it("pins the holder to the credential cnf and seeds the v0.1 catalog", () => {
+  it("pins the holder to the credential cnf", () => {
     const { holder } = keys();
     assert.throws(() =>
       Disclose.present(
@@ -136,8 +135,6 @@ describe("selective disclosure with holder binding (ptf-v01/03)", () => {
         NOW
       )
     );
-    assert.ok(v01ClaimCatalog.some((c) => c.name === "ca_status"));
-    assert.ok(v01ClaimCatalog.some((c) => c.name === "age_over_18"));
   });
 
   it("binds credential expiry into the presentation and enforces it at verify", () => {

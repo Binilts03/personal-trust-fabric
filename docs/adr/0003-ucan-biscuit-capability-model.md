@@ -11,3 +11,5 @@ Capabilities must shrink as they travel across agents and be revocable when a pa
 ## Consequences
 
 Any peer can verify a capability with the root public key; child ≤ parent is checkable without a server call. We must still operate a revocation list check at redemption and evict entries after expiry — revocation is not free.
+
+Amendment (2026-09-13, ADR-0009): `ptf/cap@0.1` is local-only `@internal` — never wire; interop uses the standards edge.

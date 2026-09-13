@@ -194,7 +194,7 @@ describe("MCP server conformance over stdio (prod-04)", () => {
       });
       assert.equal(
         (JSON.parse(textOf(checked)) as { status?: string }).status,
-        "approved"
+        "pending"
       );
 
       const challenge = await rpc.call("tools/call", {

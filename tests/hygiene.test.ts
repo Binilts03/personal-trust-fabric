@@ -71,4 +71,29 @@ describe("peer-review hygiene gate (ptf-v01/05)", () => {
     assert.equal(tsconfig.compilerOptions["strict"], true);
     assert.equal(tsconfig.compilerOptions["noUncheckedIndexedAccess"], true);
   });
+
+  it("publish surface is complete (real-world install)", () => {
+    const pkg = JSON.parse(
+      readFileSync(join(ROOT, "package.json"), "utf8")
+    ) as Record<string, unknown>;
+    assert.equal(pkg["main"], "./dist/src/index.js");
+    assert.equal(pkg["types"], "./dist/src/index.d.ts");
+    const exports = pkg["exports"] as Record<string, unknown>;
+    assert.ok(exports?.["."]);
+    assert.ok(
+      ((pkg["files"] as string[]) ?? []).includes("dist"),
+      "files must ship dist"
+    );
+    assert.ok(
+      (pkg["scripts"] as Record<string, string>)["prepublishOnly"],
+      "prepublishOnly must gate publishes"
+    );
+    assert.equal(
+      (pkg["publishConfig"] as Record<string, unknown>)?.["provenance"],
+      true
+    );
+    assert.ok((pkg["repository"] as Record<string, string>)?.["url"]);
+    const audit = join(ROOT, "docs", "audit", "README.md");
+    assert.ok(readFileSync(audit, "utf8").includes("start here"));
+  });
 });

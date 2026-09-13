@@ -73,6 +73,10 @@ export class RecipientRegistry {
     }
     if (key.length !== 32)
       throw new Error("registry: Ed25519 public keys are 32 bytes");
+    const live = chain.find((b) => !b.superseded && !b.revoked);
+    if (live !== undefined && Buffer.from(live.key).equals(Buffer.from(key))) {
+      throw new Error(`registry: ${alias} already bound to this key`);
+    }
     for (const b of chain) b.superseded = true;
     chain.push({
       key: Uint8Array.from(key),

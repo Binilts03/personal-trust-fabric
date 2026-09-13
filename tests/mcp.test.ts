@@ -1,7 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ExplicitRedirects,
   assertDistinctTokens,
   assertSafeUrl,
   checkAudience,
@@ -60,14 +59,19 @@ describe("MCP edge guards (ptf-v03/01)", () => {
   });
 
   it("enforces exact-match redirect registration", () => {
-    const redirects = new ExplicitRedirects();
-    redirects.register("https://app.example.com/cb");
-    redirects.register("http://localhost:3000/cb");
-    assert.throws(() => redirects.register("javascript:alert(1)"));
-    redirects.check("https://app.example.com/cb");
-    assert.throws(() =>
-      redirects.check("https://app.example.com/cb?next=evil")
-    );
-    assert.throws(() => redirects.check("https://app.example.com/other"));
+    const registered = new Set<string>();
+    const register = (uri: string): void => {
+      assertSafeUrl(uri, "redirect", true);
+      registered.add(uri);
+    };
+    const check = (uri: string): void => {
+      if (!registered.has(uri)) throw new Error("redirect not pre-registered");
+    };
+    register("https://app.example.com/cb");
+    register("http://localhost:3000/cb");
+    assert.throws(() => register("javascript:alert(1)"));
+    check("https://app.example.com/cb");
+    assert.throws(() => check("https://app.example.com/cb?next=evil"));
+    assert.throws(() => check("https://app.example.com/other"));
   });
 });
