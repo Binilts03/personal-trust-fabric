@@ -1,48 +1,94 @@
 import type {
   Authority,
-  AuthorityDemand,
+  AuthorityRequest,
   Citation,
 } from "../core/authority.js";
+import { digestForOperation } from "../core/authority.js";
 import { isRecord, reqString } from "./guards.js";
 
 /**
- * AuthZEN translation seam (ADR-0009).
- * PTF `Authority` acts as Policy Decision Point speaking the AuthZEN
- * Authorization API draft-01 Subject-Action-Resource-Context envelope.
- * This module is evidence in / decision out at the edge; the decision itself
- * still comes from `Authority.evaluate` — policy constrains, never creates
- * (ADR-0002). External protocol messages are evidence, never authority
- * (ADR-0005).
+ * AuthZEN INFORMATION-MODEL adapter (ADR-0009, ADR-0010) — choice B.
+ * This module is NOT a PDP endpoint: it speaks the AuthZEN Authorization
+ * API 1.0 Final (Jan 2026) information model — Subject-Action-Resource-
+ * Context (SARC) request plus `{ decision, context }` response — so PTF
+ * demands can be projected to / recovered from that shape. File + function
+ * names are unchanged to avoid churn; only this header/docs were renamed
+ * honestly. The decision itself still comes from `Authority.evaluate` —
+ * policy constrains, never creates (ADR-0002). External protocol messages
+ * are evidence, never authority (ADR-0005).
  *
- * Envelope: standard draft-01
- * (`docs/research/2026-09-09-deep-delegation-policy.md:32`) —
+ * Field vocabulary (Final 1.0 as far as known):
  * `{ subject: { type, id, properties? }, action: { name, properties? },
- * resource: { type, id, properties? }, context? }`. Note `action` uses
- * `name` (not `type`/`id`).
+ * resource: { type, id, properties? }, context? }` → decision
+ * `{ decision: boolean, context }`. Note `action` uses `name` (not
+ * `type`/`id`); `subject`/`resource` share `type`/`id`/`properties`.
  *
- * Vocabulary: PTF-specific fields live in `properties`/`context`, never as
- * new envelope keys (standard envelope, PTF vocabulary) —
- * `subject.properties.agent`, `action.name` carries the cmd (e.g. `/pay`)
- * with `action.properties.purpose` plus a `"ptf.cmd"` echo of the cmd,
- * `resource.properties.recipient`, and
- * `context.{ amount, currency, claims, termsDigest }`.
+ * PTF vocabulary placement (PTF fields in `properties`/`context`, never
+ * new envelope keys):
+ * - `subject.id` = principal; `subject.properties.actor` (+ optional
+ *   `subject.properties.actorChain: string[]`) carry verified actor binding.
+ * - `action.name` carries the /-path; `action.properties` carries the demand
+ *   action properties plus `purpose` when present.
+ * - `resource` (`type`, `id`, `properties`) passes through. Unlike the
+ *   pre-0010 translator, `resource.type` IS read: the neutral model matches
+ *   on it. It is still evidence — a demand field can only narrow against
+ *   grants, never grant by itself.
+ * - `context` carries the demand context verbatim plus a `termsDigest` echo
+ *   of the derived binding for PDP logs. `termsDigest` is a RESERVED context
+ *   key: demand data must not use it (recovery strips it before rebuilding
+ *   the context).
+ *
+ * Transport mapping (host-owned, NOT implemented here): to call a real v1
+ * PDP, the host POSTs this module's `AuthZenEvaluationRequest` as JSON
+ * (`Content-Type: application/json`) to the PDP's evaluation endpoint and
+ * reads `{ decision: boolean, context }` (HTTP 200 carries even denies;
+ * 401/403/500 are transport errors only — draft-01 behavior, unchanged as
+ * far as known in Final 1.0; PEP authentication via mTLS / OAuth2-bearer /
+ * API-key remains out of scope per the same transport assumptions).
+ * Boxcarred (batched) evaluations and search APIs are explicitly OUT OF
+ * SCOPE: this adapter handles single evaluations only.
+ *
+ * Live drafts (NOT Final, explicitly out of scope except as noted):
+ * COAZ Framework 1.0, COAZ-MCP Binding 1.0, Access-Request-and-Approval
+ * Profile 1.0, Obligations Profile 1.0. The `coazMcpToAuthZen` helper below
+ * follows the COAZ-MCP profile DIRECTION (MCP JSON-RPC → SARC via
+ * declarative mapping) as a PTF-local mapping choice; it is not a
+ * conformance claim against the draft.
+ *
+ * Digest derivation (ADR-0010): recovery builds the operation WITHOUT any
+ * digest, computes it via digestForOperation, and IGNORES any
+ * caller-supplied `context.termsDigest`. Untrusted PEPs must not supply
+ * binding — the decision follows the true terms even when the envelope
+ * carries a tampered digest. AP2 EXCEPTION: verified mandates
+ * (`adapters/ap2.ts` toAp2PaymentDemand) may bind an external transaction id
+ * as the digest, because there the id is verified evidence (checkout_hash
+ * linkage recomputed during verification), not caller assertion. That path
+ * bypasses this translator until ap2.ts migrates to the neutral model.
  *
  * Deviations / edge contract (all fail-closed via thrown `Error`, never
- * `TypeError`):
- * - `context` is optional in the request type per draft-01, but
- *   `termsDigest` is REQUIRED at demand recovery. Foreign PEPs omitting it
- *   throw; the caller treats that as deny.
- * - `subject.type` / `resource.type` are envelope metadata only. They are
- *   preserved on projection but IGNORED (untrusted) on recovery — only `id`
- *   and the documented `properties` are read.
- * - Extra `context` keys beyond `amount`/`currency`/`claims`/`termsDigest`
- *   have no `AuthorityDemand` field and are silently DROPPED on recovery.
- * - `claims` entries must be non-empty strings; duplicates are DEDUPED
- *   (order-preserving, first wins) rather than rejected.
- * - Cmd `"/"` is rejected both directions (core forbids wildcard cmds even
- *   though it passes a naive `startsWith("/")` check). `amount` must satisfy
- *   `Number.isFinite` and `> 0` — `Infinity`/`NaN`/zero/negative/strings
- *   throw (core rejects non-finite, see `src/core/authority.ts`).
+ * `TypeError`; every remaining non-standard item is PTF-local with reason):
+ * - PTF-local: `subject.type` is envelope metadata only — preserved on
+ *   projection, IGNORED (untrusted) on recovery. Reason: PEP-supplied type
+ *   strings are not authority; the decision keys on id/actor binding only.
+ * - PTF-local: `action.name` must be a /-path; bare `"/"` is forbidden.
+ *   Reason: core forbids wildcard actions; the /-path rule keeps AuthZEN
+ *   actions mappable to PTF's attenuation lattice.
+ * - PTF-local: `actorChain`, when present, must be a non-empty string array.
+ *   Reason: preserves delegation trace for rooted-grant matching; empty or
+ *   non-string chains would be ambiguous evidence.
+ * - PTF-local: `purpose`, when present, must be non-empty. Reason: purpose
+ *   participates in grant narrowing; empty purpose would silently widen.
+ * - PTF-local: `context.termsDigest` echo (projection) + strip-and-recompute
+ *   (recovery). Reason: carries the derived binding for PDP logs without
+ *   trusting PEP-supplied binding.
+ * - PTF-local: `coazMcpToAuthZen` defaults (`subject.type "user"`,
+ *   `resource.type "mcp-tool"`, `action.name "/mcp/<method>"`, self-actor).
+ *   Reason: declarative mapping choice following the COAZ-MCP direction;
+ *   MCP has no separate principal/actor distinction.
+ * - Out of scope (not implemented): boxcarred evaluations, search APIs,
+ *   Access-Request-and-Approval and Obligations profile flows
+ *   (`requestableContext` is a minimal remediability hint only, not a
+ *   profile implementation).
  */
 
 export interface AuthZenSubject {
@@ -74,101 +120,123 @@ export interface AuthZenDecision {
   readonly context: Readonly<Record<string, unknown>>;
 }
 
-function parseClaims(value: unknown, what: string): readonly string[] {
-  if (!Array.isArray(value)) {
-    throw new Error(`authzen: ${what} must be string[]`);
+function parseActorChain(value: unknown): readonly string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !(value as unknown[]).every((x) => typeof x === "string" && x.length > 0)
+  ) {
+    throw new Error("authzen: actorChain must be a non-empty string array");
   }
-  for (const c of value) {
-    if (typeof c !== "string" || c.length === 0) {
-      throw new Error(`authzen: ${what} must be non-empty strings`);
-    }
-  }
-  // Dedupe (order-preserving, first wins); empty-string entries reject above.
-  return [...new Set(value as string[])];
+  return [...(value as string[])];
 }
 
 /** Project a PTF demand into AuthZEN SARC. Lossless for decision fields. */
-export function demandToAuthZen(d: AuthorityDemand): AuthZenEvaluationRequest {
+export function demandToAuthZen(d: AuthorityRequest): AuthZenEvaluationRequest {
   if (!isRecord(d)) throw new Error("authzen: demand must be an object");
   const rec = d as unknown as Record<string, unknown>;
   const principal = rec["principal"];
   if (typeof principal !== "string" || principal.length === 0) {
     throw new Error("authzen: principal required");
   }
-  const agent = rec["agent"];
-  if (typeof agent !== "string" || agent.length === 0) {
-    throw new Error("authzen: agent required");
+  const actor = rec["actor"];
+  if (typeof actor !== "string" || actor.length === 0) {
+    throw new Error("authzen: actor required");
   }
-  const cmd = rec["cmd"];
-  if (typeof cmd !== "string" || !cmd.startsWith("/") || cmd === "/") {
-    throw new Error('authzen: cmd must be a /-path ("/" forbidden)');
+  const actionRaw: unknown = rec["action"];
+  if (!isRecord(actionRaw)) {
+    throw new Error("authzen: action must be an object");
   }
-  const purpose = rec["purpose"];
-  if (typeof purpose !== "string" || purpose.length === 0) {
-    throw new Error("authzen: purpose required");
-  }
-  const resource = rec["resource"];
-  if (typeof resource !== "string" || resource.length === 0) {
-    throw new Error("authzen: resource required");
-  }
-  const recipient = rec["recipient"];
-  if (typeof recipient !== "string" || recipient.length === 0) {
-    throw new Error("authzen: recipient required");
-  }
-  const termsDigest = rec["termsDigest"];
-  if (typeof termsDigest !== "string" || termsDigest.length === 0) {
-    throw new Error("authzen: termsDigest required");
-  }
-  const amount: unknown = rec["amount"];
+  const actionName: unknown = actionRaw["name"];
   if (
-    amount !== undefined &&
-    (typeof amount !== "number" || !Number.isFinite(amount) || !(amount > 0))
+    typeof actionName !== "string" ||
+    !actionName.startsWith("/") ||
+    actionName === "/"
   ) {
-    throw new Error("authzen: amount must be a positive finite number");
+    throw new Error('authzen: action.name must be a /-path ("/" forbidden)');
   }
-  const currency: unknown = rec["currency"];
+  const actionPropsRaw: unknown = actionRaw["properties"] ?? {};
+  if (!isRecord(actionPropsRaw)) {
+    throw new Error("authzen: action.properties must be an object");
+  }
+  const resourceRaw: unknown = rec["resource"];
+  if (!isRecord(resourceRaw)) {
+    throw new Error("authzen: resource must be an object");
+  }
+  const resourceType = reqString(
+    resourceRaw["type"],
+    "authzen: resource.type required"
+  );
+  const resourceId = reqString(
+    resourceRaw["id"],
+    "authzen: resource.id required"
+  );
+  const resourcePropsRaw: unknown = resourceRaw["properties"] ?? {};
+  if (!isRecord(resourcePropsRaw)) {
+    throw new Error("authzen: resource.properties must be an object");
+  }
+  const contextRaw: unknown = rec["context"] ?? {};
+  if (!isRecord(contextRaw)) {
+    throw new Error("authzen: context must be an object");
+  }
+  const purposeRaw: unknown = rec["purpose"];
   if (
-    currency !== undefined &&
-    (typeof currency !== "string" || currency.length === 0)
+    purposeRaw !== undefined &&
+    (typeof purposeRaw !== "string" || purposeRaw.length === 0)
   ) {
-    throw new Error("authzen: currency must be non-empty");
+    throw new Error("authzen: purpose must be non-empty");
   }
-  const claimsRaw: unknown = rec["claims"];
-  let claims: readonly string[] | undefined;
-  if (claimsRaw !== undefined) {
-    claims = parseClaims(claimsRaw, "claims");
+  const termsDigest = reqString(
+    rec["termsDigest"],
+    "authzen: termsDigest required"
+  );
+  let actorChain: readonly string[] | undefined;
+  if (rec["actorChain"] !== undefined) {
+    actorChain = parseActorChain(rec["actorChain"]);
   }
+  const actionProps =
+    Object.keys(actionPropsRaw).length > 0 ? { ...actionPropsRaw } : undefined;
+  const resourceProps =
+    Object.keys(resourcePropsRaw).length > 0
+      ? { ...resourcePropsRaw }
+      : undefined;
   return {
     subject: {
       type: "user",
       id: principal,
-      properties: { agent },
+      properties: {
+        actor,
+        ...(actorChain !== undefined ? { actorChain: [...actorChain] } : {}),
+      },
     },
     action: {
-      name: cmd,
-      properties: { purpose, "ptf.cmd": cmd },
+      name: actionName,
+      properties: {
+        ...(actionProps !== undefined ? actionProps : {}),
+        ...(purposeRaw !== undefined ? { purpose: purposeRaw as string } : {}),
+      },
     },
     resource: {
-      type: "ptf-resource",
-      id: resource,
-      properties: { recipient },
+      type: resourceType,
+      id: resourceId,
+      ...(resourceProps !== undefined ? { properties: resourceProps } : {}),
     },
     context: {
-      ...(amount !== undefined ? { amount: amount as number } : {}),
-      ...(currency !== undefined ? { currency: currency as string } : {}),
-      ...(claims !== undefined ? { claims: [...claims] } : {}),
+      ...contextRaw,
       termsDigest,
     },
   };
 }
 
 /**
- * Recover a PTF demand from an AuthZEN request produced above. Fail-closed
- * on shape: every malformed input throws `Error` (never `TypeError`).
- * `subject.type` / `resource.type` are untrusted envelope metadata and are
- * not read. Extra `context` keys are dropped.
+ * Recover a PTF demand from an AuthZEN request. Fail-closed on shape: every
+ * malformed input throws `Error` (never `TypeError`). `subject.type` is
+ * untrusted envelope metadata and is not read. Any caller-supplied
+ * `context.termsDigest` is IGNORED: the binding is recomputed from the
+ * normalized operation via digestForOperation (see module header; AP2
+ * exception documented there).
  */
-export function authZenToDemand(r: AuthZenEvaluationRequest): AuthorityDemand {
+export function authZenToDemand(r: AuthZenEvaluationRequest): AuthorityRequest {
   if (!isRecord(r)) throw new Error("authzen: request must be an object");
   const raw = r as unknown as Record<string, unknown>;
   if (!isRecord(raw["subject"])) {
@@ -188,77 +256,87 @@ export function authZenToDemand(r: AuthZenEvaluationRequest): AuthorityDemand {
   if (!isRecord(subjPropsRaw)) {
     throw new Error("authzen: subject.properties must be an object");
   }
-  const agent = reqString(
-    (subjPropsRaw as Record<string, unknown>)["agent"],
-    "authzen: subject.properties missing agent"
+  const actor = reqString(
+    (subjPropsRaw as Record<string, unknown>)["actor"],
+    "authzen: subject.properties missing actor"
   );
-  const cmd = reqString(action["name"], "authzen: action missing name");
-  if (!cmd.startsWith("/") || cmd === "/") {
+  let actorChain: readonly string[] | undefined;
+  const chainRaw: unknown = (subjPropsRaw as Record<string, unknown>)[
+    "actorChain"
+  ];
+  if (chainRaw !== undefined) {
+    actorChain = parseActorChain(chainRaw);
+  }
+  const actionName = reqString(action["name"], "authzen: action missing name");
+  if (!actionName.startsWith("/") || actionName === "/") {
     throw new Error('authzen: action.name must be a /-path ("/" forbidden)');
   }
   const actionPropsRaw: unknown = action["properties"] ?? {};
   if (!isRecord(actionPropsRaw)) {
     throw new Error("authzen: action.properties must be an object");
   }
-  const purpose = reqString(
-    (actionPropsRaw as Record<string, unknown>)["purpose"],
-    "authzen: action.properties missing purpose"
+  const { purpose: purposeRaw, ...restActionProps } = actionPropsRaw as Record<
+    string,
+    unknown
+  >;
+  if (
+    purposeRaw !== undefined &&
+    (typeof purposeRaw !== "string" || purposeRaw.length === 0)
+  ) {
+    throw new Error("authzen: action.properties.purpose must be non-empty");
+  }
+  const resourceType = reqString(
+    resource["type"],
+    "authzen: resource missing type"
   );
   const resourceId = reqString(resource["id"], "authzen: resource missing id");
   const resPropsRaw: unknown = resource["properties"] ?? {};
   if (!isRecord(resPropsRaw)) {
     throw new Error("authzen: resource.properties must be an object");
   }
-  const recipient = reqString(
-    (resPropsRaw as Record<string, unknown>)["recipient"],
-    "authzen: resource.properties missing recipient"
-  );
   const ctxRaw: unknown = raw["context"] ?? {};
   if (!isRecord(ctxRaw)) {
     throw new Error("authzen: context must be an object");
   }
-  const termsDigest = reqString(
-    (ctxRaw as Record<string, unknown>)["termsDigest"],
-    "authzen: context missing termsDigest"
-  );
-  const out: AuthorityDemand = {
+  // Reserved binding echo — stripped, never trusted (see module header).
+  const { termsDigest: _ignored, ...restCtx } = ctxRaw as Record<
+    string,
+    unknown
+  >;
+  void _ignored;
+  const actionPropsOut =
+    Object.keys(restActionProps).length > 0
+      ? { ...restActionProps }
+      : undefined;
+  const resourcePropsOut =
+    Object.keys(resPropsRaw as Record<string, unknown>).length > 0
+      ? { ...(resPropsRaw as Record<string, unknown>) }
+      : undefined;
+  const op = {
     principal,
-    agent,
-    cmd: cmd as `/${string}`,
-    purpose,
-    resource: resourceId,
-    recipient,
-    termsDigest,
+    actor,
+    ...(actorChain !== undefined ? { actorChain: [...actorChain] } : {}),
+    action: {
+      name: actionName as `/${string}`,
+      ...(actionPropsOut !== undefined ? { properties: actionPropsOut } : {}),
+    },
+    resource: {
+      type: resourceType,
+      id: resourceId,
+      ...(resourcePropsOut !== undefined
+        ? { properties: resourcePropsOut }
+        : {}),
+    },
+    context: { ...restCtx },
+    ...(purposeRaw !== undefined ? { purpose: purposeRaw as string } : {}),
   };
-  if (ctxRaw["amount"] !== undefined) {
-    const amount: unknown = ctxRaw["amount"];
-    if (
-      typeof amount !== "number" ||
-      !Number.isFinite(amount) ||
-      !(amount > 0)
-    ) {
-      throw new Error(
-        "authzen: context.amount must be a positive finite number"
-      );
-    }
-    (out as { amount: number }).amount = amount;
-  }
-  if (ctxRaw["currency"] !== undefined) {
-    const currency: unknown = ctxRaw["currency"];
-    if (typeof currency !== "string" || currency.length === 0) {
-      throw new Error("authzen: context.currency must be non-empty");
-    }
-    (out as { currency: string }).currency = currency;
-  }
-  if (ctxRaw["claims"] !== undefined) {
-    const claims = parseClaims(ctxRaw["claims"], "context.claims");
-    (out as { claims: readonly string[] }).claims = [...claims];
-  }
-  return out;
+  return { ...op, termsDigest: digestForOperation(op) };
 }
 
 /**
- * Evaluate an AuthZEN request against PTF authority (PTF as PDP).
+ * Evaluate an AuthZEN-shaped request against PTF authority (local decision
+ * over the information model — NOT a network PDP endpoint; see transport
+ * mapping in the module header for real v1 PDP calls).
  * Allow carries citations; deny carries reason. Never throws on deny —
  * only on malformed requests (fail-closed at the caller).
  */
@@ -297,16 +375,19 @@ export function evaluateAuthZen(
 }
 
 /**
- * Minimal Access-Request-profile helper: returns `{ reason }` only when a
- * fresh grant/approval followed by re-evaluation could plausibly allow
- * (remediable: `expired`, `uses-exhausted`, `terms`, `revoked`). Returns
+ * Minimal remediability hint (NOT an Access-Request-and-Approval Profile
+ * implementation — that live draft is out of scope): returns `{ reason }`
+ * only when a fresh grant/approval followed by re-evaluation could plausibly
+ * allow (remediable: `expired`, `uses-exhausted`, `terms`, `revoked`). Returns
  * null when there is nothing requestable:
  * - `forbidden` (policy) is NOT remediable: a fresh approval still denies
- *   because narrowing policies are checked after covering authority
- *   (`src/core/authority.ts:560-569`), so requesting would mislead.
+ *   because narrowing policies are checked after covering authority, so
+ *   requesting would mislead.
  * - `no-authority` is NOT requestable: no covering grant/approval scopes
  *   what to ask for, and policies alone never allow — the caller must seek
- *   an out-of-band grant first.
+ *   an out-of-band grant first. (Actor-scoped near-misses still report
+ *   `no-authority` with an actor-mismatch detail; the remedy is a wider
+ *   grant, which this profile cannot scope — hence still null.)
  */
 export function requestableContext(
   decision: AuthZenDecision
@@ -328,4 +409,103 @@ export function requestableContext(
     default:
       return null;
   }
+}
+
+/** Params for the COAZ-MCP direction helper (all strings non-empty). */
+export interface CoazMcpParams {
+  /** Principal id; becomes `subject.id` (type defaults to `"user"`). */
+  readonly subject: string;
+  /** MCP tool name; becomes `resource.id` (`resource.type "mcp-tool"`). */
+  readonly toolName: string;
+  /** MCP JSON-RPC method (e.g. `"tools/call"`); maps to `/mcp/<method>`. */
+  readonly method: string;
+  /** MCP tool arguments; become `context` (must not use `termsDigest`). */
+  readonly args: Readonly<Record<string, unknown>>;
+  /**
+   * Optional token subject binding: when present it MUST equal `subject`
+   * (fail-closed) and is echoed as `subject.properties.tokenSub` for PDP
+   * logs. Recovery via `authZenToDemand` drops it (like `subject.type`).
+   */
+  readonly tokenSub?: string;
+}
+
+/**
+ * Map an MCP `tools/call` (method, tool name, arguments, audience binding)
+ * into our AuthZEN request shape. Follows the COAZ-MCP profile DIRECTION
+ * (MCP JSON-RPC → SARC via declarative mapping) as a PTF-local choice —
+ * NOT a conformance claim against the live COAZ-MCP Binding 1.0 draft.
+ *
+ * Declarative mapping (PTF-local defaults, see module header):
+ * - `subject` → `{ type: "user", id: subject, properties: { actor: subject }}`
+ *   (self-actor: MCP has no separate principal/actor; hosts with a distinct
+ *   agent identity should project via `demandToAuthZen` instead).
+ * - `method` → `action.name "/mcp/<method>"` (leading `/` normalized; bare
+ *   `"/"` and whitespace rejected to preserve the /-path invariant).
+ * - `toolName` → `resource { type: "mcp-tool", id: toolName }`.
+ * - `args` → `context` (shallow copy; `termsDigest` key rejected as RESERVED).
+ * - `tokenSub` → equality-checked against `subject`, echoed for logs.
+ *
+ * Single evaluations only: boxcarred (batched) evaluations and search APIs
+ * are explicitly out of scope and are NOT produced here. Fail-closed via
+ * thrown `Error` (never `TypeError`).
+ */
+export function coazMcpToAuthZen(
+  params: CoazMcpParams
+): AuthZenEvaluationRequest {
+  if (!isRecord(params))
+    throw new Error("authzen: coaz params must be an object");
+  const rec = params as unknown as Record<string, unknown>;
+  const subject = reqString(rec["subject"], "authzen: coaz subject required");
+  const toolName = reqString(
+    rec["toolName"],
+    "authzen: coaz toolName required"
+  );
+  const method = reqString(rec["method"], "authzen: coaz method required");
+  if (method === "/") {
+    throw new Error(
+      'authzen: coaz method must map to a /-path ("/" forbidden)'
+    );
+  }
+  if (/\s/.test(method)) {
+    throw new Error("authzen: coaz method must not contain whitespace");
+  }
+  const argsRaw: unknown = rec["args"];
+  if (!isRecord(argsRaw)) {
+    throw new Error("authzen: coaz args must be an object");
+  }
+  if ("termsDigest" in (argsRaw as Record<string, unknown>)) {
+    throw new Error("authzen: coaz args must not use reserved termsDigest");
+  }
+  const tokenSubRaw: unknown = rec["tokenSub"];
+  if (tokenSubRaw !== undefined) {
+    const tokenSub = reqString(
+      tokenSubRaw,
+      "authzen: coaz tokenSub must be non-empty"
+    );
+    if (tokenSub !== subject) {
+      throw new Error("authzen: coaz tokenSub must equal subject");
+    }
+  }
+  const withSlash = method.startsWith("/") ? method : `/${method}`;
+  const actionName = `/mcp${withSlash}`;
+  if (actionName === "/" || !actionName.startsWith("/")) {
+    throw new Error(
+      'authzen: coaz method must map to a /-path ("/" forbidden)'
+    );
+  }
+  return {
+    subject: {
+      type: "user",
+      id: subject,
+      properties: {
+        actor: subject,
+        ...(tokenSubRaw !== undefined
+          ? { tokenSub: tokenSubRaw as string }
+          : {}),
+      },
+    },
+    action: { name: actionName },
+    resource: { type: "mcp-tool", id: toolName },
+    context: { ...(argsRaw as Record<string, unknown>) },
+  };
 }

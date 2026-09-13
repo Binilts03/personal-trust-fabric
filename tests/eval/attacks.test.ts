@@ -4,9 +4,11 @@ import {
   Authority,
   Capabilities,
   Disclose,
+  digestForOperation,
   generateEd25519Keypair,
   leafCidHex,
   parsePaymentRequired,
+  paymentBounds,
   signBytes,
   termsDigestOf,
   toX402PaymentDemand,
@@ -95,21 +97,21 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
     auth.addGrant({
       id: "g",
       principal: P,
-      agent: A,
-      cmd: "/pay",
-      amountMax: 100,
-      currency: "INR",
+      actor: { kind: "exact", id: A },
+      action: { name: "/pay" },
+      bounds: paymentBounds({ amountMax: 100, currency: "INR" }),
     });
-    const d = auth.evaluate({
+    const operation = {
       principal: P,
-      agent: A,
-      cmd: "/pay",
+      actor: A,
+      action: { name: "/pay" as const },
+      resource: { type: "invoice", id: "r" },
+      context: { amount: 5000, currency: "INR", recipient: M },
       purpose: "p",
-      resource: "r",
-      recipient: M,
-      amount: 5000,
-      currency: "INR",
-      termsDigest: "00".repeat(32),
+    };
+    const d = auth.evaluate({
+      ...operation,
+      termsDigest: digestForOperation(operation),
     });
     assert.equal(d.allow, false);
   });
@@ -117,30 +119,24 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
   it("expired approvals and wrong-recipient redemptions are denied", () => {
     const k = kit();
     const auth = new Authority({ nowSec: () => NOW });
+    const oldOp = {
+      principal: P,
+      actor: A,
+      action: { name: "/pay" as const },
+      resource: { type: "invoice", id: "r" },
+      context: { amount: 10, currency: "INR", recipient: M },
+      purpose: "p",
+    };
     auth.addApproval({
       id: "old",
-      principal: P,
-      agent: A,
-      cmd: "/pay",
-      purpose: "p",
-      resource: "r",
-      recipient: M,
-      amount: 10,
-      currency: "INR",
-      termsDigest: "11".repeat(32),
+      ...oldOp,
+      termsDigest: digestForOperation(oldOp),
       exp: NOW - 500,
       maxUses: 1,
     });
     const expired = auth.evaluate({
-      principal: P,
-      agent: A,
-      cmd: "/pay",
-      purpose: "p",
-      resource: "r",
-      recipient: M,
-      amount: 10,
-      currency: "INR",
-      termsDigest: "11".repeat(32),
+      ...oldOp,
+      termsDigest: digestForOperation(oldOp),
     });
     assert.equal(expired.allow, false);
 
@@ -170,26 +166,24 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
     const approval = auth.createApproval({
       id: "a1",
       principal: P,
-      agent: A,
-      cmd: "/pay",
+      actor: A,
+      action: { name: "/pay" as const },
+      resource: { type: "invoice", id: "r" },
+      context: { amount: 10, currency: "INR", recipient: M },
       purpose: "p",
-      resource: "r",
-      recipient: M,
-      amount: 10,
-      currency: "INR",
-      terms: { amount: 10 },
       ttlSec: 300,
     });
-    const mutated = auth.evaluate({
+    const mutatedOp = {
       principal: P,
-      agent: A,
-      cmd: "/pay",
+      actor: A,
+      action: { name: "/pay" as const },
+      resource: { type: "invoice", id: "r" },
+      context: { amount: 11, currency: "INR", recipient: M },
       purpose: "p",
-      resource: "r",
-      recipient: M,
-      amount: 11,
-      currency: "INR",
-      termsDigest: termsDigestOf({ amount: 11 }),
+    };
+    const mutated = auth.evaluate({
+      ...mutatedOp,
+      termsDigest: digestForOperation(mutatedOp),
     });
     assert.equal(mutated.allow, false);
     if (!mutated.allow) assert.equal(mutated.reason, "terms");
@@ -242,10 +236,9 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
       purpose: "p",
       resource: "r",
       currency: "USDC",
-      termsDigest: termsDigestOf({ swap: 1 }),
     });
-    assert.equal(demand.recipient, X);
-    assert.notEqual(demand.recipient, M);
+    assert.equal(demand.context["recipient"], X);
+    assert.notEqual(demand.context["recipient"], M);
 
     const caps = new Capabilities({
       resolveKey: (id) => k.keys.get(id) ?? null,
@@ -275,8 +268,8 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
       [cap],
       {
         cmd: "/pay",
-        args: { amount: demand.amount, currency: "USDC" },
-        recipient: demand.recipient,
+        args: { amount: demand.context["amount"], currency: "USDC" },
+        recipient: demand.context["recipient"] as string,
         termsDigest: digest,
       },
       { consume: false }

@@ -1,4 +1,5 @@
-import type { AuthorityDemand } from "../core/authority.js";
+import type { AuthorityRequest } from "../core/authority.js";
+import { digestForOperation } from "../core/authority.js";
 import {
   b64uDecode,
   publicKeyFromP256Jwk,
@@ -521,41 +522,40 @@ export interface Ap2DemandContext {
   readonly agent: string;
   readonly purpose: string;
   readonly resource: string;
-  /**
-   * Legacy override: when omitted, `verified.transactionId` (== checkout_hash)
-   * becomes the termsDigest — AP2's own digest binding. Passing an unrelated
-   * digest severs that binding and is rejected unless it equals transactionId.
-   */
-  readonly termsDigest?: string;
 }
 
-/** Verified mandate -> PTF demand + capability args. Still evidence: must pass Authority + Capabilities. */
+/**
+ * Verified mandate -> PTF demand + capability args. Still evidence: must pass
+ * Authority + Capabilities. AP2 exception to derive-never-trust: the verified
+ * mandate cryptographically binds `transactionId` (== checkout_hash), so it is
+ * folded into context and covered by the PTF-derived digest.
+ */
 export function toAp2PaymentDemand(
   verified: VerifiedMandate,
   ctx: Ap2DemandContext
 ): {
-  readonly demand: AuthorityDemand;
+  readonly demand: AuthorityRequest;
   readonly capabilityArgs: {
     readonly amount: number;
     readonly currency: string;
   };
 } {
-  const termsDigest = ctx.termsDigest ?? verified.transactionId;
-  if (termsDigest !== verified.transactionId) {
-    throw new Ap2Error(
-      "termsDigest must equal transactionId (checkout_hash binding)"
-    );
-  }
-  const demand: AuthorityDemand = {
+  const operation = {
     principal: ctx.principal,
-    agent: ctx.agent,
-    cmd: "/pay",
+    actor: ctx.agent,
+    action: { name: "/pay" as const },
+    resource: { type: "ap2-payment", id: ctx.resource },
+    context: {
+      recipient: verified.payeeId,
+      amount: verified.amountMinor,
+      currency: verified.currency,
+      transactionId: verified.transactionId,
+    },
     purpose: ctx.purpose,
-    resource: ctx.resource,
-    recipient: verified.payeeId,
-    amount: verified.amountMinor,
-    currency: verified.currency,
-    termsDigest,
+  };
+  const demand: AuthorityRequest = {
+    ...operation,
+    termsDigest: digestForOperation(operation),
   };
   return {
     demand,

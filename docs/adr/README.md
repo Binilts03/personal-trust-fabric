@@ -11,3 +11,5 @@
 | [0007](0007-mcp-server-official-sdk.md)         | MCP server as the LLM-facing interface, official SDK as its transport                                          | accepted | 2026-09-12 |
 | [0008](0008-file-cas-durable-challenges.md)     | File-CAS durable challenges, SQLite deferred                                                                   | accepted | 2026-09-13 |
 | [0009](0009-authority-engine-over-standards.md) | Authority engine over open standards, proprietary wire internal                                                | accepted | 2026-09-13 |
+| [0010](0010-domain-neutral-authority.md)        | Domain-neutral authority with verified actor binding and derived digests                                       | accepted | 2026-09-13 |
+| [0011](0011-public-surface.md)                  | Curated public surface, internal by packaging                                                                  | accepted | 2026-09-13 |

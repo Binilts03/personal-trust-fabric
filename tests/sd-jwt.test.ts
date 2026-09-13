@@ -511,4 +511,52 @@ describe("SD-JWT translator (pivot/05)", () => {
       reason: "issuer",
     });
   });
+
+  it("official RFC9901 vector §4.2.1/§4.2.3 (fetched 2026-09-13)", () => {
+    // Official vector from RFC9901 text (https://www.rfc-editor.org/rfc/rfc9901.txt):
+    // array ["_26bc4LT-ac6q2KI6cBW5es", "family_name", "Möbius"] (§4.2.1) →
+    // disclosure WyJfMjZiYzRMVC1hYzZxMktJNmNCVzVlcyIsICJmYW1pbHlfbmFtZSIsICJNw7ZiaXVzIl0
+    // with _sd digest X9yH0Ajrdm1Oij4tWso9UzzKJvPoDxwmuEcO3XAdRC0 (§4.2.3).
+    const disclosure =
+      "WyJfMjZiYzRMVC1hYzZxMktJNmNCVzVlcyIsICJmYW1pbHlfbmFtZSIsICJNw7ZiaXVzIl0";
+    const digest = "X9yH0Ajrdm1Oij4tWso9UzzKJvPoDxwmuEcO3XAdRC0";
+    const decoded = JSON.parse(
+      Buffer.from(disclosure, "base64url").toString("utf8")
+    ) as unknown;
+    assert.deepEqual(decoded, [
+      "_26bc4LT-ac6q2KI6cBW5es",
+      "family_name",
+      "Möbius",
+    ]);
+    // Digest recomputes per §4.2.3 (US-ASCII bytes of the b64u value).
+    assert.equal(
+      createHash("sha256")
+        .update(disclosure, "utf8")
+        .digest()
+        .toString("base64url"),
+      digest
+    );
+    // Our projection for the same claim is semantically identical (same
+    // decoded array) with a self-consistent digest. Byte-identical disclosure
+    // strings are NOT required: RFC9901 §4.2.1 allows whitespace/encoding
+    // variations (our JSON.stringify emits no spaces; the RFC vector uses
+    // ", " separators), and the digest covers whichever b64u value was made.
+    const ours = toSdDisclosure({
+      name: "family_name",
+      value: "Möbius",
+      salt: "_26bc4LT-ac6q2KI6cBW5es",
+      digest: "00".repeat(32),
+    });
+    assert.deepEqual(
+      JSON.parse(Buffer.from(ours.disclosure, "base64url").toString("utf8")),
+      ["_26bc4LT-ac6q2KI6cBW5es", "family_name", "Möbius"]
+    );
+    assert.equal(
+      createHash("sha256")
+        .update(ours.disclosure, "utf8")
+        .digest()
+        .toString("base64url"),
+      ours.digest
+    );
+  });
 });

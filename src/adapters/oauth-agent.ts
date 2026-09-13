@@ -1,45 +1,73 @@
+import { assertSafeUrl } from "./urls.js";
+
 /**
- * OAuth-agent delegation attenuator (ADR-0009).
+ * OAuth-agent delegation attenuator (ADR-0009) — experimental agent profile
+ * over stable foundations.
  *
- * PTF-LOCAL descriptor — NOT directly a JWT. `DelegatedToken` is a host-side
- * attenuation record *inspired by* RFC8693 (OAuth 2.0 Token Exchange,
- * `act`/`scope`) and RFC7800 (proof-of-possession `cnf` confirmation). This
- * module performs NO signature verification and enforces NO
- * proof-of-possession: delegation here is an opaque descriptor copy. The
- * host MUST authenticate the presenter and verify `cnf` key possession
- * (DPoP / mTLS) out-of-band before honoring any descriptor.
+ * Stable foundations (NOT experimental — behavior cited, not redefined):
+ * - RFC8693 (OAuth 2.0 Token Exchange): `act` vocabulary; §4.1 nested
+ *   `{"sub", "act"}` object (outermost = current actor). This module's JWT
+ *   mapping (`toJwtClaims` / `fromJwtClaims`) follows that nesting.
+ * - RFC9396 (Rich Authorization Requests): `authorization_details` array of
+ *   typed objects. `rarPaymentDetails` below builds one such entry.
+ * - RFC8707 (Resource Indicators): `resource` parameter as an absolute URI
+ *   without fragment. `resourceIndicator` below validates that shape.
+ * - RFC9449 (DPoP): `cnf.jkt` confirmation (JWK thumbprint). The JWT mapping
+ *   wraps the bare descriptor `cnf` to `{ jkt }` per RFC9449 (NOT RFC7800 —
+ *   `jkt` is DPoP, not RFC7800; RFC7800 defines the `cnf` container only).
+ *
+ * Experimental profile (PTF-local agent conventions, labeled as such):
+ * `DelegatedToken` is a host-side attenuation record *inspired by* the above
+ * (RFC8693 `act`/`scope` shape, RFC9449 `cnf.jkt` binding). This module
+ * performs NO signature verification and enforces NO proof-of-possession:
+ * delegation here is an opaque descriptor copy. The host MUST authenticate
+ * the presenter and verify `cnf` key possession (DPoP / mTLS) out-of-band
+ * before honoring any descriptor.
  *
  * Standard JWT wire shape lives ONLY in `toJwtClaims` / `fromJwtClaims`:
  * the `scope` array <-> space-delimited string and the `act` string array
  * <-> RFC8693 section 4.1 nested `{"sub", "act"}` object conversions happen
  * in that mapping layer and nowhere else.
  *
- * Explicit deviations from RFC8693 / RFC7800:
- * - `act` is a flat append-only `string[]` (oldest actor first), not the
- *   RFC8693 nested object. Nested form exists only in JWT claims mapping.
- * - `scope` is a `string[]`, not the JWT space-delimited string. The string
- *   form exists only in JWT claims mapping.
- * - `cnf` is a bare opaque key-reference string, not the RFC7800
- *   `{"jkt": ...}` object. The object form exists only in JWT claims
- *   mapping.
- * - `aud` is a single string and v0.1 keeps it identical-only: the `aud`
- *   delegate option exists for forward compatibility but any value other
- *   than the parent's throws. v0.1 ceiling, not RFC behavior.
- * - `MAX_DELEGATION_DEPTH` (10) and cycle rejection are PTF policy, not RFC.
- * - Timestamps are integer seconds with ZERO clock skew (exact `<=`
- *   expiry checks). Core authority comparisons allow ±60s (`CLOCK_SKEW_SEC`);
- *   this module deliberately does not. `ttlSec` floats are floored to
- *   preserve the integer-`exp` invariant; `nowSec` must be a finite
- *   integer >= 0 (float/NaN `nowSec` would mint float/NaN `exp` that the
- *   next `delegate` call rejects — self-rejecting chains — so it is
- *   rejected up front instead).
- * - Empty child scope is rejected, consistent with `mintRoot`. The empty
- *   set is a valid subset mathematically, but a delegation granting nothing
- *   is treated as a caller bug. PTF policy.
- * - `cnf` rotation/uniqueness is NOT enforced: reusing the parent's `cnf`
- *   string is permitted at this layer (opaque copy, no possession proof
- *   possible here). Host-side PoP verification is the real control.
- *   v0.1 ceiling.
+ * Explicit deviations from RFC8693 / RFC9449 (every item PTF-local with
+ * reason):
+ * - PTF-local: `act` is a flat append-only `string[]` (oldest actor first),
+ *   not the RFC8693 nested object. Reason: cheap subset/cycle checks at the
+ *   descriptor layer. Nested form exists only in JWT claims mapping.
+ * - PTF-local: `scope` is a `string[]`, not the JWT space-delimited string.
+ *   Reason: array form makes subset attenuation exact. The string form
+ *   exists only in JWT claims mapping.
+ * - PTF-local: `cnf` is a bare opaque key-reference string, not the RFC9449
+ *   `{"jkt": ...}` object. Reason: this layer copies descriptors without
+ *   verifying possession. The object form exists only in JWT claims mapping.
+ * - PTF-local: `aud` is a single string and v0.1 keeps it identical-only:
+ *   the `aud` delegate option exists for forward compatibility but any value
+ *   other than the parent's throws. Reason: v0.1 ceiling, not RFC behavior
+ *   (RFC8707 `resource` narrowing lives in `resourceIndicator`, not here).
+ * - PTF-local: `MAX_DELEGATION_DEPTH` (10) and cycle rejection. Reason:
+ *   PTF attenuation policy, not RFC.
+ * - PTF-local: timestamps are integer seconds with ZERO clock skew (exact
+ *   `<=` expiry checks). Reason: deterministic attenuation; core authority
+ *   comparisons allow ±60s (`CLOCK_SKEW_SEC`) but this module deliberately
+ *   does not. `ttlSec` floats are floored to preserve the integer-`exp`
+ *   invariant; `nowSec` must be a finite integer >= 0 (float/NaN `nowSec`
+ *   would mint float/NaN `exp` that the next `delegate` call rejects —
+ *   self-rejecting chains — so it is rejected up front instead).
+ * - PTF-local: empty child scope is rejected, consistent with `mintRoot`.
+ *   Reason: the empty set is a valid subset mathematically, but a delegation
+ *   granting nothing is treated as a caller bug.
+ * - PTF-local: `cnf` rotation/uniqueness is NOT enforced: reusing the
+ *   parent's `cnf` string is permitted at this layer (opaque copy, no
+ *   possession proof possible here). Reason: host-side PoP verification is
+ *   the real control. v0.1 ceiling.
+ * - PTF-local: `rarPaymentDetails` `type: "payment_initiation"` string is
+ *   profile-defined (experimental agent profile), not an IANA-registered
+ *   RFC9396 type. Reason: minimal helper for tests/hosts; real deployments
+ *   must agree the type string with their AS.
+ * - PTF-local: `resourceIndicator` reuses the edge `assertSafeUrl` discipline
+ *   (private-range / userinfo blocking) on top of RFC8707's absolute-https-
+ *   no-fragment rule. Reason: consistent SSRF posture across adapters; extra
+ *   rejections beyond RFC8707 are documented, not silent.
  *
  * Policy engines, audit stores, budgets, and vaults stay outside this core
  * (cf. `draft-mishra-oauth-agent-grants-02` §1.1).
@@ -64,7 +92,7 @@ export interface DelegatedToken {
   readonly aud: string;
   /**
    * PTF-LOCAL sender-constraint descriptor: opaque key reference (e.g. DPoP
-   * jkt or mTLS thumbprint ref). Required. Bare string here; the RFC7800
+   * jkt or mTLS thumbprint ref). Required. Bare string here; the RFC9449
    * `{"jkt": ...}` object exists only via the JWT mapping layer. No
    * possession is verified by this module — the host must check.
    */
@@ -315,8 +343,8 @@ export function mintRoot(params: {
 /**
  * Map a PTF-LOCAL descriptor to standard JWT claims: `act` array wraps into
  * the RFC8693 §4.1 nested object (outermost = current actor), `scope` array
- * joins to a space-delimited string, bare `cnf` wraps to `{jkt}` per
- * RFC7800. The input descriptor is structurally validated first.
+ * joins to a space-delimited string, bare `cnf` wraps to `{ jkt }` per
+ * RFC9449 (DPoP). The input descriptor is structurally validated first.
  */
 export function toJwtClaims(token: DelegatedToken): JwtDelegationClaims {
   assertTokenShape(token, "token");
@@ -376,11 +404,11 @@ function parseNestedAct(value: unknown): string[] {
 /**
  * Strict inverse of `toJwtClaims`: standard claims back to a PTF-LOCAL
  * descriptor. `scope` must be a single-space-separated non-empty string
- * (arrays rejected); `cnf` must be an object with non-empty `jkt`
- * (bare-string `cnf` rejected); `act` must be the nested object (flat
- * string/array `act` rejected); `aud` must be a single non-empty string;
- * `exp`/`iat` must be integers with `exp > iat`. Unknown extra claims are
- * ignored. Throws `OAuthAgentError` fail-closed.
+ * (arrays rejected); `cnf` must be an object with non-empty `jkt` per
+ * RFC9449 (DPoP; bare-string `cnf` rejected); `act` must be the nested
+ * object (flat string/array `act` rejected); `aud` must be a single
+ * non-empty string; `exp`/`iat` must be integers with `exp > iat`. Unknown
+ * extra claims are ignored. Throws `OAuthAgentError` fail-closed.
  */
 export function fromJwtClaims(claims: unknown): DelegatedToken {
   if (typeof claims !== "object" || claims === null || Array.isArray(claims)) {
@@ -435,4 +463,73 @@ export function fromJwtClaims(claims: unknown): DelegatedToken {
     exp: exp as number,
     iat: iat as number,
   };
+}
+
+/**
+ * RFC9396-style `authorization_details` entry for a payment initiation.
+ * The `type: "payment_initiation"` string is PROFILE-DEFINED (experimental
+ * agent profile, PTF-local) — not an IANA-registered RFC9396 type. Real
+ * deployments must agree the type string with their authorization server.
+ * Fail-closed via `OAuthAgentError` (never `TypeError`).
+ */
+export interface RarPaymentDetails {
+  readonly type: "payment_initiation";
+  readonly amount: number;
+  readonly currency: string;
+  readonly payee: string;
+  readonly transactionId: string;
+}
+
+export function rarPaymentDetails(params: {
+  readonly amount: number;
+  readonly currency: string;
+  readonly payee: string;
+  readonly transactionId: string;
+}): RarPaymentDetails {
+  if (typeof params !== "object" || params === null || Array.isArray(params)) {
+    throw new OAuthAgentError("payment details must be an object");
+  }
+  const rec = params as Record<string, unknown>;
+  const amount: unknown = rec["amount"];
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+    throw new OAuthAgentError("payment amount must be a finite number > 0");
+  }
+  const currency: unknown = rec["currency"];
+  const payee: unknown = rec["payee"];
+  const transactionId: unknown = rec["transactionId"];
+  assertNonEmptyString(currency, "payment currency required");
+  assertNonEmptyString(payee, "payment payee required");
+  assertNonEmptyString(transactionId, "payment transactionId required");
+  return {
+    type: "payment_initiation",
+    amount,
+    currency,
+    payee,
+    transactionId,
+  };
+}
+
+/**
+ * RFC8707 resource-indicator validation passthrough: absolute `https:` URL
+ * with no fragment. Reuses the edge `assertSafeUrl` discipline (so
+ * private-range / userinfo URLs are also rejected — a PTF-local strictness
+ * beyond bare RFC8707, documented in the module header). Returns the input
+ * string unchanged on success. Fail-closed via `OAuthAgentError` (wraps the
+ * edge `UrlError` to keep this module's error contract).
+ */
+export function resourceIndicator(url: string): string {
+  if (typeof url !== "string" || url.length === 0) {
+    throw new OAuthAgentError("resource must be a non-empty string");
+  }
+  let parsed: URL;
+  try {
+    parsed = assertSafeUrl(url, "resource");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new OAuthAgentError(msg);
+  }
+  if (parsed.hash !== "") {
+    throw new OAuthAgentError("resource must not contain a fragment");
+  }
+  return url;
 }

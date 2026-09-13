@@ -7,6 +7,7 @@ import {
   checkResponseBinding,
   checkSecureOrigin,
   checkToolRegistration,
+  digestForOperation,
   executeAndReceipt,
   generateEd25519Keypair,
   isExposedTo,
@@ -198,7 +199,7 @@ describe("security-fix regressions", () => {
     );
   });
 
-  it("ap2 binds termsDigest to transactionId", () => {
+  it("ap2 folds transactionId into context under a derived digest", () => {
     const v = {
       payeeId: "did:test:payee",
       payeeName: "Shop",
@@ -208,22 +209,33 @@ describe("security-fix regressions", () => {
       transactionId: "ab".repeat(32),
       mode: "direct",
     } as never;
-    assert.throws(() =>
-      toAp2PaymentDemand(v, {
-        principal: "p",
-        agent: "a",
-        purpose: "x",
-        resource: "r",
-        termsDigest: "00".repeat(32),
-      })
-    );
     const { demand } = toAp2PaymentDemand(v, {
       principal: "p",
       agent: "a",
       purpose: "x",
       resource: "r",
     });
-    assert.equal(demand.termsDigest, "ab".repeat(32));
+    // AP2 exception: the verified mandate's transactionId is folded into
+    // context, so the PTF-derived digest covers it — callers supply no digest.
+    assert.equal(demand.context["transactionId"], "ab".repeat(32));
+    assert.equal(demand.context["recipient"], "did:test:payee");
+    assert.equal(demand.context["amount"], 10);
+    assert.equal(
+      demand.termsDigest,
+      digestForOperation({
+        principal: "p",
+        actor: "a",
+        action: { name: "/pay" as const },
+        resource: { type: "ap2-payment", id: "r" },
+        context: {
+          recipient: "did:test:payee",
+          amount: 10,
+          currency: "INR",
+          transactionId: "ab".repeat(32),
+        },
+        purpose: "x",
+      })
+    );
   });
 
   it("webmcp rejects bad names, userinfo origins, and keeps same-origin with grants", () => {

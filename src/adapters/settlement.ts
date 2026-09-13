@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { PaymentExecutor, PaymentInstruction } from "../core/execute.js";
+import type { Credential } from "../core/disclose.js";
 import { canonicalize, sha256Hex } from "../core/canonical.js";
 import {
   checkSettlement,
@@ -10,12 +11,40 @@ import {
 } from "./x402.js";
 
 /**
- * Real settlement behind the existing PaymentExecutor seam (v04/03).
+ * Reference host settlement evidence (ticket 09): PTF decides, external
+ * systems execute, PTF verifies results via `checkSettlement`.
  * Core is untouched: this adapter turns a recorded facilitator settlement
  * into the `{transaction}` the receipt needs, enforcing network/payer and
  * opt-in amount/asset expectations via checkSettlement. No live RPC in v04;
  * pass a recorded SettlementResult (facilitator proof) for verifiable demos.
+ * CLI/MCP consume the `PaymentExecutor` seam directly (today
+ * `FakePaymentExecutor` — no money moves); production hosts supply their own
+ * `PaymentExecutor` (e.g. one of the reference executors below) with value
+ * movement performed by their own `PaymentProvider` rail and credentials
+ * supplied by their own `CredentialProvider` store. Call sites untouched.
  */
+
+/**
+ * Host-owned value-movement rail behind a `PaymentExecutor`. Minimal on
+ * purpose: move value per the instruction on the external rail and resolve
+ * with the rail's transaction reference, which PTF then verifies with
+ * `checkSettlement` before it can enter a receipt.
+ */
+export interface PaymentProvider {
+  settlePayment(
+    instruction: PaymentInstruction
+  ): Promise<{ readonly transaction: string }>;
+}
+
+/**
+ * Host-owned credential store for disclosure. Issuance and trust registries
+ * stay host-side (out of v0.1 scope): credentials arrive from the host's own
+ * store and presentations still go through `Disclose.present` / `verify`.
+ */
+export interface CredentialProvider {
+  /** Return the holder's credential for disclosure, or null when unknown. */
+  getCredential(holder: string): Promise<Credential | null>;
+}
 
 export class RecordedSettlementExecutor implements PaymentExecutor {
   constructor(

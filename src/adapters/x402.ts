@@ -1,4 +1,5 @@
-import type { AuthorityDemand } from "../core/authority.js";
+import type { AuthorityRequest } from "../core/authority.js";
+import { digestForOperation } from "../core/authority.js";
 import { isRecord, reqString } from "./guards.js";
 
 /**
@@ -136,14 +137,13 @@ export interface DemandContext {
   readonly purpose: string;
   readonly resource: string;
   readonly currency: string;
-  readonly termsDigest: string;
   /**
    * Bind the challenge URL to the demand: when the caller parsed a
    * `PAYMENT-REQUIRED` challenge, pass `parsed.resource.url` here. Mismatch
    * throws instead of authorizing a different resource for this challenge.
-   * Asset/network/scheme stay on `accepted` and MUST be folded into the
-   * caller's `termsDigest` (see `requirementMatches`): authority cannot tell
-   * USDC/Base from junk-token/evil-chain on payTo+amount alone.
+   * Asset/network/scheme are folded into context by the mapper below, so the
+   * PTF-derived digest covers them: authority cannot tell USDC/Base from
+   * junk-token/evil-chain on payTo+amount alone.
    */
   readonly expectedResourceUrl?: string;
   readonly expectedAsset?: string;
@@ -169,7 +169,7 @@ export function toX402PaymentDemand(
   accepted: PaymentRequirement,
   ctx: DemandContext
 ): {
-  readonly demand: AuthorityDemand;
+  readonly demand: AuthorityRequest;
   readonly capabilityArgs: {
     readonly amount: number;
     readonly currency: string;
@@ -194,16 +194,24 @@ export function toX402PaymentDemand(
     throw new X402Error("network mismatch: requirement not selected by policy");
   }
   const amount = parseAtomicAmount(accepted.amount);
-  const demand: AuthorityDemand = {
+  const operation = {
     principal: ctx.principal,
-    agent: ctx.agent,
-    cmd: "/pay",
+    actor: ctx.agent,
+    action: { name: "/pay" as const },
+    resource: { type: "x402-payment", id: ctx.resource },
+    context: {
+      recipient: accepted.payTo,
+      amount,
+      currency: ctx.currency,
+      asset: accepted.asset,
+      network: accepted.network,
+      scheme: accepted.scheme,
+    },
     purpose: ctx.purpose,
-    resource: ctx.resource,
-    recipient: accepted.payTo,
-    amount,
-    currency: ctx.currency,
-    termsDigest: ctx.termsDigest,
+  };
+  const demand: AuthorityRequest = {
+    ...operation,
+    termsDigest: digestForOperation(operation),
   };
   return {
     demand,
@@ -256,7 +264,7 @@ export function checkSettlement(
   return { ok: true };
 }
 
-/** Facilitator boundary. Production wiring is out of v0.1; tests use the stub in tests/fakes.ts. */
+/** Host-owned facilitator boundary: the external system executes, PTF only verifies results (`checkSettlement`). Production wiring is host-side (out of v0.1); tests use the stub in tests/fakes.ts. */
 export interface X402Facilitator {
   verify(
     payload: unknown,

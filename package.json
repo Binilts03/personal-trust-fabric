@@ -4,13 +4,26 @@
   "description": "User-owned trust and delegated-authority layer for the agentic web (PTF v0.1)",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "./dist/src/index.js",
-  "types": "./dist/src/index.d.ts",
+  "main": "./dist/src/api.js",
+  "types": "./dist/src/api.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js"
-    }
+      "types": "./dist/src/api.d.ts",
+      "import": "./dist/src/api.js"
+    },
+    "./authzen": {
+      "types": "./dist/src/adapters/authzen.d.ts",
+      "import": "./dist/src/adapters/authzen.js"
+    },
+    "./oauth": {
+      "types": "./dist/src/adapters/oauth-agent.d.ts",
+      "import": "./dist/src/adapters/oauth-agent.js"
+    },
+    "./profiles/payment": {
+      "types": "./dist/src/profiles/payment.d.ts",
+      "import": "./dist/src/profiles/payment.js"
+    },
+    "./package.json": "./package.json"
   },
   "bin": {
     "ptf": "./dist/src/cli.js",

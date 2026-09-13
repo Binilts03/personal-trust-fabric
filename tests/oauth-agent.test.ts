@@ -6,6 +6,8 @@ import {
   MAX_DELEGATION_DEPTH,
   mintRoot,
   OAuthAgentError,
+  rarPaymentDetails,
+  resourceIndicator,
   toJwtClaims,
 } from "../src/index.js";
 import type { DelegatedToken } from "../src/index.js";
@@ -460,7 +462,7 @@ describe("OAuth-agent hardening (review fixes)", () => {
   });
 });
 
-describe("OAuth-agent JWT mapping (RFC8693/RFC7800 edge)", () => {
+describe("OAuth-agent JWT mapping (RFC8693/RFC9449 edge)", () => {
   it("round-trips descriptor <-> standard claims", () => {
     const r = mintRoot({
       sub: "user_abc",
@@ -536,5 +538,102 @@ describe("OAuth-agent JWT mapping (RFC8693/RFC7800 edge)", () => {
       () => fromJwtClaims({ ...good, exp: NOW + 0.5 }),
       OAuthAgentError
     );
+  });
+
+  it("cnf.jkt follows RFC9449 DPoP (not RFC7800) — mapping assertion", () => {
+    // Regression: every jkt↔RFC7800 association was fixed to RFC9449
+    // (verified 2026-09-13: jkt is DPoP RFC9449; RFC7800 defines the cnf
+    // container, with kid in §3.4). The wire shape is { jkt } via mapping.
+    const jwt = toJwtClaims(root());
+    assert.deepEqual(jwt.cnf, { jkt: "jkt-aaa" });
+    assert.equal(typeof (jwt.cnf as { jkt: string }).jkt, "string");
+  });
+});
+
+describe("OAuth-agent stable foundations (RFC9396/RFC8707 helpers)", () => {
+  it("rarPaymentDetails builds an RFC9396-style entry (profile-defined type)", () => {
+    // authorization_details entry shape: { type, ... }; the
+    // "payment_initiation" type string itself is profile-defined
+    // (experimental agent profile), not IANA-registered.
+    const entry = rarPaymentDetails({
+      amount: 1790,
+      currency: "INR",
+      payee: "did:test:merchant",
+      transactionId: "tx-8472",
+    });
+    assert.deepEqual(entry, {
+      type: "payment_initiation",
+      amount: 1790,
+      currency: "INR",
+      payee: "did:test:merchant",
+      transactionId: "tx-8472",
+    });
+    assert.throws(
+      () =>
+        rarPaymentDetails({
+          amount: 0,
+          currency: "INR",
+          payee: "did:test:merchant",
+          transactionId: "tx-1",
+        }),
+      OAuthAgentError
+    );
+    assert.throws(
+      () =>
+        rarPaymentDetails({
+          amount: Number.NaN,
+          currency: "INR",
+          payee: "did:test:merchant",
+          transactionId: "tx-1",
+        }),
+      OAuthAgentError
+    );
+    assert.throws(
+      () =>
+        rarPaymentDetails({
+          amount: 10,
+          currency: "",
+          payee: "did:test:merchant",
+          transactionId: "tx-1",
+        }),
+      OAuthAgentError
+    );
+    assert.throws(
+      () =>
+        rarPaymentDetails({
+          amount: 10,
+          currency: "INR",
+          payee: "",
+          transactionId: "tx-1",
+        }),
+      OAuthAgentError
+    );
+    assert.throws(
+      () =>
+        rarPaymentDetails({
+          amount: 10,
+          currency: "INR",
+          payee: "did:test:merchant",
+          transactionId: "",
+        }),
+      OAuthAgentError
+    );
+  });
+
+  it("resourceIndicator passes absolute https URLs, rejects fragment/non-https", () => {
+    assert.equal(
+      resourceIndicator("https://api.example/resource"),
+      "https://api.example/resource"
+    );
+    assert.throws(
+      () => resourceIndicator("https://api.example/resource#frag"),
+      OAuthAgentError
+    );
+    assert.throws(
+      () => resourceIndicator("http://api.example/resource"),
+      OAuthAgentError
+    );
+    assert.throws(() => resourceIndicator("not-a-url"), OAuthAgentError);
+    assert.throws(() => resourceIndicator(""), OAuthAgentError);
   });
 });

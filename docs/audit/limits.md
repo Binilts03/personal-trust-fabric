@@ -16,6 +16,12 @@ tested at the boundary.
   old; in-flight caps bound to the old key fail closed.
 - `executeAndReceipt` cannot prove freshness — redeem immediately before
   executing (documented at the function).
+- Unbounded `/pay*` standing grants rejected at `addGrant` (soft guard) — add
+  a `.context.amount` ceiling or use a one-time exact-terms approval.
+- Restored snapshots decide from copied state — revocation/usage freshness
+  needs the live store; stale copies ignore later revokes (threat model v2).
+- Audit/detail secret-freedom is host-enforced — core never emits raw secrets,
+  but host-supplied `detail`/context strings can leak into backups/logs.
 
 ## Adapters (evidence-only subsets)
 

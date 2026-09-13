@@ -20,10 +20,10 @@ import {
   renderProposal,
   saveAuthority,
   signBytes,
-  termsDigestOf,
+  digestForOperation,
 } from "./index.js";
 import { readFileSync } from "node:fs";
-import type { SealedCapability } from "./index.js";
+import type { AuthorityRequest, SealedCapability } from "./index.js";
 
 /**
  * PTF MCP server (prod-04): the LLM-facing side of the harness (ADR-0007).
@@ -48,18 +48,7 @@ export interface PtfServerOptions {
 }
 
 interface Proposal {
-  demand: {
-    principal: string;
-    agent: string;
-    cmd: "/pay" | "/disclose";
-    purpose: string;
-    resource: string;
-    recipient: string;
-    amount?: number;
-    currency?: string;
-    claims?: string[];
-    termsDigest: string;
-  };
+  demand: AuthorityRequest;
   status: "pending" | "denied" | "executed";
   receipt?: Record<string, unknown>;
   until: number;
@@ -76,7 +65,6 @@ const demandSchema = z
     amount: z.number().int().positive().optional(),
     currency: z.string().optional(),
     claims: z.array(z.string()).optional(),
-    termsJson: z.string().optional(),
   })
   .superRefine((v, ctx) => {
     if (v.cmd === "/pay") {
@@ -170,43 +158,24 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       const { auth } = load();
       pruneProposals();
       prunePending();
-      let terms: unknown;
-      if (args.termsJson !== undefined) {
-        try {
-          terms = JSON.parse(args.termsJson) as unknown;
-        } catch {
-          fail("termsJson must be valid JSON");
-        }
-      } else {
-        // Full binding: every demand field participates, so two payments
-        // differing only in currency/recipient cannot collide.
-        terms = {
-          principal: args.principal,
-          agent: args.agent,
-          cmd: args.cmd,
-          purpose: args.purpose,
-          resource: args.resource,
-          recipient: args.recipient,
+      // Binding is derived server-side from the normalized operation: an
+      // untrusted agent must not supply it, so the schema takes no terms
+      // input. Payment/disclosure attributes ride in the context bag.
+      const op = {
+        principal: args.principal,
+        actor: args.agent,
+        action: { name: args.cmd },
+        resource: { type: "ptf-resource", id: args.resource },
+        context: {
           ...(args.amount !== undefined ? { amount: args.amount } : {}),
           ...(args.currency !== undefined ? { currency: args.currency } : {}),
-          ...(args.claims !== undefined
-            ? { claims: [...args.claims].sort() }
-            : {}),
-        };
-      }
-      const digest = termsDigestOf(terms);
-      const demand = {
-        principal: args.principal,
-        agent: args.agent,
-        cmd: args.cmd,
+          ...(args.claims !== undefined ? { claims: args.claims } : {}),
+          recipient: args.recipient,
+        },
         purpose: args.purpose,
-        resource: args.resource,
-        recipient: args.recipient,
-        ...(args.amount !== undefined ? { amount: args.amount } : {}),
-        ...(args.currency !== undefined ? { currency: args.currency } : {}),
-        ...(args.claims !== undefined ? { claims: args.claims } : {}),
-        termsDigest: digest,
       };
+      const digest = digestForOperation(op);
+      const demand: AuthorityRequest = { ...op, termsDigest: digest };
       const decision = auth.evaluate(demand, { nowSec: now() });
       const text = renderProposal({
         demand,
@@ -304,14 +273,33 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       }
       const { auth, reg, audit, keys } = load();
       const demand = { ...proposal.demand, termsDigest: args.termsDigest };
-      if (demand.cmd !== "/pay") {
+      if (demand.action.name !== "/pay") {
         fail(
           "redeem supports /pay demands only in v1 (present disclosures via the CLI)"
         );
       }
-      if (demand.amount === undefined || demand.currency === undefined) {
+      const amountRaw: unknown = demand.context["amount"];
+      const currencyRaw: unknown = demand.context["currency"];
+      const recipientRaw: unknown = demand.context["recipient"];
+      if (
+        typeof amountRaw !== "number" ||
+        !Number.isFinite(amountRaw) ||
+        !(amountRaw > 0)
+      ) {
         fail("pending demand is malformed (amount/currency required)");
       }
+      if (typeof currencyRaw !== "string" || currencyRaw.length === 0) {
+        fail("pending demand is malformed (amount/currency required)");
+      }
+      if (typeof recipientRaw !== "string" || recipientRaw.length === 0) {
+        fail("pending demand is malformed (recipient required)");
+      }
+      const amount: number = amountRaw;
+      const currency: string = currencyRaw;
+      const recipient: string = recipientRaw;
+      const resource: string = demand.resource.id;
+      const purpose: string = demand.purpose ?? "payment";
+      const agent: string = demand.actor;
       const seed = keys[demand.principal];
       if (seed === undefined)
         fail(`server holds no key for principal ${demand.principal}`);
@@ -320,8 +308,6 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         resolveKey: (id: string) => reg.resolve(id),
         nowSec: now,
       });
-      const amount = demand.amount as number;
-      const currency = demand.currency as string;
       if (
         args.recipientKeyHex === undefined ||
         args.recipientSigHex === undefined
@@ -345,13 +331,13 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           null,
           {
             iss: demand.principal,
-            aud: demand.agent,
+            aud: agent,
             sub: demand.principal,
-            cmd: demand.cmd,
+            cmd: demand.action.name,
             pol: [["<=", ".amount", amount]],
-            purpose: demand.purpose,
-            resource: demand.resource,
-            recipient: demand.recipient,
+            purpose,
+            resource,
+            recipient,
             amountMax: amount,
             currency,
             exp: now() + 300,
@@ -372,7 +358,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
             {
               type: "text",
               text: JSON.stringify(
-                { needProof: true, cidHex, recipient: demand.recipient },
+                { needProof: true, cidHex, recipient },
                 null,
                 2
               ),
@@ -403,9 +389,9 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       const redeemed = caps.authorize(
         [challenge.cap],
         {
-          cmd: demand.cmd,
+          cmd: demand.action.name,
           args: { amount, currency },
-          recipient: demand.recipient,
+          recipient,
           termsDigest: args.termsDigest,
         },
         {
@@ -430,11 +416,11 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         new FakePaymentExecutor(),
         {
           capabilityId: leafCidHex(challenge.cap),
-          recipient: demand.recipient,
+          recipient,
           amount,
           currency,
-          resource: demand.resource,
-          purpose: demand.purpose,
+          resource,
+          purpose,
         },
         redeemed,
         now()
@@ -443,7 +429,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       // (Authority consumed + no receipt is safe; receipt + unconsumed is not.)
       saveAuthority(opts.dir, auth);
       audit.append({
-        actor: demand.agent,
+        actor: agent,
         action: "redeem",
         ...(decision.allow && decision.citations[0]?.authorityId !== undefined
           ? { authorityId: decision.citations[0]?.authorityId as string }

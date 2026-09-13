@@ -76,10 +76,13 @@ describe("peer-review hygiene gate (ptf-v01/05)", () => {
     const pkg = JSON.parse(
       readFileSync(join(ROOT, "package.json"), "utf8")
     ) as Record<string, unknown>;
-    assert.equal(pkg["main"], "./dist/src/index.js");
-    assert.equal(pkg["types"], "./dist/src/index.d.ts");
+    assert.equal(pkg["main"], "./dist/src/api.js");
+    assert.equal(pkg["types"], "./dist/src/api.d.ts");
     const exports = pkg["exports"] as Record<string, unknown>;
     assert.ok(exports?.["."]);
+    assert.ok(exports?.["./authzen"]);
+    assert.ok(exports?.["./oauth"]);
+    assert.ok(exports?.["./profiles/payment"]);
     assert.ok(
       ((pkg["files"] as string[]) ?? []).includes("dist"),
       "files must ship dist"

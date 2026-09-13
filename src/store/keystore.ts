@@ -7,9 +7,14 @@ import {
 import { canonicalize } from "../core/canonical.js";
 
 /**
- * Passphrase-encrypted keystore (prod-02). scrypt + AES-256-GCM, stdlib only.
- * The passphrase arrives from the environment and is never logged or stored.
- * One blob per file: a single GCM tag authenticates every entry at once.
+ * Reference host key custody (dev/test): passphrase-encrypted file keystore.
+ * scrypt + AES-256-GCM, stdlib only. The passphrase arrives from the
+ * environment and is never logged or stored. One blob per file: a single GCM
+ * tag authenticates every entry at once. CLI/MCP call `sealKeystore` /
+ * `openKeystore` directly; production hosts replace this file with OS
+ * keychain / Enclave / 1Password / Bitwarden / HSM / KMS behind the
+ * `KeyProvider` / `Signer` seams below — keys sign in place, so private
+ * material never crosses into agent view (ADR-0006).
  */
 
 const VERSION = 1;
@@ -33,6 +38,23 @@ export interface KeystoreFile {
   readonly ivHex: string;
   readonly ctHex: string;
   readonly tagHex: string;
+}
+
+/**
+ * Host custody seams (ticket 09). No class in this module implements them:
+ * the reference file keystore above is used directly by CLI/MCP, and
+ * production hosts implement these seams on their own custody (OS
+ * keychain / Enclave / 1Password / Bitwarden / HSM / KMS). Async by design —
+ * hardware/vault signing is never synchronous.
+ */
+export interface KeyProvider {
+  /** Resolve an alias to a raw Ed25519 public key (32 bytes); null when unknown. */
+  getPublicKey(alias: string): Promise<Uint8Array | null>;
+}
+
+export interface Signer {
+  /** Sign `data` with the private key bound to `alias`. Key material never leaves the host. */
+  sign(alias: string, data: Uint8Array): Promise<Uint8Array>;
 }
 
 function passBytes(passphrase: string): Buffer {

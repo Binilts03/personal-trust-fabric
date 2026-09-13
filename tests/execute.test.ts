@@ -7,9 +7,11 @@ import {
   Capabilities,
   FakePaymentExecutor,
   canonicalize,
+  digestForOperation,
   executeAndReceipt,
   generateEd25519Keypair,
   leafCidHex,
+  paymentBounds,
   signBytes,
   termsDigestOf,
 } from "../src/index.js";
@@ -64,29 +66,24 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
     auth.addGrant({
       id: "g1",
       principal: PRINCIPAL,
-      agent: AGENT,
-      cmd: "/pay",
-      amountMax: 2000,
-      currency: "INR",
+      actor: { kind: "exact", id: AGENT },
+      action: { name: "/pay" },
+      bounds: paymentBounds({ amountMax: 2000, currency: "INR" }),
       exp: NOW + 600,
     });
-    const digest = termsDigestOf({
-      invoice: "inv_8472",
-      amount: 1790,
-      currency: "INR",
-    });
+    const operation = {
+      principal: PRINCIPAL,
+      actor: AGENT,
+      action: { name: "/pay" as const },
+      resource: { type: "invoice", id: "invoice:inv_8472" },
+      context: { amount: 1790, currency: "INR", recipient: MERCHANT },
+      purpose: "pay invoice",
+    };
 
     const decision = auth.evaluate(
       {
-        principal: PRINCIPAL,
-        agent: AGENT,
-        cmd: "/pay",
-        purpose: "pay invoice",
-        resource: "invoice:inv_8472",
-        recipient: MERCHANT,
-        amount: 1790,
-        currency: "INR",
-        termsDigest: digest,
+        ...operation,
+        termsDigest: digestForOperation(operation),
       },
       { consume: true }
     );
@@ -96,12 +93,16 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       resolveKey: (id) => keys.get(id) ?? null,
       nowSec: () => NOW,
     });
-    const cap = issueCap(caps, principal.privateKey, digest);
+    const cap = issueCap(
+      caps,
+      principal.privateKey,
+      digestForOperation(operation)
+    );
     const demand = {
       cmd: "/pay" as const,
       args: { amount: 1790, currency: "INR" },
       recipient: MERCHANT,
-      termsDigest: digest,
+      termsDigest: digestForOperation(operation),
     };
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
     const proof = {

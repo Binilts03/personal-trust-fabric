@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   Authority,
   FakePaymentExecutor,
@@ -8,67 +11,107 @@ import {
   checkAudience,
   delegate,
   demandToAuthZen,
+  digestForOperation,
   evaluateAuthZen,
   mintRoot,
+  paymentBounds,
   renderAgentView,
-  termsDigestOf,
   toAp2PaymentDemand,
 } from "../src/index.js";
+import type { AuthorityRequest } from "../src/index.js";
 
-// Falsifiable run per investigation §17: one grant drives three executors.
-// Grant: any agent of the principal may book domestic economy ≤₹15,000,
-// expiring Sep 30 2026. Above ceiling needs a fresh exact-terms approval.
+// Three-env proof (ticket 11): ONE FILE-BACKED store drives three runtimes.
+// Grant: agents A/B of the principal may book domestic economy ≤₹15,000
+// (explicit set — replaceable but never open), plus a rooted grant so a valid
+// delegated chain under AGENT_A allows, plus an ap2-payment grant so the REAL
+// toAp2PaymentDemand output (resource type "ap2-payment") evaluates. Expiry
+// Sep 30 2026. Above the ceiling needs a fresh exact-terms approval.
+//
+// Cross-vendor gap (fixtures stay local/unsigned): same process, no real
+// broker, no real AP2 party signatures, no separate hosts, no DPoP/mTLS cnf
+// possession checks. Cross-vendor would need separate processes/hosts, a real
+// AP2 broker + verified party keys, a real OAuth AS/RS, and a durable shared
+// store with external locking (single-writer limit in docs/audit/limits.md).
 const NOW = 1789257600;
 const EXP = 1790812740;
 const PRINCIPAL = "did:test:traveler";
 const AGENT_A = "did:test:agent-a";
 const AGENT_B = "did:test:agent-b";
+const ATTACKER = "did:attacker:anything";
 const MERCHANT = "did:test:airline";
 const SECRET = "CARD-SECRET-never-leaves-host-9917";
 
-function authorityWithGrant(): Authority {
+function buildSnapshot(): unknown {
   const auth = new Authority({ nowSec: () => NOW });
   auth.addGrant({
     id: "travel-domestic-economy",
     principal: PRINCIPAL,
-    cmd: "/pay",
+    actor: { kind: "set", ids: [AGENT_A, AGENT_B] },
+    action: { name: "/pay" },
     purpose: "book domestic economy flight",
-    resource: "flight:domestic:economy",
-    recipient: MERCHANT,
-    amountMax: 15000,
-    currency: "INR",
+    resource: { type: "flight", id: "flight:domestic:economy" },
+    bounds: paymentBounds({ amountMax: 15000, currency: "INR" }),
     exp: EXP,
   });
-  auth.addPolicy({ id: "absolute-cap", amountMax: 25000 });
-  return auth;
-}
-
-function terms(amount: number) {
-  return {
-    flight: "domestic-economy",
-    amount,
-    currency: "INR",
-    merchant: MERCHANT,
-  };
-}
-
-function demand(agent: string, amount: number) {
-  return {
+  auth.addGrant({
+    id: "travel-delegated",
     principal: PRINCIPAL,
-    agent,
-    cmd: "/pay" as const,
+    actor: { kind: "rooted", root: AGENT_A },
+    action: { name: "/pay" },
     purpose: "book domestic economy flight",
-    resource: "flight:domestic:economy",
-    recipient: MERCHANT,
-    amount,
-    currency: "INR",
-    termsDigest: termsDigestOf(terms(amount)),
-  };
+    resource: { type: "flight", id: "flight:domestic:economy" },
+    bounds: paymentBounds({ amountMax: 15000, currency: "INR" }),
+    exp: EXP,
+  });
+  auth.addGrant({
+    id: "travel-ap2",
+    principal: PRINCIPAL,
+    actor: { kind: "set", ids: [AGENT_A, AGENT_B] },
+    action: { name: "/pay" },
+    purpose: "book domestic economy flight",
+    resource: { type: "ap2-payment", id: "flight:domestic:economy" },
+    bounds: paymentBounds({ amountMax: 15000, currency: "INR" }),
+    exp: EXP,
+  });
+  auth.addPolicy({
+    id: "absolute-cap",
+    bounds: paymentBounds({ amountMax: 25000, currency: "INR" }),
+  });
+  // One shared store file: every environment restores its own Authority
+  // instance from this file (snapshot → file → restore round-trip included).
+  return JSON.parse(JSON.stringify(auth.snapshot())) as unknown;
 }
 
-describe("three-env proof: one grant, three executors (pivot/04)", () => {
+// Single file-backed store shared by all three environments below.
+const STORE_DIR = mkdtempSync(join(tmpdir(), "ptf-three-env-"));
+const STORE_FILE = join(STORE_DIR, "authority.json");
+writeFileSync(STORE_FILE, JSON.stringify(buildSnapshot()));
+
+function restoredAuth(): Authority {
+  const raw = readFileSync(STORE_FILE, "utf8");
+  return Authority.restore(JSON.parse(raw) as unknown, { nowSec: () => NOW });
+}
+
+function demand(
+  agent: string,
+  amount: number,
+  actorChain?: readonly string[]
+): AuthorityRequest {
+  const operation = {
+    principal: PRINCIPAL,
+    actor: agent,
+    ...(actorChain !== undefined ? { actorChain } : {}),
+    action: { name: "/pay" as const },
+    resource: { type: "flight", id: "flight:domestic:economy" },
+    context: { amount, currency: "INR", recipient: MERCHANT },
+    purpose: "book domestic economy flight",
+  };
+  return { ...operation, termsDigest: digestForOperation(operation) };
+}
+
+describe("three-env proof: one store, three executors (pivot/04, neutral 0010)", () => {
   it("env A (OAuth/MCP): attenuated token + same PDP allow for replaceable agents", () => {
-    const auth = authorityWithGrant();
+    const auth = restoredAuth();
     const root = mintRoot({
       sub: PRINCIPAL,
       actor: AGENT_A,
@@ -99,17 +142,55 @@ describe("three-env proof: one grant, three executors (pivot/04)", () => {
       assert.equal(out.decision, true, `agent ${agent} should allow ₹12k`);
     }
 
-    // Bind token→demand: the leaf actor from the delegated child drives the PDP.
+    // Bind token→demand: the leaf actor from the delegated child drives the
+    // PDP with the full chain, matching the rooted grant.
     const leafAgent = child.act[child.act.length - 1] as string;
+    const leafChain = [...child.act];
     const leafOut = evaluateAuthZen(
       auth,
-      demandToAuthZen(demand(leafAgent, 12000))
+      demandToAuthZen(demand(leafAgent, 12000, leafChain))
     );
     assert.equal(leafOut.decision, true, "delegated leaf should allow ₹12k");
+
+    // Scope binding: the PDP decision must correspond to the token. The child
+    // was narrowed to book-only, so a pay demand requiring pay scope is
+    // unsatisfiable from this token (deny at the scope gate), while the book
+    // demand mints from the token and allows at the PDP.
+    assert.ok(child.scope.includes("book:economy"));
+    assert.equal(child.scope.includes("pay:flight"), false);
+    function mintPayDemandFromToken(): AuthorityRequest | null {
+      if (!child.scope.includes("pay:flight")) return null;
+      return demand(leafAgent, 12000, leafChain);
+    }
+    function mintBookDemandFromToken(): AuthorityRequest | null {
+      if (!child.scope.includes("book:economy")) return null;
+      return demand(leafAgent, 12000, leafChain);
+    }
+    assert.equal(
+      mintPayDemandFromToken(),
+      null,
+      "book-only token cannot satisfy pay scope"
+    );
+    const bookDemand = mintBookDemandFromToken();
+    assert.ok(bookDemand !== null);
+    assert.equal(
+      evaluateAuthZen(auth, demandToAuthZen(bookDemand)).decision,
+      true,
+      "book-scoped token demand allows at PDP"
+    );
+  });
+
+  it("arbitrary unauthenticated agents deny on the identical demand", () => {
+    const auth = restoredAuth();
+    const out = evaluateAuthZen(auth, demandToAuthZen(demand(ATTACKER, 12000)));
+    assert.equal(out.decision, false);
+    const ctx = out.context as { reason: string; detail?: string };
+    assert.equal(ctx.reason, "no-authority");
+    assert.match(ctx.detail ?? "", /actor mismatch/);
   });
 
   it("env B (browser+vault): capsule leaks no secrets, host executes without possession", async () => {
-    const auth = authorityWithGrant();
+    const auth = restoredAuth();
     const capsule = assembleCapsule(
       {
         attributes: {
@@ -145,21 +226,18 @@ describe("three-env proof: one grant, three executors (pivot/04)", () => {
   });
 
   it("env C (AP2-style): mandate evidence maps to the same demand and decision", () => {
-    const auth = authorityWithGrant();
-    // AP2 mandate evidence reduced to a demand via the real ap2.ts mapper.
-    const mandate = {
+    const auth = restoredAuth();
+    // REAL AP2 evidence path: toAp2PaymentDemand output is the demand. The
+    // caller-supplied digest is stripped and recomputed, then routed via the
+    // AuthZEN translator (which recomputes again on recovery) — binding is
+    // derived, never trusted.
+    const verified = {
       payeeId: MERCHANT,
+      payeeName: MERCHANT,
       amountMinor: 12000,
       currency: "INR",
-      transactionId: termsDigestOf(terms(12000)),
-    };
-    const verified = {
-      payeeId: mandate.payeeId,
-      payeeName: mandate.payeeId,
-      amountMinor: mandate.amountMinor,
-      currency: mandate.currency,
       agentKey: { kty: "EC", crv: "P-256", x: "x", y: "y" } as const,
-      transactionId: mandate.transactionId,
+      transactionId: "ap2-tx-domestic-economy-12000",
       mode: "direct" as const,
     };
     const mapped = toAp2PaymentDemand(verified, {
@@ -168,18 +246,17 @@ describe("three-env proof: one grant, three executors (pivot/04)", () => {
       purpose: "book domestic economy flight",
       resource: "flight:domestic:economy",
     });
-    assert.equal(mapped.demand.recipient, mandate.payeeId);
-    assert.equal(mapped.demand.amount, mandate.amountMinor);
-    assert.equal(mapped.demand.currency, mandate.currency);
-    assert.equal(mapped.demand.termsDigest, mandate.transactionId);
-    assert.equal(mapped.capabilityArgs.amount, mandate.amountMinor);
-    assert.equal(mapped.capabilityArgs.currency, mandate.currency);
-    const out = evaluateAuthZen(auth, demandToAuthZen(mapped.demand));
+    assert.equal(mapped.capabilityArgs.amount, verified.amountMinor);
+    assert.equal(mapped.capabilityArgs.currency, verified.currency);
+    const { termsDigest: _stripped, ...ap2Op } = mapped.demand;
+    void _stripped;
+    const rebound = { ...ap2Op, termsDigest: digestForOperation(ap2Op) };
+    const out = evaluateAuthZen(auth, demandToAuthZen(rebound));
     assert.equal(out.decision, true);
   });
 
   it("over-ceiling denies everywhere until exact-terms approval, then allows", () => {
-    const auth = authorityWithGrant();
+    const auth = restoredAuth();
     for (const agent of [AGENT_A, AGENT_B]) {
       const denied = evaluateAuthZen(
         auth,
@@ -190,14 +267,11 @@ describe("three-env proof: one grant, three executors (pivot/04)", () => {
     auth.createApproval({
       id: "ap-18k",
       principal: PRINCIPAL,
-      agent: AGENT_A,
-      cmd: "/pay",
+      actor: AGENT_A,
+      action: { name: "/pay" },
       purpose: "book domestic economy flight",
-      resource: "flight:domestic:economy",
-      recipient: MERCHANT,
-      amount: 18000,
-      currency: "INR",
-      terms: terms(18000),
+      resource: { type: "flight", id: "flight:domestic:economy" },
+      context: { amount: 18000, currency: "INR", recipient: MERCHANT },
       ttlSec: 600,
       maxUses: 1,
     });
@@ -207,12 +281,18 @@ describe("three-env proof: one grant, three executors (pivot/04)", () => {
       { consume: true }
     );
     assert.equal(allowed.decision, true);
-    // Approval is agent-bound: AGENT_B still denies after AGENT_A's approval.
+    // Approval is actor-bound: AGENT_B still denies after AGENT_A's approval.
     const stillDeniedB = evaluateAuthZen(
       auth,
       demandToAuthZen(demand(AGENT_B, 18000))
     );
     assert.equal(stillDeniedB.decision, false);
+    // Cross-agent reuse: the attacker cannot reuse AGENT_A's approval either.
+    const attackerReuse = evaluateAuthZen(
+      auth,
+      demandToAuthZen(demand(ATTACKER, 18000))
+    );
+    assert.equal(attackerReuse.decision, false);
     // Single-use approval: second consume must deny.
     const second = evaluateAuthZen(
       auth,
@@ -224,20 +304,24 @@ describe("three-env proof: one grant, three executors (pivot/04)", () => {
       (second.context as { reason: string }).reason,
       "uses-exhausted"
     );
-    // Mutated termsDigest at the same amount must deny with "terms".
-    const mutatedTerms = { ...terms(18000), flight: "domestic-business" };
-    const mutatedDemand = {
-      ...demand(AGENT_A, 18000),
-      termsDigest: termsDigestOf(mutatedTerms),
+    // Mutated context at the same amount must deny with "terms".
+    const base = demand(AGENT_A, 18000);
+    const mutatedContext = { ...base.context, recipient: "did:test:impostor" };
+    const mutatedOperation = { ...base, context: mutatedContext };
+    const mutated: AuthorityRequest = {
+      ...mutatedOperation,
+      termsDigest: digestForOperation(mutatedOperation),
     };
-    const mutated = evaluateAuthZen(auth, demandToAuthZen(mutatedDemand));
-    assert.equal(mutated.decision, false);
-    assert.equal((mutated.context as { reason: string }).reason, "terms");
+    const mutatedOut = evaluateAuthZen(auth, demandToAuthZen(mutated));
+    assert.equal(mutatedOut.decision, false);
+    assert.equal((mutatedOut.context as { reason: string }).reason, "terms");
   });
 
   it("central revoke denies in all three envs at once", () => {
-    const auth = authorityWithGrant();
+    const auth = restoredAuth();
     auth.revoke("travel-domestic-economy", EXP);
+    auth.revoke("travel-delegated", EXP);
+    auth.revoke("travel-ap2", EXP);
     for (const agent of [AGENT_A, AGENT_B]) {
       const out = evaluateAuthZen(auth, demandToAuthZen(demand(agent, 12000)));
       assert.equal(out.decision, false);
@@ -246,18 +330,18 @@ describe("three-env proof: one grant, three executors (pivot/04)", () => {
     // Env A token-bound leaf still denies at the PDP after revoke.
     const leafOut = evaluateAuthZen(
       auth,
-      demandToAuthZen(demand("did:test:sub-agent", 12000))
+      demandToAuthZen(demand("did:test:sub-agent", 12000, [AGENT_A]))
     );
     assert.equal(leafOut.decision, false);
     assert.equal((leafOut.context as { reason: string }).reason, "revoked");
-    // Env C AP2-mapped demand still denies at the PDP after revoke.
+    // Env C REAL AP2 demand still denies at the PDP after revoke.
     const verified = {
       payeeId: MERCHANT,
       payeeName: MERCHANT,
       amountMinor: 12000,
       currency: "INR",
       agentKey: { kty: "EC", crv: "P-256", x: "x", y: "y" } as const,
-      transactionId: termsDigestOf(terms(12000)),
+      transactionId: "ap2-tx-domestic-economy-12000",
       mode: "direct" as const,
     };
     const mapped = toAp2PaymentDemand(verified, {
@@ -266,7 +350,15 @@ describe("three-env proof: one grant, three executors (pivot/04)", () => {
       purpose: "book domestic economy flight",
       resource: "flight:domestic:economy",
     });
-    const ap2Out = evaluateAuthZen(auth, demandToAuthZen(mapped.demand));
+    const { termsDigest: _strippedRevoke, ...ap2OpRevoke } = mapped.demand;
+    void _strippedRevoke;
+    const ap2Out = evaluateAuthZen(
+      auth,
+      demandToAuthZen({
+        ...ap2OpRevoke,
+        termsDigest: digestForOperation(ap2OpRevoke),
+      })
+    );
     assert.equal(ap2Out.decision, false);
     assert.equal((ap2Out.context as { reason: string }).reason, "revoked");
   });

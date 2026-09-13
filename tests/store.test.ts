@@ -7,9 +7,11 @@ import {
   Authority,
   FileAuditLog,
   RecipientRegistry,
+  digestForOperation,
   generateEd25519Keypair,
   loadAuthority,
   loadRegistry,
+  paymentBounds,
   saveAuthority,
   saveRegistry,
   termsDigestOf,
@@ -31,24 +33,23 @@ describe("durable JSON stores (prod-01)", () => {
     auth.addGrant({
       id: "g1",
       principal: P,
-      agent: A,
-      cmd: "/pay",
-      amountMax: 2000,
-      currency: "INR",
+      actor: { kind: "exact", id: A },
+      action: { name: "/pay" },
+      bounds: paymentBounds({ amountMax: 2000, currency: "INR" }),
       exp: NOW + 3600,
       maxUses: 2,
     });
-    const digest = termsDigestOf({ i: 1 });
-    const ask = {
+    const operation = {
       principal: P,
-      agent: A,
-      cmd: "/pay" as const,
+      actor: A,
+      action: { name: "/pay" as const },
+      resource: { type: "invoice", id: "r" },
+      context: { amount: 100, currency: "INR", recipient: M },
       purpose: "p",
-      resource: "r",
-      recipient: M,
-      amount: 100,
-      currency: "INR",
-      termsDigest: digest,
+    };
+    const ask = {
+      ...operation,
+      termsDigest: digestForOperation(operation),
     };
     assert.equal(auth.evaluate(ask, { consume: true }).allow, true);
     saveAuthority(dir, auth);

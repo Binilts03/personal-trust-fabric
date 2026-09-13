@@ -10,6 +10,8 @@ import {
   FileAuditLog,
   RecipientRegistry,
   atomicWrite,
+  claimsSubset,
+  digestForOperation,
   executeAndReceipt,
   generateEd25519Keypair,
   leafCidHex,
@@ -17,6 +19,7 @@ import {
   loadRegistry,
   openKeystore,
   parseDecision,
+  paymentBounds,
   privateKeyFromPkcs8,
   publicKeyFromPrivate,
   rawPublicKey,
@@ -25,7 +28,11 @@ import {
   saveRegistry,
   sealKeystore,
   signBytes,
-  termsDigestOf,
+} from "./index.js";
+import type {
+  ActorSelector,
+  AttributeBound,
+  AuthorityRequest,
 } from "./index.js";
 import type { KeyObject } from "node:crypto";
 
@@ -55,7 +62,13 @@ const COMMANDS = [
   "version",
 ] as const;
 
-const BOOLEAN_FLAGS = new Set(["yes", "verify", "help", "version"]);
+const BOOLEAN_FLAGS = new Set([
+  "yes",
+  "verify",
+  "help",
+  "version",
+  "any-agent",
+]);
 
 export const PTF_VERSION = "0.1.0";
 
@@ -69,8 +82,9 @@ export function helpText(): string {
     "  init                                   create store (refuses to overwrite)",
     "  keygen --alias NAME                    generate Ed25519 key into encrypted keystore",
     "  recipient --alias NAME --key HEX       register 32-byte recipient key",
-    "  grant --id ID --principal P --cmd /pay [--agent A] [--amount-max N] [--currency C] [--exp-in S] [--max-uses N] [--purpose T] [--resource R] [--recipient R]",
-    "  pay --principal P --agent A --recipient R --amount N --currency C --resource R [--purpose T] [--terms-json JSON] [--yes]",
+    "  grant --id ID --principal P --cmd /pay (--agent A | --actor-set a,b | --rooted-from ID | --any-agent) [--amount-max N] [--currency C] [--allowed-claims a,b] [--exp-in S] [--max-uses N] [--purpose T] [--resource R] [--resource-type T] [--recipient R]",
+    "         --any-agent is an explicit wildcard (audited, deliberate) — prefer --agent / --actor-set / --rooted-from",
+    "  pay --principal P --agent A --recipient R --amount N --currency C --resource R [--purpose T] [--yes]",
     "  disclose --holder H --verifier V --claims a,b --credential JSON [--allowed a,b] [--yes]",
     "  audit [--verify]                       verify hash chain (needs no passphrase)",
     "  revoke (--grant ID | --recipient ALIAS)",
@@ -163,12 +177,17 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "id",
     "principal",
     "agent",
+    "actor-set",
+    "any-agent",
+    "rooted-from",
     "cmd",
     "purpose",
     "resource",
+    "resource-type",
     "recipient",
     "amount-max",
     "currency",
+    "allowed-claims",
     "exp-in",
     "max-uses",
   ]),
@@ -180,7 +199,6 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "currency",
     "resource",
     "purpose",
-    "terms-json",
     "yes",
   ]),
   disclose: new Set([
@@ -370,28 +388,91 @@ export async function run(
   }
 
   if (command === "grant") {
+    // Actor binding is mandatory: exactly one selector, never a silent wildcard.
+    const agentRaw = opt(flags, "agent");
+    const actorSetRaw = opt(flags, "actor-set");
+    const rootedRaw = opt(flags, "rooted-from");
+    const anyAgent = flags["any-agent"] === true;
+    const given = [
+      agentRaw !== undefined,
+      actorSetRaw !== undefined,
+      rootedRaw !== undefined,
+      anyAgent,
+    ].filter((v) => v).length;
+    if (given !== 1) {
+      throw new Error(
+        "usage: grant needs exactly one of --agent A | --actor-set a,b | --rooted-from ID | --any-agent"
+      );
+    }
+    let actor: ActorSelector;
+    if (agentRaw !== undefined) {
+      actor = { kind: "exact", id: agentRaw };
+    } else if (actorSetRaw !== undefined) {
+      const ids = actorSetRaw.split(",");
+      if (ids.some((x) => x.length === 0)) {
+        throw new Error("usage: --actor-set must be a non-empty comma list");
+      }
+      actor = { kind: "set", ids };
+    } else if (rootedRaw !== undefined) {
+      actor = { kind: "rooted", root: rootedRaw };
+    } else {
+      actor = { kind: "any" };
+    }
+    // Payment/disclosure attributes become context bounds (ADR-0010 profiles).
+    const bounds: AttributeBound[] = [];
+    const amountMaxRaw = opt(flags, "amount-max");
+    const currencyRaw = opt(flags, "currency");
+    if (amountMaxRaw !== undefined && currencyRaw !== undefined) {
+      bounds.push(
+        ...paymentBounds({
+          amountMax: num(flags, "amount-max"),
+          currency: currencyRaw,
+        })
+      );
+    } else if (amountMaxRaw !== undefined) {
+      bounds.push({
+        path: ".context.amount",
+        op: "<=",
+        value: num(flags, "amount-max"),
+      });
+    } else if (currencyRaw !== undefined) {
+      if (currencyRaw.length === 0) {
+        throw new Error("usage: --currency must be non-empty");
+      }
+      bounds.push({ path: ".context.currency", op: "==", value: currencyRaw });
+    }
+    const grantRecipient = opt(flags, "recipient");
+    if (grantRecipient !== undefined) {
+      bounds.push({
+        path: ".context.recipient",
+        op: "==",
+        value: grantRecipient,
+      });
+    }
+    const allowedClaimsRaw = opt(flags, "allowed-claims");
+    if (allowedClaimsRaw !== undefined) {
+      bounds.push(...claimsSubset(allowedClaimsRaw.split(",")));
+    }
+    const resourceRaw = opt(flags, "resource");
+    const resourceTypeRaw = opt(flags, "resource-type");
+    const resourceFilter:
+      { readonly type?: string; readonly id?: string } | undefined =
+      resourceRaw !== undefined || resourceTypeRaw !== undefined
+        ? {
+            ...(resourceTypeRaw !== undefined ? { type: resourceTypeRaw } : {}),
+            ...(resourceRaw !== undefined ? { id: resourceRaw } : {}),
+          }
+        : undefined;
     ctx.auth.addGrant({
       id: str(flags, "id"),
       principal: str(flags, "principal"),
-      ...(opt(flags, "agent") !== undefined
-        ? { agent: opt(flags, "agent") as string }
-        : {}),
-      cmd: str(flags, "cmd") as `/${string}`,
+      actor,
+      action: { name: str(flags, "cmd") as `/${string}` },
+      ...(resourceFilter !== undefined ? { resource: resourceFilter } : {}),
       ...(opt(flags, "purpose") !== undefined
         ? { purpose: opt(flags, "purpose") as string }
         : {}),
-      ...(opt(flags, "resource") !== undefined
-        ? { resource: opt(flags, "resource") as string }
-        : {}),
-      ...(opt(flags, "recipient") !== undefined
-        ? { recipient: opt(flags, "recipient") as string }
-        : {}),
-      ...(opt(flags, "amount-max") !== undefined
-        ? { amountMax: num(flags, "amount-max") }
-        : {}),
-      ...(opt(flags, "currency") !== undefined
-        ? { currency: opt(flags, "currency") as string }
-        : {}),
+      bounds,
       ...(opt(flags, "exp-in") !== undefined
         ? { exp: now() + num(flags, "exp-in") }
         : {}),
@@ -412,30 +493,18 @@ export async function run(
     const currency = str(flags, "currency");
     const resource = str(flags, "resource");
     const purpose = opt(flags, "purpose") ?? "payment";
-    const termsRaw = opt(flags, "terms-json");
-    let terms: unknown;
-    if (termsRaw !== undefined) {
-      try {
-        terms = JSON.parse(termsRaw) as unknown;
-      } catch {
-        throw new Error("usage: --terms-json must be valid JSON");
-      }
-    } else {
-      terms = { resource, amount, currency };
-    }
-    const digest = termsDigestOf(terms);
-    const capExp = now() + 300;
-    const demand = {
+    // Binding is derived from the operation — never caller-supplied.
+    const op = {
       principal,
-      agent,
-      cmd: "/pay" as const,
+      actor: agent,
+      action: { name: "/pay" as const },
+      resource: { type: "ptf-resource", id: resource },
+      context: { amount, currency, recipient },
       purpose,
-      resource,
-      recipient,
-      amount,
-      currency,
-      termsDigest: digest,
     };
+    const digest = digestForOperation(op);
+    const demand: AuthorityRequest = { ...op, termsDigest: digest };
+    const capExp = now() + 300;
     // Fail fast before spending authority: keys must exist first.
     const principalSeed = ctx.keys[principal];
     if (principalSeed === undefined) {
@@ -566,18 +635,17 @@ export async function run(
       throw new Error("usage: --credential must be valid JSON");
     }
     const allowed = (opt(flags, "allowed") ?? requested.join(",")).split(",");
-    const terms = { verifier, claims: [...requested].sort() };
-    const digest = termsDigestOf(terms);
-    const demand = {
+    // Binding is derived from the operation: claims + verifier ride in context.
+    const op = {
       principal: holder,
-      agent: holder,
-      cmd: "/disclose" as const,
+      actor: holder,
+      action: { name: "/disclose" as const },
+      resource: { type: "credential", id: `credential:${credential.issuer}` },
+      context: { claims: requested, verifier },
       purpose: "disclose",
-      resource: `credential:${credential.issuer}`,
-      recipient: verifier,
-      claims: requested,
-      termsDigest: digest,
     };
+    const digest = digestForOperation(op);
+    const demand: AuthorityRequest = { ...op, termsDigest: digest };
     const holderSeed = ctx.keys[holder];
     if (holderSeed === undefined) {
       throw new Error(`no key for holder ${holder}`);

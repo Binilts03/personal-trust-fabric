@@ -5,17 +5,27 @@ import { b64uEncode, sha256b64uUtf8 } from "./jws.js";
 
 /**
  * SD-JWT / KB-JWT disclosure translator (ADR-0009, evidence-only).
- * Projects a PTF `Presentation` into standard SD-JWT shapes without new
- * crypto or trust roots:
- * - disclosure string: `b64u(JSON [salt, name, value])` (RFC 9901 style array)
- * - `_sd` digest: `b64u(sha256(utf8(disclosure string)))`
+ * Projects a PTF `Presentation` into standard SD-JWT shapes (RFC9901) without
+ * new crypto or trust roots:
+ * - disclosure string: `b64u(JSON [salt, name, value])` (RFC9901 §4.2.1 array)
+ * - `_sd` digest: `b64u(sha256(ascii(disclosure string)))` (RFC9901 §4.2.3)
  * - KB-JWT claims: `{iss: holder, aud: verifier, nonce, iat, sd_hash}`
  *   where `sd_hash` covers the SD payload below (local-first simplification;
- *   when the host mints real compact JWS it binds the compact serialization).
+ *   when the host mints real compact JWS it binds the compact serialization
+ *   per RFC9901 §4.3.1).
  * PTF's own hex digest is carried as trace-only `ptf_digest` — verifiers
  * MUST recompute the standard digests and never trust it.
  * Issuance and trust registries stay host-side; x509/DID/mdoc validation is
  * out of scope (consistent with `adapters/oid4vp.ts` documented limits).
+ *
+ * Key confirmation (corrected 2026-09-13 — prior docs wrongly claimed RFC7800
+ * defines no `kid` inside `cnf`): `cnf:{kid}` FOLLOWS RFC7800 §3.4
+ * (key-ID confirmation; the recipient resolves the key from the ID), and
+ * `cnf:{jwk}` is the richer by-value path (RFC7800 §3.2, RFC9901 §4.1.2
+ * suggests `jwk`). Both shapes are standards-shaped; the PTF-local choice is
+ * WHICH default to use: `presentationToSdJwt` defaults to `{kid: holder}`
+ * (compat; holder DID as the key ID, resolved via PTF identity) and takes
+ * `{holderJwk}` for standard `{jwk}`. Keep the `holderJwk` option.
  *
  * HOST OBLIGATIONS (this module verifies NO signatures, keeps NO replay
  * cache): the host MUST verify Issuer-JWT and KB-JWT signatures with its own
@@ -24,29 +34,38 @@ import { b64uEncode, sha256b64uUtf8 } from "./jws.js";
  * only — a passing result without host signature + replay checks is NOT a
  * complete verification.
  *
- * NON-STANDARD DEVIATIONS (PTF-local — do not mistake for RFC 9901 / RFC 7800):
- * 1. `cnf` default `{kid: holder-string}` is PTF-local non-standard. The
- *    standard is `cnf:{jwk}`; RFC 7800 defines NO `kid` member inside `cnf`.
- *    Pass `{holderJwk}` to `presentationToSdJwt` for standard `{jwk}`; the
- *    `{kid}` fallback is kept for compat and is labeled PTF-local.
- * 2. `sd_hash` covers PTF-canonical JSON of the SD payload, NOT the standard
- *    compact `IssuerJWT~D1~...` serialization. Hosts minting real compact JWS
- *    MUST recompute `sd_hash` over the compact serialization; ours binds the
+ * DEVIATIONS (every remaining non-standard item is PTF-local with reason;
+ * standards-shaped behavior is labeled as such):
+ * 1. PTF-local default: `cnf` defaults to `{kid: holder}` where the holder
+ *    DID string is used as the key ID. Reason: compat fallback; shape follows
+ *    RFC7800 §3.4 but the VALUE convention (DID as kid, resolved via PTF
+ *    identity rather than a key registry) is PTF-local. Pass `{holderJwk}`
+ *    for the richer `cnf:{jwk}` path.
+ * 2. PTF-local: `sd_hash` covers PTF-canonical JSON of the SD payload, NOT
+ *    the standard compact `IssuerJWT~D1~...` serialization (RFC9901 §4.3.1).
+ *    Reason: local-first simplification. Hosts minting real compact JWS MUST
+ *    recompute `sd_hash` over the compact serialization; ours binds the
  *    local projection only.
- * 3. KB-JWT signing input is ASCII `b64u(header).b64u(payload)` via
- *    `kbJwsSigningInput` with header `{typ:"kb+jwt",alg}` (standard).
+ * 3. Standards-shaped: KB-JWT signing input is ASCII `b64u(header).b64u(payload)`
+ *    via `kbJwsSigningInput` with header `{typ:"kb+jwt",alg}` (RFC9901 §4.3).
  *    The PTF-local canonical-bytes input was removed.
- * 4. KB `iat` defaults to payload `iat` (credential/presentation time) as a
- *    documented non-standard fallback. The standard requires presentation
- *    time — callers MUST pass `{nowSec}` to `sdPayloadToKbClaims`.
- * 5. Only 3-element `[salt, name, value]` disclosures supported. 2-element
- *    array-element disclosures `[salt, value]` are NOT supported and fail
- *    closed (`digest-mismatch` on verify).
- * 6. Hashing uses UTF-8 bytes (correct for Unicode). Disclosure strings are
- *    ASCII-only b64u so digests match RFC 9901 vectors; payload `sd_hash`
- *    over Unicode canonical JSON uses UTF-8 (pre-fix code used ASCII).
- * 7. `iss`/`sub` are shape-checked always, verified against expectations ONLY
- *    when `expectedIss`/`expectedSub` are passed (mismatch → `issuer`).
+ * 4. PTF-local fallback: KB `iat` defaults to payload `iat`
+ *    (credential/presentation time). Reason: compat. The standard requires
+ *    presentation time (RFC9901 §4.3 `iat`) — callers MUST pass `{nowSec}`
+ *    to `sdPayloadToKbClaims`.
+ * 5. PTF-local subset: only 3-element `[salt, name, value]` disclosures
+ *    supported (RFC9901 §4.2.1). 2-element array-element disclosures
+ *    `[salt, value]` (RFC9901 §4.2.2) are NOT supported and fail closed
+ *    (`digest-mismatch` on verify). Reason: object-claim scope only.
+ * 6. Standards-shaped with note: hashing uses UTF-8 bytes of the disclosure
+ *    string (RFC9901 §4.2.3 says US-ASCII bytes of the b64u value; UTF-8
+ *    matches ASCII for ASCII inputs, and disclosure strings are ASCII-only
+ *    b64u so digests match RFC9901 vectors; payload `sd_hash` over Unicode
+ *    canonical JSON uses UTF-8 — pre-fix code used ASCII).
+ * 7. PTF-local verification policy: `iss`/`sub` are shape-checked always,
+ *    verified against expectations ONLY when `expectedIss`/`expectedSub`
+ *    are passed (mismatch → `issuer`). Reason: lets hosts opt into issuer
+ *    pinning without forcing it in tests.
  * 8. Shared edge guards live in `adapters/guards.ts` (core stays zero-dep).
  */
 
@@ -140,8 +159,9 @@ export function toSdDisclosure(d: {
 
 /**
  * Project a PTF presentation to SD-JWT payload + disclosure list.
- * Default `cnf` is PTF-local `{kid: holder}` (non-standard fallback).
- * Pass `{holderJwk}` for standard `cnf:{jwk}` (RFC 7800).
+ * Default `cnf` is `{kid: holder}` (shape per RFC7800 §3.4 key-ID
+ * confirmation; the DID-as-kid value convention is PTF-local compat).
+ * Pass `{holderJwk}` for the richer `cnf:{jwk}` path (RFC7800 §3.2).
  */
 export function presentationToSdJwt(
   pres: Presentation,
@@ -192,7 +212,8 @@ export function presentationToSdJwt(
     }
     cnf = { jwk: opts.holderJwk };
   } else {
-    // PTF-local non-standard fallback (compat): standard is cnf:{jwk}.
+    // PTF-local compat default: shape per RFC7800 §3.4 ({kid}); richer
+    // cnf:{jwk} via {holderJwk}.
     cnf = { kid: holder };
   }
   return {

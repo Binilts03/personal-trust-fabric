@@ -205,10 +205,10 @@ describe("AP2 mandate-pair verifier adapter (ptf-v02/03)", () => {
       agent: "did:test:a",
       purpose: "buy widget",
       resource: "order:1",
-      termsDigest: verified.transactionId,
     });
-    assert.equal(demand.recipient, "did:test:payee");
-    assert.equal(demand.amount, 4250);
+    assert.equal(demand.context["recipient"], "did:test:payee");
+    assert.equal(demand.context["amount"], 4250);
+    assert.equal(demand.context["transactionId"], verified.transactionId);
     assert.deepEqual(capabilityArgs, { amount: 4250, currency: "INR" });
   });
 

@@ -1,4 +1,4 @@
-import type { AuthorityDemand, Citation } from "./authority.js";
+import type { AuthorityRequest, Citation } from "./authority.js";
 
 /**
  * Approval presenter — the human-readable side of digest-bound approval.
@@ -6,10 +6,16 @@ import type { AuthorityDemand, Citation } from "./authority.js";
  * parsing an explicit decision. Prompting and I/O stay with the host.
  * Free-text fields are sanitized so a malicious mandate cannot restyle the
  * terminal into faking an approval (ANSI/control stripping).
+ *
+ * The demand is domain-neutral (ADR-0010): identity lines first, then the
+ * familiar payment/disclosure conveniences (Amount, Recipient, Claims,
+ * Verifier) when the operation context carries them, then every remaining
+ * context entry plus action/resource property bags verbatim — everything the
+ * derived digest binds must be reviewable on screen.
  */
 
 export interface ProposalView {
-  readonly demand: AuthorityDemand;
+  readonly demand: AuthorityRequest;
   readonly citations: readonly Citation[];
   readonly expiresAt?: number;
   readonly maxUses?: number;
@@ -32,22 +38,97 @@ function line(label: string, value: string): string {
   return `${label}: ${sanitizeField(value)}`;
 }
 
+function fmtValue(value: unknown): string {
+  try {
+    const rendered = JSON.stringify(value);
+    return typeof rendered === "string" ? rendered : "(unrenderable)";
+  } catch {
+    return "(unrenderable)";
+  }
+}
+
+/**
+ * Render one property bag (`Action <k>` / `Resource <k>` lines). Binding
+ * data must be visible: the digest covers these bags, so the human must see
+ * them. Empty bags render nothing.
+ */
+function bagLines(
+  prefix: string,
+  bag: Record<string, unknown> | undefined
+): string[] {
+  if (bag === undefined) return [];
+  return Object.keys(bag)
+    .sort()
+    .map((key) => line(`${prefix} ${key}`, fmtValue(bag[key])));
+}
+
+/**
+ * Render the operation context. Amount/currency/recipient/claims/verifier
+ * keep their familiar first-class lines when present; every other key
+ * renders as a `Context <key>` line so nothing digest-bound hides.
+ */
+function contextLines(context: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const amount: unknown = context["amount"];
+  const currency: unknown = context["currency"];
+  if (amount !== undefined) {
+    const unit =
+      typeof currency === "string" && currency.length > 0
+        ? ` ${sanitizeField(currency)}`
+        : "";
+    out.push(line("Amount", `${fmtValue(amount)}${unit}`.trim()));
+  } else if (currency !== undefined) {
+    out.push(line("Currency", fmtValue(currency)));
+  }
+  const recipient: unknown = context["recipient"];
+  if (typeof recipient === "string" && recipient.length > 0) {
+    out.push(line("Recipient", recipient));
+  }
+  const claims: unknown = context["claims"];
+  if (Array.isArray(claims) && claims.length > 0) {
+    out.push(
+      line(
+        "Claims",
+        (claims as unknown[])
+          .map((c) => sanitizeField(typeof c === "string" ? c : fmtValue(c)))
+          .join(", ")
+      )
+    );
+  }
+  const verifier: unknown = context["verifier"];
+  if (typeof verifier === "string" && verifier.length > 0) {
+    out.push(line("Verifier", verifier));
+  }
+  for (const key of Object.keys(context).sort()) {
+    if (
+      key === "amount" ||
+      key === "currency" ||
+      key === "recipient" ||
+      key === "claims" ||
+      key === "verifier"
+    ) {
+      continue;
+    }
+    out.push(line(`Context ${key}`, fmtValue(context[key])));
+  }
+  return out;
+}
+
 export function renderProposal(view: ProposalView): string {
   const d = view.demand;
   const rows = [
     "PTF approval requested — review every line. Any change needs a new approval.",
-    line("Action", d.cmd),
-    ...(d.amount !== undefined
-      ? [line("Amount", `${d.amount} ${d.currency ?? ""}`.trim())]
+    line("Action", d.action.name),
+    ...bagLines("Action", d.action.properties),
+    line("Actor", d.actor),
+    ...(d.actorChain !== undefined && d.actorChain.length > 0
+      ? [line("Actor chain", d.actorChain.map(sanitizeField).join(" -> "))]
       : []),
-    line("Recipient", d.recipient),
-    ...(d.claims !== undefined && d.claims.length > 0
-      ? [line("Claims", d.claims.map(sanitizeField).join(", "))]
-      : []),
-    line("Purpose", d.purpose),
-    line("Resource", d.resource),
-    line("Agent", d.agent),
     line("Principal", d.principal),
+    line("Resource", `${d.resource.type}:${d.resource.id}`),
+    ...bagLines("Resource", d.resource.properties),
+    ...(d.purpose !== undefined ? [line("Purpose", d.purpose)] : []),
+    ...contextLines(d.context ?? {}),
     ...(view.expiresAt !== undefined && Number.isFinite(view.expiresAt)
       ? [
           line(

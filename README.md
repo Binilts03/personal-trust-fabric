@@ -18,7 +18,7 @@ npm run typecheck && npm test && npm run eval
 ```
 
 As a library: `npm install personal-trust-fabric` (ESM, `exports` →
-`dist/src/index.js` + types). As tools: `npx personal-trust-fabric` is not
+`dist/src/api.js` + types). As tools: `npx personal-trust-fabric` is not
 shipped — use the bins after install: `node dist/src/cli.js --help`,
 `PTF_STORE_DIR=./ptf-store ptf-mcp-server` (stdio).
 
@@ -26,103 +26,63 @@ One-command local loop: `scripts/dev-local.sh up` (see `.claude/skills/dev-local
 
 ## Sixty-second quickstart
 
-Local decision + local receipt in three steps. For cross-system interop, do not
-emit the capability envelope — project through the standards edge instead
-(`src/adapters/authzen.ts`, `src/adapters/oauth-agent.ts`,
-`src/adapters/sd-jwt.ts`, `src/adapters/audit-interop.ts`; canonical demo: `tests/three-env.test.ts`).
+Decide locally in three steps: grant authority, build the operation, evaluate.
+For cross-system interop, project the decision through the standards edge
+instead of emitting internals (`src/adapters/authzen.ts`,
+`src/adapters/oauth-agent.ts`, `src/adapters/sd-jwt.ts`,
+`src/adapters/audit-interop.ts`; canonical demo: `tests/three-env.test.ts`).
 
 ```ts
 import {
   Authority,
-  Capabilities,
-  generateEd25519Keypair,
-  leafCidHex,
-  signBytes,
-  termsDigestOf,
+  digestForOperation,
+  paymentBounds,
 } from "personal-trust-fabric";
 
-const principal = generateEd25519Keypair();
-const agent = generateEd25519Keypair();
-const merchant = generateEd25519Keypair();
 const ids = {
   p: "did:example:you",
   a: "did:example:agent",
   m: "did:example:shop",
 };
-const keys = new Map([
-  [ids.p, principal.publicKeyRaw],
-  [ids.a, agent.publicKeyRaw],
-  [ids.m, merchant.publicKeyRaw],
-]);
 
 // 1. Authority: a standing grant covers the demand (policy only narrows, never creates).
 const authority = new Authority();
 authority.addGrant({
   id: "groceries",
   principal: ids.p,
-  agent: ids.a,
-  cmd: "/pay",
-  amountMax: 2000,
-  currency: "INR",
+  actor: { kind: "exact", id: ids.a },
+  action: { name: "/pay" },
+  bounds: paymentBounds({ amountMax: 2000, currency: "INR" }),
 });
-const digest = termsDigestOf({ invoice: "inv-1", amount: 1790 });
-const decision = authority.evaluate({
+
+// 2. Operation: structured action/resource/context (amounts in atomic units).
+const operation = {
   principal: ids.p,
-  agent: ids.a,
-  cmd: "/pay",
+  actor: ids.a,
+  action: { name: "/pay" as const },
+  resource: { type: "invoice", id: "invoice:inv-1" },
+  context: { amount: 1790, currency: "INR", recipient: ids.m },
   purpose: "groceries",
-  resource: "invoice:inv-1",
-  recipient: ids.m,
-  amount: 1790,
-  currency: "INR",
-  termsDigest: digest,
+};
+
+// 3. Decision: the digest is derived, never caller-supplied; every allow cites its grant.
+const decision = authority.evaluate({
+  ...operation,
+  termsDigest: digestForOperation(operation),
 });
 if (!decision.allow) throw new Error("denied");
-
-// 2. Capability (LOCAL-ONLY, @internal per ADR-0009): short-lived, bound to
-// the exact terms and recipient. Never emit across systems — interop uses
-// the AuthZEN/OAuth/SD-JWT translators (see tests/three-env.test.ts).
-const caps = new Capabilities({ resolveKey: (id) => keys.get(id) ?? null });
-const cap = caps.issue(
-  null,
-  {
-    iss: ids.p,
-    aud: ids.a,
-    sub: ids.p,
-    cmd: "/pay",
-    pol: [["<=", ".amount", 2000]],
-    purpose: "groceries",
-    resource: "invoice:inv-1",
-    recipient: ids.m,
-    amountMax: 2000,
-    currency: "INR",
-    exp: Math.floor(Date.now() / 1000) + 300,
-    maxUses: 1,
-    termsDigest: digest,
-  },
-  principal.privateKey
-);
-
-// 3. Redemption: the recipient proves its key; the agent never sees secrets.
-const proof = {
-  key: merchant.publicKeyRaw,
-  sig: signBytes(merchant.privateKey, Buffer.from(leafCidHex(cap), "hex")),
-};
-const redeemed = caps.authorize(
-  [cap],
-  {
-    cmd: "/pay",
-    args: { amount: 1790, currency: "INR" },
-    recipient: ids.m,
-    termsDigest: digest,
-  },
-  { consume: true, proof }
-);
-if (!redeemed.ok) throw new Error(`denied: ${redeemed.reason}`);
 ```
+
+The capability envelope (`src/core/capability.ts`) is internal-only local
+receipt machinery (ADR-0009) — never emitted across systems.
 
 ## Layout
 
+- `src/api.ts` — curated public entry (explicit named re-exports: Authority
+  engine, approval presenter, persona, receipts, registry). `src/profiles/` —
+  domain profiles (payment conventions + helpers, no policy language).
+  Capability envelope, canonical/crypto machinery, and stores stay internal
+  (ADR-0011).
 - `src/core/` — zero-dependency authority plane: capabilities, policy authority,
   disclosure, identity bindings, approval presenter, protected execution, audit.
   Never imports `adapters` (test-enforced).

@@ -9,6 +9,7 @@ import {
   Authority,
   RecipientRegistry,
   generateEd25519Keypair,
+  paymentBounds,
   saveAuthority,
   saveRegistry,
   sealKeystore,
@@ -87,19 +88,17 @@ function setupStore(): {
   auth.addGrant({
     id: "g-mcp",
     principal: "did:test:p",
-    agent: "did:test:a",
-    cmd: "/pay",
-    amountMax: 5000,
-    currency: "INR",
+    actor: { kind: "exact", id: "did:test:a" },
+    action: { name: "/pay" },
+    bounds: paymentBounds({ amountMax: 5000, currency: "INR" }),
     exp: liveNow + 3600,
   });
   auth.addGrant({
     id: "g-mcp",
     principal: "did:test:p",
-    agent: "did:test:a",
-    cmd: "/pay",
-    amountMax: 5000,
-    currency: "INR",
+    actor: { kind: "exact", id: "did:test:a" },
+    action: { name: "/pay" },
+    bounds: paymentBounds({ amountMax: 5000, currency: "INR" }),
     exp: liveNow + 3600,
   });
   saveAuthority(dir, auth);

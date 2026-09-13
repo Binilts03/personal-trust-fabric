@@ -48,13 +48,9 @@ describe("x402 v2 adapter as evidence (ptf-v01/04)", () => {
       purpose: "buy data",
       resource: "data:premium",
       currency: "USDC",
-      termsDigest: termsDigestOf({
-        url: "https://api.example.com/data",
-        amount: "10000",
-      }),
     });
-    assert.equal(demand.recipient, PAYTO);
-    assert.equal(demand.amount, 10000);
+    assert.equal(demand.context["recipient"], PAYTO);
+    assert.equal(demand.context["amount"], 10000);
     assert.deepEqual(capabilityArgs, {
       amount: 10000,
       currency: "USDC",
@@ -125,14 +121,13 @@ describe("x402 v2 adapter as evidence (ptf-v01/04)", () => {
       purpose: "buy data",
       resource: "data:premium",
       currency: "USDC",
-      termsDigest: digest,
     });
     const result = caps.authorize(
       [cap],
       {
         cmd: "/pay",
-        args: { amount: demand.amount, currency: "USDC" },
-        recipient: demand.recipient,
+        args: { amount: demand.context["amount"], currency: "USDC" },
+        recipient: demand.context["recipient"] as string,
         termsDigest: digest,
       },
       { consume: false }
