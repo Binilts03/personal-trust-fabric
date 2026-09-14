@@ -17,6 +17,7 @@ import {
   loadRegistry,
   openKeystore,
   privateKeyFromPkcs8,
+  readPassphrase,
   renderProposal,
   saveAuthority,
   signBytes,
@@ -130,13 +131,12 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     if (!existsSync(join(opts.dir, "authority.json"))) {
       fail(`no store at ${opts.dir}`);
     }
-    const pass = opts.env["PTF_PASSPHRASE"] ?? "";
+    // No TTY on stdio: the passphrase comes from PTF_PASSPHRASE(_FILE)
+    // only, and only when a keystore actually exists.
     const kp = join(opts.dir, "keystore.json");
-    if (existsSync(kp) && pass.length === 0) {
-      fail("PTF_PASSPHRASE required (keystore present)");
-    }
     let keys: Record<string, Uint8Array> = {};
     if (existsSync(kp)) {
+      const pass = readPassphrase(opts.env);
       let parsed: unknown;
       try {
         parsed = JSON.parse(readFileSync(kp, "utf8")) as unknown;

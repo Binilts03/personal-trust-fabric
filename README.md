@@ -114,6 +114,8 @@ receipt machinery (ADR-0009) — never emitted across systems.
 
 ```sh
 export PTF_PASSPHRASE='strong-unique-pass'
+# Prefer a 0600 file (or an interactive prompt) so the secret never lives in env:
+# export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase" && unset PTF_PASSPHRASE
 node dist/src/cli.js --dir ./ptf-store init
 node dist/src/cli.js --dir ./ptf-store keygen --alias you
 node dist/src/cli.js --dir ./ptf-store keygen --alias shop
@@ -124,8 +126,10 @@ node dist/src/cli.js --dir ./ptf-store audit --verify
 node dist/src/cli.js --help
 ```
 
-Single-writer ceiling: one CLI/MCP writer per store; proposals are in-memory
-(lost on restart, fail-closed). Back up `ptf-store/` for high-value use.
+Supported topology: one CLI/MCP writer per store, with optimistic revision
+control as the backstop — a stale writer fails closed ("changed under us")
+instead of last-write-wins. Proposals are in-memory (lost on restart,
+fail-closed). Back up `ptf-store/` for high-value use.
 
 ## Agent quickstart (MCP stdio)
 

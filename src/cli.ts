@@ -1,5 +1,11 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -23,7 +29,9 @@ import {
   privateKeyFromPkcs8,
   publicKeyFromPrivate,
   rawPublicKey,
+  readPassphrase,
   renderProposal,
+  resealKeystore,
   saveAuthority,
   saveRegistry,
   sealKeystore,
@@ -54,6 +62,7 @@ function toPrivateKey(der: Uint8Array): KeyObject {
 const COMMANDS = [
   "init",
   "keygen",
+  "rekey",
   "recipient",
   "grant",
   "pay",
@@ -83,6 +92,7 @@ export function helpText(): string {
     "commands:",
     "  init                                   create store (refuses to overwrite)",
     "  keygen --alias NAME                    generate Ed25519 key into encrypted keystore",
+    "  rekey                                  rotate the keystore passphrase (old via PTF_PASSPHRASE(_FILE), new via PTF_NEW_PASSPHRASE(_FILE) or prompt)",
     "  recipient --alias NAME --key HEX       register 32-byte recipient key",
     "  grant --id ID --principal P --cmd /pay (--agent A | --actor-set a,b | --any-agent) [--amount-max N] [--currency C] [--allowed-claims a,b] [--exp-in S] [--max-uses N] [--purpose T] [--resource R] [--resource-type T] [--recipient R]",
     "         --any-agent is an explicit wildcard (audited, deliberate) — prefer --agent / --actor-set",
@@ -93,6 +103,7 @@ export function helpText(): string {
     "  help                                   print this help",
     "",
     "env: PTF_PASSPHRASE (required for keygen/pay/disclose only; never passed as a flag)",
+    "     alternatives: PTF_PASSPHRASE_FILE (0600 file, preferred over env), or an interactive TTY prompt",
     "examples:",
     "  PTF_PASSPHRASE=hunter2 ptf --dir ./ptf-store init",
     "  PTF_PASSPHRASE=hunter2 ptf keygen --alias you",
@@ -257,23 +268,23 @@ interface Ctx {
   keys: Record<string, Uint8Array>;
 }
 
-function passphraseFrom(env: Record<string, string | undefined>): string {
-  const p = env["PTF_PASSPHRASE"];
-  if (p === undefined || p.length === 0) {
-    throw new Error("PTF_PASSPHRASE is required for key operations");
-  }
-  return p;
+function passphraseFrom(
+  env: Record<string, string | undefined>,
+  prompt?: () => string
+): string {
+  return readPassphrase(env, ...(prompt !== undefined ? [{ prompt }] : []));
 }
 
 function persistKeys(
   dir: string,
   env: Record<string, string | undefined>,
-  keys: Record<string, Uint8Array>
+  keys: Record<string, Uint8Array>,
+  prompt?: () => string
 ): void {
   mkdirSync(dir, { recursive: true });
   atomicWrite(
     join(dir, "keystore.json"),
-    `${JSON.stringify(sealKeystore(keys, passphraseFrom(env)))}\n`
+    `${JSON.stringify(sealKeystore(keys, passphraseFrom(env, prompt)))}\n`
   );
 }
 
@@ -286,7 +297,8 @@ function loadCtx(
   dir: string,
   env: Record<string, string | undefined>,
   now: () => number,
-  needKeys: boolean
+  needKeys: boolean,
+  prompt?: () => string
 ): Ctx {
   if (!existsSync(join(dir, "authority.json"))) {
     throw new Error(`no store at ${dir} (run: ptf init --dir ${dir})`);
@@ -315,7 +327,7 @@ function loadCtx(
     }
     keys = openKeystore(
       parsed as Parameters<typeof openKeystore>[0],
-      passphraseFrom(env)
+      passphraseFrom(env, prompt)
     );
   } else if (needKeys) {
     throw new Error("no keystore yet (run: keygen)");
@@ -326,10 +338,12 @@ function loadCtx(
 export async function run(
   argv: string[],
   io: CliIo,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  opts: { promptPassphrase?: () => string } = {}
 ): Promise<number> {
   const { command, dir, flags } = parseArgs(argv);
   const now = () => io.now();
+  const prompt = opts.promptPassphrase;
 
   if (command === "help") {
     io.print(helpText());
@@ -359,7 +373,17 @@ export async function run(
 
   if (command === "keygen") {
     const alias = str(flags, "alias");
-    const ctx = loadCtx(dir, env, now, false);
+    // Load existing keys when a keystore is present: sealing only the new
+    // key would silently delete every other alias (fail-closed, never
+    // clobber). First run has no keystore yet, so no passphrase is needed
+    // to load — only to seal.
+    const ctx = loadCtx(
+      dir,
+      env,
+      now,
+      existsSync(join(dir, "keystore.json")),
+      prompt
+    );
     if (ctx.keys[alias] !== undefined) {
       throw new Error(`key exists: ${alias}`);
     }
@@ -367,10 +391,50 @@ export async function run(
     ctx.keys[alias] = new Uint8Array(
       kp.privateKey.export({ format: "der", type: "pkcs8" })
     );
-    persistKeys(dir, env, ctx.keys);
+    persistKeys(dir, env, ctx.keys, prompt);
     io.print(
       `${alias}: ${Buffer.from(rawPublicKey(kp.publicKey)).toString("hex")}`
     );
+    return 0;
+  }
+
+  if (command === "rekey") {
+    // Rotate the keystore passphrase without re-issuing keys: open with
+    // the old passphrase, re-seal under the new one (fresh salt/IV), and
+    // overwrite only on success. New secret from PTF_NEW_PASSPHRASE /
+    // PTF_NEW_PASSPHRASE_FILE / prompt — never argv.
+    const kp = join(dir, "keystore.json");
+    let raw: string;
+    try {
+      raw = readFileSync(kp, "utf8");
+    } catch {
+      throw new Error(`no keystore yet at ${kp} (run: keygen)`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch {
+      throw new Error(`keystore corrupt: ${kp}`);
+    }
+    const oldPass = readPassphrase(
+      env,
+      ...(prompt !== undefined ? [{ prompt }] : [])
+    );
+    const newPass = readPassphrase(
+      {
+        PTF_PASSPHRASE: env["PTF_NEW_PASSPHRASE"],
+        PTF_PASSPHRASE_FILE: env["PTF_NEW_PASSPHRASE_FILE"],
+      },
+      ...(prompt !== undefined ? [{ prompt }] : [])
+    );
+    const resealed = resealKeystore(
+      parsed as Parameters<typeof resealKeystore>[0],
+      oldPass,
+      newPass
+    );
+    mkdirSync(dir, { recursive: true });
+    atomicWrite(kp, `${JSON.stringify(resealed)}\n`);
+    io.print(`rekeyed keystore at ${kp}`);
     return 0;
   }
 
@@ -378,7 +442,8 @@ export async function run(
     dir,
     env,
     now,
-    command === "pay" || command === "disclose"
+    command === "pay" || command === "disclose",
+    prompt
   );
 
   if (command === "recipient") {
@@ -776,6 +841,49 @@ export async function run(
   throw new Error(`unreachable command: ${command}`);
 }
 
+/**
+ * TTY passphrase prompt with echo disabled (ticket 04). Raw-mode byte loop
+ * over fd 0; Ctrl-C aborts, Backspace edits, Enter submits. Anything
+ * non-TTY throws with the env alternatives — never falls back to echoed
+ * input, which would defeat the point. stdlib only, no new dependency.
+ */
+function ttyPromptHidden(question: string): string {
+  const stdin = process.stdin;
+  if (stdin.isTTY !== true || typeof stdin.setRawMode !== "function") {
+    throw new Error(
+      "keystore: no TTY to prompt on — set PTF_PASSPHRASE or PTF_PASSPHRASE_FILE"
+    );
+  }
+  process.stdout.write(question);
+  stdin.setRawMode(true);
+  try {
+    let out = "";
+    const one = Buffer.alloc(1);
+    for (;;) {
+      const n = readSync(0, one, 0, 1, null);
+      if (n === 0) continue;
+      const ch = one[0] as number;
+      if (ch === 13 || ch === 10) break; // Enter
+      if (ch === 3) throw new Error("keystore: cancelled at prompt"); // Ctrl-C
+      if (ch === 127 || ch === 8) {
+        out = out.slice(0, -1);
+        continue;
+      }
+      if (ch >= 32) out += String.fromCharCode(ch);
+    }
+    return out;
+  } finally {
+    stdin.setRawMode(false);
+    process.stdout.write("\n");
+  }
+}
+
+function ttyPromptPassphrase(): string {
+  const pass = ttyPromptHidden("passphrase: ");
+  if (pass.length === 0) throw new Error("keystore: passphrase required");
+  return pass;
+}
+
 function main(): void {
   const io: CliIo = {
     readLine: () => readFileSync(0, "utf8").split("\n")[0]?.trim() ?? "",
@@ -783,7 +891,9 @@ function main(): void {
     now: () => Math.floor(Date.now() / 1000),
   };
   const env: Record<string, string | undefined> = { ...process.env };
-  run(process.argv.slice(2), io, env).then(
+  run(process.argv.slice(2), io, env, {
+    promptPassphrase: ttyPromptPassphrase,
+  }).then(
     (code) => {
       process.exitCode = code;
     },

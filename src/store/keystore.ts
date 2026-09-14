@@ -4,17 +4,29 @@ import {
   randomBytes,
   scryptSync,
 } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
 import { canonicalize } from "../core/canonical.js";
 
 /**
- * Reference host key custody (dev/test): passphrase-encrypted file keystore.
- * scrypt + AES-256-GCM, stdlib only. The passphrase arrives from the
+ * File key custody for the single-operator reference host:
+ * passphrase-encrypted file keystore, scrypt + AES-256-GCM, stdlib only. The passphrase arrives from the
  * environment and is never logged or stored. One blob per file: a single GCM
  * tag authenticates every entry at once. CLI/MCP call `sealKeystore` /
  * `openKeystore` directly; production hosts replace this file with OS
  * keychain / Enclave / 1Password / Bitwarden / HSM / KMS behind the
  * `KeyProvider` / `Signer` seams below — keys sign in place, so private
  * material never crosses into agent view (ADR-0006).
+ *
+ * Single-operator production story (ticket 04): passphrase sourcing via
+ * `readPassphrase` (env → 0600 file → interactive TTY prompt, never argv),
+ * rotation without re-issuing keys (`resealKeystore` + `ptf rekey`), and
+ * best-effort memory hygiene (`zeroize`). Residuals: JS cannot guarantee
+ * erasure (copies inside scrypt, immutable strings); `scryptSync` blocks
+ * the loop per open (accepted at operator scale — caching decrypted keys
+ * would trade confidentiality for latency); full HSM/KMS custody stays a
+ * host seam. Known limit: capability issuance needs the private `KeyObject`
+ * in-process, so external signers can only ever cover the proof-signing
+ * step without a deeper core redesign — recorded, not attempted here.
  */
 
 const VERSION = 1;
@@ -62,6 +74,72 @@ function passBytes(passphrase: string): Buffer {
   return Buffer.from(passphrase, "utf8");
 }
 
+/**
+ * Best-effort memory hygiene: overwrite a buffer in place. JS cannot
+ * guarantee erasure (copies live inside `scryptSync`, strings are
+ * immutable, GC may have moved bytes), so this shrinks secret lifetime
+ * rather than proving absence — callers still treat heap as sensitive
+ * (see the passphrase gap in THREATMODEL.md).
+ */
+export function zeroize(buf: Uint8Array): void {
+  buf.fill(0);
+}
+
+/**
+ * Production passphrase sourcing (ticket 04). Precedence, first non-empty
+ * wins: `PTF_PASSPHRASE` (legacy — convenient, but the secret then lives in
+ * the process environment: /proc, crash dumps, child inheritance) →
+ * `PTF_PASSPHRASE_FILE` (a file holding only the secret; group/other
+ * permission bits warn, they do not fail — Windows ACLs differ) →
+ * `opts.prompt` (interactive TTY entry, never echoed by the caller's
+ * prompt). Hosts without a TTY (MCP stdio) pass no prompt and get a clear
+ * error naming the two env options. Trailing CR/LF is trimmed (files
+ * written with `echo` carry a newline); anything else is significant.
+ */
+export function readPassphrase(
+  env: Record<string, string | undefined>,
+  opts: { prompt?: () => string; warn?: (msg: string) => void } = {}
+): string {
+  const direct = env["PTF_PASSPHRASE"];
+  if (direct !== undefined && direct.length > 0) return direct;
+  const file = env["PTF_PASSPHRASE_FILE"];
+  if (file !== undefined && file.length > 0) {
+    let st: { mode: number };
+    try {
+      st = statSync(file);
+    } catch {
+      throw new Error(`keystore: cannot stat PTF_PASSPHRASE_FILE: ${file}`);
+    }
+    if ((st.mode & 0o077) !== 0) {
+      const warn = opts.warn ?? ((): void => {});
+      warn(
+        `keystore: PTF_PASSPHRASE_FILE is group/other-readable (${(
+          st.mode & 0o777
+        ).toString(8)}) — chmod 600`
+      );
+    }
+    let raw: string;
+    try {
+      raw = readFileSync(file, "utf8");
+    } catch {
+      throw new Error(`keystore: cannot read PTF_PASSPHRASE_FILE: ${file}`);
+    }
+    const pass = raw.replace(/\r?\n$/, "");
+    if (pass.length === 0) {
+      throw new Error("keystore: PTF_PASSPHRASE_FILE is empty");
+    }
+    return pass;
+  }
+  if (opts.prompt !== undefined) {
+    const pass = opts.prompt();
+    if (pass.length === 0) throw new Error("keystore: passphrase required");
+    return pass;
+  }
+  throw new Error(
+    "keystore: set PTF_PASSPHRASE or PTF_PASSPHRASE_FILE (no TTY to prompt on)"
+  );
+}
+
 function checkKdf(kdf: KeystoreFile["kdf"]): { salt: Buffer } {
   if (
     kdf.name !== "scrypt" ||
@@ -94,12 +172,18 @@ export function sealKeystore(
       ? Buffer.from(saltHex, "hex")
       : randomBytes(SALT_BYTES);
   if (salt.length < 8) throw new Error("keystore: salt too short");
-  const key = scryptSync(passBytes(passphrase), salt, KEY_BYTES, {
-    N: SCRYPT_N,
-    r: SCRYPT_R,
-    p: SCRYPT_P,
-    maxmem: SCRYPT_MAXMEM,
-  });
+  const pass = passBytes(passphrase);
+  let key: Buffer;
+  try {
+    key = scryptSync(pass, salt, KEY_BYTES, {
+      N: SCRYPT_N,
+      r: SCRYPT_R,
+      p: SCRYPT_P,
+      maxmem: SCRYPT_MAXMEM,
+    });
+  } finally {
+    zeroize(pass);
+  }
   const iv = randomBytes(IV_BYTES);
   const plain: Record<string, string> = {};
   for (const [alias, raw] of Object.entries(entries)) {
@@ -135,12 +219,18 @@ export function openKeystore(
     throw new Error("keystore: unsupported version");
   }
   const { salt } = checkKdf(file.kdf);
-  const key = scryptSync(passBytes(passphrase), salt, KEY_BYTES, {
-    N: SCRYPT_N,
-    r: SCRYPT_R,
-    p: SCRYPT_P,
-    maxmem: SCRYPT_MAXMEM,
-  });
+  const pass = passBytes(passphrase);
+  let key: Buffer;
+  try {
+    key = scryptSync(pass, salt, KEY_BYTES, {
+      N: SCRYPT_N,
+      r: SCRYPT_R,
+      p: SCRYPT_P,
+      maxmem: SCRYPT_MAXMEM,
+    });
+  } finally {
+    zeroize(pass);
+  }
   for (const [field, want] of [
     ["ivHex", IV_BYTES * 2],
     ["tagHex", 16 * 2],
@@ -198,4 +288,26 @@ export function openKeystore(
     out[alias] = new Uint8Array(Buffer.from(hex, "hex"));
   }
   return out;
+}
+
+/**
+ * Passphrase rotation without re-issuing keys (ticket 04): open with the
+ * old passphrase, re-seal under the new one with a fresh salt/IV. Wrong
+ * old passphrase (or a tampered file) throws before anything is written —
+ * callers overwrite the file only on success.
+ */
+export function resealKeystore(
+  file: KeystoreFile,
+  oldPassphrase: string,
+  newPassphrase: string
+): KeystoreFile {
+  if (newPassphrase.length === 0) {
+    throw new Error("keystore: new passphrase required");
+  }
+  const entries = openKeystore(file, oldPassphrase);
+  try {
+    return sealKeystore(entries, newPassphrase);
+  } finally {
+    for (const raw of Object.values(entries)) zeroize(raw);
+  }
 }

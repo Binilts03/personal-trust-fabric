@@ -70,6 +70,12 @@ tested at the boundary.
   Torn-write window is minimized, not eliminated — keep backups of
   `ptf-store/` for high-value deployments.
 - `scryptSync` blocks the event loop per open; MCP `load()` does it per call.
-  Fine for operator scale, not for high-throughput servers.
-- Secrets are never zeroed in-memory (JS cannot guarantee it); passphrase
-  lives in env only, never argv/logs.
+  Accepted at operator scale (a decrypted-key cache would trade
+  confidentiality for latency — the wrong direction for a trust layer);
+  revisit if a high-throughput server path ever needs it.
+- Secrets get best-effort `zeroize` after KDF/rotation, but JS cannot
+  guarantee erasure (copies inside `scryptSync`, immutable strings, GC
+  relocation) — treat heap as sensitive. Passphrase sourcing avoids env
+  where possible (`PTF_PASSPHRASE_FILE`, TTY prompt); env remains supported
+  legacy, and HSM/KMS custody stays a host seam (issuance needs the private
+  key in-process — external signers cover proof-signing only).

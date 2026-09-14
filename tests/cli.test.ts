@@ -1,9 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs } from "../src/cli.js";
+import { openKeystore } from "../src/index.js";
+import { parseArgs, run } from "../src/cli.js";
 
 describe("operator CLI argument parsing (prod-03)", () => {
   it("parses commands, flags, and the store dir", () => {
@@ -70,5 +72,81 @@ describe("operator CLI argument parsing (prod-03)", () => {
       if (argv.length === 1 && argv[0] === "") continue;
       parseArgs(argv);
     }
+  });
+});
+
+function testIo(): {
+  io: { print: (l: string) => void; readLine: () => string; now: () => number };
+  out: string[];
+} {
+  const out: string[] = [];
+  return {
+    io: {
+      print: (l: string) => out.push(l),
+      readLine: () => "yes",
+      now: () => 1_700_000_000,
+    },
+    out,
+  };
+}
+
+function openAliases(dir: string, pass: string): string[] {
+  const ks = openKeystore(
+    JSON.parse(readFileSync(join(dir, "keystore.json"), "utf8")) as Parameters<
+      typeof openKeystore
+    >[0],
+    pass
+  );
+  return Object.keys(ks).sort();
+}
+
+describe("operator CLI custody (ticket 04)", () => {
+  it("a second keygen keeps the first key — never silent clobber", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-cli-"));
+    const { io } = testIo();
+    const env = { PTF_PASSPHRASE: "test-pass-123" };
+    assert.equal(await run(["--dir", dir, "init"], io, env), 0);
+    assert.equal(
+      await run(["--dir", dir, "keygen", "--alias", "you"], io, env),
+      0
+    );
+    assert.equal(
+      await run(["--dir", dir, "keygen", "--alias", "shop"], io, env),
+      0
+    );
+    assert.deepEqual(openAliases(dir, "test-pass-123"), ["shop", "you"]);
+  });
+
+  it("rekey rotates the passphrase with keys intact", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-cli-"));
+    const { io } = testIo();
+    await run(["--dir", dir, "init"], io, { PTF_PASSPHRASE: "old-pass" });
+    await run(["--dir", dir, "keygen", "--alias", "you"], io, {
+      PTF_PASSPHRASE: "old-pass",
+    });
+    assert.equal(
+      await run(["--dir", dir, "rekey"], io, {
+        PTF_PASSPHRASE: "old-pass",
+        PTF_NEW_PASSPHRASE: "brand-new-pass",
+      }),
+      0
+    );
+    assert.deepEqual(openAliases(dir, "brand-new-pass"), ["you"]);
+    assert.throws(() => openAliases(dir, "old-pass"));
+  });
+
+  it("keygen works from a passphrase file with no env secret", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-cli-"));
+    const pp = join(dir, "pp");
+    writeFileSync(pp, "file-pass\n", { mode: 0o600 });
+    const { io } = testIo();
+    await run(["--dir", dir, "init"], io, {});
+    assert.equal(
+      await run(["--dir", dir, "keygen", "--alias", "you"], io, {
+        PTF_PASSPHRASE_FILE: pp,
+      }),
+      0
+    );
+    assert.deepEqual(openAliases(dir, "file-pass"), ["you"]);
   });
 });

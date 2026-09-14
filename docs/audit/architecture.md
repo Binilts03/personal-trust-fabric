@@ -48,7 +48,9 @@ no lateral delegation.
   optimistic revision CAS (stale-handle saves fail closed, fresh instances
   may only create), corrupt→throw, audit chain verified on open.
 - `store/keystore`: scrypt N=16384/r=8/p=1 + AES-256-GCM single blob,
-  params pinned, strict hex, passphrase from caller only.
+  params pinned, strict hex, passphrase from env/file/TTY-prompt only
+  (`readPassphrase`), rotation via `resealKeystore`/`ptf rekey`,
+  best-effort `zeroize` (JS erasure limits documented).
 - `cli.ts`: wiring over tested modules (manual argv, stdin/stdout, `--help`
   / `--version`, unknown-flag rejection, `init` no-overwrite).
 - `mcp-server.ts`: official SDK stdio; `propose` (dry-run, status `pending`),
