@@ -83,9 +83,11 @@ free, no squatting.
       Publishers → GitHub Actions → org/user `Binilts03`, repo
       `personal-trust-fabric`, workflow `release.yml` (add a `publish.yml`
       later if publish should ride separately from the GitHub Release).
-- [ ] `npm pack --dry-run` lists exactly: `package.json`, `README.md`,
-      `LICENSE`, `dist/` (+ bins `ptf`, `ptf-mcp-server`) — re-check at
-      publish time (ticket 09 narrows this further).
+- [x] `npm pack --dry-run` lists exactly: runtime `dist/` (75 files —
+      `dist/tests/**` and `**/*.map` excluded via `files` negation, ticket 09)
+  - `package.json` + `README.md` + `LICENSE`, with bins `ptf`,
+    `ptf-mcp-server`, `ptf-pdp-server` — blank-dir install smoke-tested
+    (CLI `--help`, `import()` + all three subpaths resolve).
 - [ ] Publish: `npm publish --access public` from a tagged CI run
       (provenance auto-attached for public packages). Never `npm publish`
       from a laptop with a stored token.
