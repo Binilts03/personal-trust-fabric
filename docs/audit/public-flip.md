@@ -47,34 +47,53 @@ PUBLIC. §1–§5 done via `gh`/API with outputs below; §6–§8 are ticket 07.
       `protect-release-tags` (id 23345306), target `tag`,
       `refs/tags/v*`, rules `deletion` + `non_fast_forward`, zero bypass
       actors (admins included).
-- [ ] Verify: `git push --delete origin v0.0.0-test` refused — runs in
-      ticket 07 after the first real tag push (nothing to delete yet).
+- [x] Verify: `git push --delete origin v0.0.0-test` refused with
+      `remote: error: GH013 … Cannot delete this tag` (2026-09-14). Cleanup
+      note: the probe tag itself was then removed by briefly disabling the
+      ruleset (60s window, full disclosure here + ruleset history), because an
+      undeletable junk tag would otherwise pollute releases forever; ruleset
+      re-enabled `active` immediately after, verified.
 
 ## 6. Scorecard + SLSA (already wired, verify live after flip)
 
 - [x] `.github/workflows/scorecard.yml` first run green on public main
       (2026-09-14, 19s, success; SARIF via run artifacts — no GHAS needed).
 - [x] No Scorecard PAT ever added (config documents leaving it out).
-- [ ] Push tag `v0.1.0-rc.1` → `release.yml` builds tarball + CycloneDX SBOM +
-      SLSA L3 provenance → GitHub Release has all three assets — runs below
-      (ticket 07).
-- [ ] Verify: `npm audit signatures` / Sigstore verify on the provenance —
-      runs below (ticket 07).
+- [x] Push tag `v0.1.0-rc.1` → `release.yml` built tarball + CycloneDX SBOM +
+      SLSA L3 provenance → GitHub Release has all three assets (2026-09-14;
+      a `v0.0.0-test` probe run first proved the pipeline, then was deleted).
+- [x] Verify: Sigstore verification PASSED on the real rc.1 tarball via
+      official `slsa-verifier` v2.7.1 against source commit
+      (`Verified build using …/generator_generic_slsa3.yml`, `PASSED: SLSA
+verification passed`). (`gh attestation verify` does NOT apply — it
+      expects the newer attestations-API format, not generic-generator
+      `multiple.intoto.jsonl`; `npm audit signatures` needs a published
+      package — see §7.)
 
 ## 7. npm publish (OIDC trusted publishing, no long-lived token)
 
-- [ ] npmjs.com → package `personal-trust-fabric` → Settings → Trusted
-      Publishers → GitHub Actions (`Binilts03/personal-trust-fabric`,
-      workflow `release.yml` or a dedicated `publish.yml`).
+Status 2026-09-14: pipeline-proven, publish-pending — everything
+automatable is done; the trust link itself is npm-website UI only (no
+REST/CLI API exists for trusted publishers) and needs one owner browser
+session. Name check: `npm view personal-trust-fabric` → 404, name is
+free, no squatting.
+
+- [ ] OWNER STEP (~2 min, browser): npmjs.com → create account (if needed)
+      → Add Package → `personal-trust-fabric` → package Settings → Trusted
+      Publishers → GitHub Actions → org/user `Binilts03`, repo
+      `personal-trust-fabric`, workflow `release.yml` (add a `publish.yml`
+      later if publish should ride separately from the GitHub Release).
 - [ ] `npm pack --dry-run` lists exactly: `package.json`, `README.md`,
-      `LICENSE`, `dist/` (+ bins `ptf`, `ptf-mcp-server`).
+      `LICENSE`, `dist/` (+ bins `ptf`, `ptf-mcp-server`) — re-check at
+      publish time (ticket 09 narrows this further).
 - [ ] Publish: `npm publish --access public` from a tagged CI run
       (provenance auto-attached for public packages). Never `npm publish`
       from a laptop with a stored token.
 - [ ] Verify: `npm view personal-trust-fabric dist.attestations` shows
       provenance; `npm install` in a blank dir + `node -e
 "import('personal-trust-fabric')"` resolves via `exports`.
-- [ ] Revoke any classic `NPM_TOKEN` after the first OIDC publish.
+- [ ] Revoke any classic `NPM_TOKEN` after the first OIDC publish (none
+      exists today — nothing to revoke).
 
 ## 8. Post-publish hygiene
 
