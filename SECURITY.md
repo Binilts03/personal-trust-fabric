@@ -8,7 +8,11 @@
 
 ## Reporting a vulnerability
 
-Open a **private** report via the tracker maintainers publish on release (GitHub private advisory once public; until then contact the maintainer directly — do not file a public issue). Include: affected version/commit, reproduction steps, impact (spend/disclosure/signing), and whether secrets are involved.
+Open a **private** report via
+[GitHub private vulnerability reporting](https://github.com/Binilts03/personal-trust-fabric/security/advisories/new)
+(Security tab → “Report a vulnerability”) — do not file a public issue.
+Include: affected version/commit, reproduction steps, impact
+(spend/disclosure/signing), and whether secrets are involved.
 
 Target response: acknowledge within 72h, fix + advisory + rotated test vectors as needed.
 
