@@ -1,35 +1,54 @@
 # Public-flip + publish checklist (verifiable actions)
 
-Status: repo is `Binilts03/personal-trust-fabric` (private). Server-side
-hardening below is free on public repos, blocked on free-private (proven
-403s during setup). Flip to public first, then tick each box.
+Status (2026-09-14, ticket 06): repo `Binilts03/personal-trust-fabric` is
+PUBLIC. §1–§5 done via `gh`/API with outputs below; §6–§8 are ticket 07.
 
 ## 1. Flip to public
 
-- [ ] GitHub → Settings → Danger Zone → Change visibility → Public.
-- [ ] Verify: repo badge shows Public; `gh repo view` succeeds anonymously.
+- [x] `gh repo edit --visibility public` (2026-09-14).
+- [x] Verify: anonymous `api.github.com/repos/...` → `private: false`,
+      `visibility: public`; repo page HTTP 200 unauthenticated.
 
-## 2. Branch protection (Settings → Branches → Add rule for `main`)
+## 2. Branch protection (`main`, via API — ticket 06)
 
-- [ ] Require PR before merging; require status checks: `gate`, `secrets`.
-- [ ] Require linear history (or squash-merge only).
-- [ ] Do not allow bypassing the above (include admins).
-- [ ] Verify: `gh api repos/{owner}/{repo}/branches/main/protection` shows the rule.
+- [x] Strict required status checks `gate` + `secrets`; linear history;
+      force-push + deletion blocked; no bypass, admins included.
+- [x] Verify: `branches/main/protection` GET shows all of the above.
+- [x] Deliberate deviation recorded: NO required-approval count. A
+      single-maintainer repo deadlocks on `required_approving_review_count ≥ 1`
+      (self-approval never counts, no bypass allowed) — revisit when a second
+      maintainer joins. Status checks + linear history + no-bypass still gate
+      every merge.
 
 ## 3. Secret scanning
 
-- [ ] Settings → Security → Enable secret scanning + push protection.
-- [ ] Verify: push a fake sentinel in a scratch branch → blocked with 403.
+- [x] API PATCH: `secret_scanning` + `secret_scanning_push_protection`
+      `enabled` (GET-verified).
+- [x] Live-fire verified: after ~20 min propagation, a Stripe-shaped fake
+      secret on scratch branch `probe/push-protection-test` was refused with
+      `remote: error: GH013 … Push cannot contain secrets`. (Earlier AWS/`ghp_`
+      fakes landed — pattern nuances/propagation, not a bypass; the GH013 hit
+      is the proof.) Branch deleted locally + remotely afterwards; commits held
+      fake (invalid) values only.
 
 ## 4. Private vulnerability reporting
 
-- [ ] Settings → Security → Enable private vulnerability reporting.
-- [ ] Verify: Security tab shows “Report a vulnerability”.
+- [x] Enabled via REST (`PUT
+/repos/{owner}/{repo}/private-vulnerability-reporting` → GET
+      `{"enabled":true}`; discovered via docs — there is no
+      `security_and_analysis` key for it).
+- [x] Verify: advisories page does not render the button anonymously
+      (expected — reporting requires login); API state is the proof.
 
 ## 5. Tag protection (`v*`)
 
-- [ ] Settings → Tags → Add `v*` protection (deletion restricted).
-- [ ] Verify: `git push --delete origin v0.0.0-test` refused.
+- [x] Legacy `tags/protection` endpoint is retired (404 — removed Aug
+      2024); implemented as an active repository ruleset instead:
+      `protect-release-tags` (id 23345306), target `tag`,
+      `refs/tags/v*`, rules `deletion` + `non_fast_forward`, zero bypass
+      actors (admins included).
+- [ ] Verify: `git push --delete origin v0.0.0-test` refused — runs in
+      ticket 07 after the first real tag push (nothing to delete yet).
 
 ## 6. Scorecard + SLSA (already wired, verify live after flip)
 
@@ -52,7 +71,7 @@ hardening below is free on public repos, blocked on free-private (proven
       from a laptop with a stored token.
 - [ ] Verify: `npm view personal-trust-fabric dist.attestations` shows
       provenance; `npm install` in a blank dir + `node -e
-    "import('personal-trust-fabric')"` resolves via `exports`.
+  "import('personal-trust-fabric')"` resolves via `exports`.
 - [ ] Revoke any classic `NPM_TOKEN` after the first OIDC publish.
 
 ## 8. Post-publish hygiene
