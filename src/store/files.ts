@@ -17,12 +17,22 @@ import { canonicalize } from "../core/canonical.js";
 import { RecipientRegistry } from "../core/identity.js";
 
 /**
- * Durable JSON stores for a single operator (prod-01).
+ * Durable JSON stores for a single operator (prod-01) with optimistic
+ * concurrency (ticket 02): every authority/registry file carries a
+ * `revision` bumped atomically with the data on each write. A save whose
+ * instance revision no longer matches the file fails closed ("changed
+ * under us — reload and retry") instead of last-write-wins. A pristine
+ * (never loaded, never saved) instance may only create a missing file —
+ * never overwrite one it never read, and never resurrect a deleted store.
+ * Callers follow load → mutate → save on a fresh handle per mutation; the
+ * MCP server and CLI already do (each tool call / invocation reloads).
+ *
  * Atomic writes via tmp-file rename with a per-write random suffix;
- * fsync best-effort (POSIX durable, Windows rename is not atomic-replace —
- * single-operator ceiling documented in the prod spec). No locking —
- * concurrent writers (e.g. two MCP clients) can lost-update; use one writer
- * or external locking. Corrupt or missing files fail closed.
+ * fsync best-effort (POSIX durable, Windows rename is not atomic-replace).
+ * Corrupt or missing files fail closed. The audit log stays append-only:
+ * concurrent appends both land (each `open` verifies the chain, so a fork
+ * fails loudly on next open rather than silently) — the money path is
+ * guarded by the authority CAS above, which throws before any receipt.
  */
 export function atomicWrite(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -56,7 +66,70 @@ function parseFile(path: string, what: string): unknown {
 }
 
 export function saveAuthority(dir: string, auth: Authority): void {
-  atomicWrite(join(dir, "authority.json"), JSON.stringify(auth.snapshot()));
+  atomicWrite(
+    join(dir, "authority.json"),
+    JSON.stringify(withNextRevision(dir, "authority.json", auth))
+  );
+}
+
+/**
+ * Compare-and-swap a snapshot file: the instance must have loaded the
+ * revision currently on disk (fresh instances start at 0 and may only
+ * create a missing file). Returns the snapshot stamped with the next
+ * revision and adopts it on the instance — one atomic file write commits
+ * data + revision together, so a crash can never advance one without
+ * the other.
+ */
+function withNextRevision(
+  dir: string,
+  file: "authority.json" | "registry.json",
+  store: {
+    snapshot(): { readonly revision: number };
+    loadedRevision(): number;
+    hasKnownLineage(): boolean;
+    adoptRevision(rev: number): void;
+  }
+): { readonly revision: number } {
+  const path = join(dir, file);
+  const what = file === "authority.json" ? "authority" : "registry";
+  if (!existsSync(path)) {
+    // Only a pristine instance (never loaded, never saved) may create a
+    // missing file. Anything else means the store was deleted under us —
+    // resurrecting stale state over the deletion would fork the lineage.
+    if (store.loadedRevision() !== 0 || store.hasKnownLineage()) {
+      throw new Error(
+        `${what} store missing: ${path} (instance at revision ${store.loadedRevision()} — the store was deleted under us; refusing to resurrect stale state — re-init deliberately)`
+      );
+    }
+    const stamped = { ...store.snapshot(), revision: 0 };
+    store.adoptRevision(0);
+    return stamped;
+  }
+  const parsed = parseFile(path, what) as Record<string, unknown>;
+  const current: unknown = parsed["revision"];
+  // Pre-revision files (no field) read as 0 — same default `restore` uses,
+  // so old stores upgrade on first write instead of failing.
+  const currentRev =
+    current === undefined
+      ? 0
+      : typeof current === "number" && Number.isInteger(current) && current >= 0
+        ? current
+        : (() => {
+            throw new Error(`${what} store corrupt: ${path} (bad revision)`);
+          })();
+  if (currentRev !== store.loadedRevision()) {
+    throw new Error(
+      `${what} store changed under us (file revision ${currentRev}, loaded ${store.loadedRevision()}) — reload and retry, never overwrite`
+    );
+  }
+  if (currentRev === 0 && !store.hasKnownLineage()) {
+    throw new Error(
+      `${what} store exists at ${path} but this instance never loaded it — refusing a fresh overwrite (load first, or init a new dir)`
+    );
+  }
+  const stamped = { ...store.snapshot(), revision: currentRev + 1 };
+  store.adoptRevision(currentRev + 1);
+  return stamped;
 }
 
 export function loadAuthority(
@@ -70,7 +143,10 @@ export function loadAuthority(
 }
 
 export function saveRegistry(dir: string, reg: RecipientRegistry): void {
-  atomicWrite(join(dir, "registry.json"), JSON.stringify(reg.snapshot()));
+  atomicWrite(
+    join(dir, "registry.json"),
+    JSON.stringify(withNextRevision(dir, "registry.json", reg))
+  );
 }
 
 export function loadRegistry(

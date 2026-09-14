@@ -643,6 +643,13 @@ export interface AuthoritySnapshot {
   readonly revoked: [string, number | null][];
   readonly used: [string, number][];
   readonly issued: [string, string[]][];
+  /**
+   * Optimistic-concurrency revision (ticket 02). Bumped by the store layer
+   * on every durable write; `saveAuthority` refuses to overwrite a revision
+   * it did not load, so concurrent writers fail closed instead of
+   * last-write-wins. Absent (pre-revision snapshots) means 0.
+   */
+  readonly revision: number;
 }
 
 export class Authority {
@@ -655,6 +662,17 @@ export class Authority {
   private readonly nowSec: () => number;
   private readonly onRevoke:
     ((capabilityRevocationIds: string[]) => void) | undefined;
+  /**
+   * Revision this instance was restored at (0 for fresh instances).
+   * Compared — never merged — by the store layer on save (ticket 02).
+   */
+  private snapshotRevision = 0;
+  /**
+   * Whether this instance descends from a durable read or write. Fresh
+   * in-memory instances may only create a missing file — never overwrite
+   * an existing store they never loaded (operator-error clobber).
+   */
+  private knownLineage = false;
 
   constructor(
     opts: {
@@ -943,7 +961,37 @@ export class Authority {
       issued: [...this.issued.entries()].map(
         ([k, v]) => [k, [...v]] as [string, string[]]
       ),
+      revision: this.snapshotRevision,
     };
+  }
+
+  /**
+   * Revision this instance was restored at (0 for fresh instances).
+   * The store layer compares it against the file revision on save and
+   * refuses mismatches — callers must reload, never forge it forward.
+   */
+  loadedRevision(): number {
+    return this.snapshotRevision;
+  }
+
+  /**
+   * Adopt a revision after a successful durable write. Store-layer use
+   * only (`saveAuthority` calls this after its compare-and-swap succeeds).
+   */
+  adoptRevision(rev: number): void {
+    if (!Number.isInteger(rev) || rev < 0) {
+      throw new Error("authority: bad snapshot revision");
+    }
+    this.snapshotRevision = rev;
+    this.knownLineage = true;
+  }
+
+  /**
+   * Whether this instance descends from a durable read or write. The
+   * store layer refuses a fresh instance overwriting an existing file.
+   */
+  hasKnownLineage(): boolean {
+    return this.knownLineage;
   }
 
   /** Restore from a snapshot, validating through the same gates as live input. */
@@ -959,6 +1007,14 @@ export class Authority {
     }
     const snap = data as Record<string, unknown>;
     const auth = new Authority(opts ?? {});
+    auth.knownLineage = true;
+    const rev: unknown = snap["revision"];
+    if (rev !== undefined) {
+      if (!Number.isInteger(rev) || (rev as number) < 0) {
+        throw new Error("authority snapshot: bad revision");
+      }
+      auth.adoptRevision(rev as number);
+    }
     for (const key of ["grants", "approvals", "policies"] as const) {
       if (!Array.isArray(snap[key]))
         throw new Error(`authority snapshot: ${key} must be an array`);

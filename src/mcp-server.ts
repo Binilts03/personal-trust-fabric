@@ -41,12 +41,16 @@ import type {
  * human-side (CLI) or ahead of time (standing grants). The server never mints
  * authority from an agent call — it only spends what already exists.
  *
- * CONCURRENCY + DURABILITY CEILING (single writer): proposals + pending
- * challenges live in memory with TTLs and are lost on restart (fail-closed:
- * check → unknown, redeem → propose again). Authority/registry/audit are
- * reloaded per call and saved on success; concurrent redeems can lost-update
- * (last write wins). Run one server per store, or add external locking.
- * Receipts survive restarts in audit.jsonl; proposal status does not.
+ * CONCURRENCY (optimistic revision CAS, ticket 02): authority/registry
+ * files carry a `revision` bumped atomically with the data on each write.
+ * A save whose handle no longer matches the file fails closed ("changed
+ * under us — reload and retry") instead of last-write-wins, so concurrent
+ * redeems cannot double-spend single-use authority: the loser errors
+ * visibly before any receipt. Callers retry on a fresh handle (each tool
+ * call here already reloads). Proposals + pending challenges stay in
+ * memory with TTLs and are lost on restart (fail-closed: check → unknown,
+ * redeem → propose again). Receipts survive restarts in audit.jsonl;
+ * proposal status does not.
  *
  * IDENTITY (ADR-0013): the server speaks for ONE fixed identity — principal
  * + actor are pinned at instantiation (`PtfServerOptions`, from

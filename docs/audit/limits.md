@@ -6,8 +6,13 @@ tested at the boundary.
 ## Authority / execution
 
 - `FakePaymentExecutor` moves no money. Real PSP wiring is out of scope.
-- Single-writer stores: concurrent MCP redeems can lost-update (last write
-  wins). Run one server per store or add external locking.
+- Single-writer discipline with enforced CAS: authority/registry files carry
+  a `revision` bumped atomically with the data; a stale handle's save fails
+  closed ("changed under us — reload and retry") instead of last-write-wins,
+  so concurrent redeems cannot double-spend. Fresh instances may only create
+  a missing store, never overwrite one they never loaded. One server per
+  store is still the supported topology; the CAS is the backstop, and audit
+  forks (concurrent appends) fail loudly at next chain verify, never silently.
 - In-memory MCP proposals/challenges: lost on restart (fail-closed →
   `unknown`, propose again). Receipts survive in `audit.jsonl`.
 - Audit is tamper-evident (hash chain, opt HMAC), not independently anchored.

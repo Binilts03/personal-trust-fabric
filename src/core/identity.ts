@@ -24,6 +24,11 @@ export interface RegistrySnapshot {
       readonly revoked: boolean;
     }[];
   }[];
+  /**
+   * Optimistic-concurrency revision (ticket 02, same contract as
+   * `AuthoritySnapshot.revision`). Absent (pre-revision snapshots) means 0.
+   */
+  readonly revision: number;
 }
 
 interface Binding extends BindingSnapshot {
@@ -34,6 +39,17 @@ interface Binding extends BindingSnapshot {
 export class RecipientRegistry {
   private readonly bindings = new Map<string, Binding[]>();
   private readonly nowSec: () => number;
+  /**
+   * Revision this instance was restored at (0 for fresh instances).
+   * Compared — never merged — by the store layer on save (ticket 02).
+   */
+  private snapshotRevision = 0;
+  /**
+   * Whether this instance descends from a durable read or write. Fresh
+   * in-memory instances may only create a missing file — never overwrite
+   * an existing store they never loaded (operator-error clobber).
+   */
+  private knownLineage = false;
 
   constructor(nowSec: () => number = () => Math.floor(Date.now() / 1000)) {
     this.nowSec = nowSec;
@@ -128,7 +144,37 @@ export class RecipientRegistry {
           revoked: b.revoked,
         })),
       })),
+      revision: this.snapshotRevision,
     };
+  }
+
+  /**
+   * Revision this instance was restored at (0 for fresh instances).
+   * The store layer compares it against the file revision on save and
+   * refuses mismatches — callers must reload, never forge it forward.
+   */
+  loadedRevision(): number {
+    return this.snapshotRevision;
+  }
+
+  /**
+   * Adopt a revision after a successful durable write. Store-layer use
+   * only (`saveRegistry` calls this after its compare-and-swap succeeds).
+   */
+  adoptRevision(rev: number): void {
+    if (!Number.isInteger(rev) || rev < 0) {
+      throw new Error("registry: bad snapshot revision");
+    }
+    this.snapshotRevision = rev;
+    this.knownLineage = true;
+  }
+
+  /**
+   * Whether this instance descends from a durable read or write. The
+   * store layer refuses a fresh instance overwriting an existing file.
+   */
+  hasKnownLineage(): boolean {
+    return this.knownLineage;
   }
 
   /** Restore from a snapshot, validating key material. Unknown aliases stay absent. */
@@ -143,6 +189,14 @@ export class RecipientRegistry {
     if (!Array.isArray(bindings))
       throw new Error("registry snapshot: bindings must be an array");
     const reg = new RecipientRegistry(nowSec);
+    reg.knownLineage = true;
+    const rev: unknown = (data as Record<string, unknown>)["revision"];
+    if (rev !== undefined) {
+      if (!Number.isInteger(rev) || (rev as number) < 0) {
+        throw new Error("registry snapshot: bad revision");
+      }
+      reg.adoptRevision(rev as number);
+    }
     for (const entry of bindings) {
       if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
         throw new Error("registry snapshot: bad binding");

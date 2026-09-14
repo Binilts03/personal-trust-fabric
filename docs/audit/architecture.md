@@ -44,7 +44,8 @@ no lateral delegation.
   (re-issue before revoking old); revocation retires the alias.
 - `adapters/*`: fail-closed parsers + verifiers (see `limits.md` for subsets).
 - `store/files`: `atomicWrite` (tmp+random+0600+fsync-best-effort+rename),
-  single-writer ceiling, corrupt→throw, audit chain verified on open.
+  optimistic revision CAS (stale-handle saves fail closed, fresh instances
+  may only create), corrupt→throw, audit chain verified on open.
 - `store/keystore`: scrypt N=16384/r=8/p=1 + AES-256-GCM single blob,
   params pinned, strict hex, passphrase from caller only.
 - `cli.ts`: wiring over tested modules (manual argv, stdin/stdout, `--help`
