@@ -19,8 +19,11 @@ tested at the boundary.
   Third-party verifiability needs external anchoring (ADR-0006).
 - Rotation is a hard cutover: re-issue under the new key before revoking the
   old; in-flight caps bound to the old key fail closed.
-- `executeAndReceipt` cannot prove freshness — redeem immediately before
-  executing (documented at the function).
+- `executeAndReceipt` cannot prove freshness — consumption persists BEFORE
+  executing in both bins (ticket 05), so a crash or failing rail between
+  persist and execute burns a use without a receipt (safe direction: the
+  retry denies `uses-exhausted`, it never double-spends). Redeem
+  immediately before executing all the same; live rails stay host duty.
 - Unbounded `/pay*` standing grants rejected at `addGrant` (soft guard) — add
   a `.context.amount` ceiling or use a one-time exact-terms approval.
 - Rollback is detected, not prevented: every audit entry commits to the

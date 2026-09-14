@@ -17,6 +17,8 @@ import {
   loadRegistry,
   openKeystore,
   privateKeyFromPkcs8,
+  publicKeyFromPrivate,
+  rawPublicKey,
   readPassphrase,
   renderProposal,
   saveAuthority,
@@ -27,6 +29,7 @@ import { readFileSync } from "node:fs";
 import type {
   AuthorityOperation,
   AuthorityRequest,
+  PaymentExecutor,
   SealedCapability,
   VerifiedIdentity,
 } from "./index.js";
@@ -73,6 +76,11 @@ export interface PtfServerOptions {
   readonly principal: string;
   /** Fixed verified actor. Every evaluation binds this — callers cannot. */
   readonly actor: string;
+  /**
+   * Value-movement rail, injectable for fault-injection tests; production
+   * hosts supply their own PaymentExecutor (ticket 05).
+   */
+  readonly executor?: PaymentExecutor;
 }
 
 interface Proposal {
@@ -109,10 +117,36 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
+/**
+ * Issuer/recipient key resolution for capability checks (ticket 05; same
+ * contract as the CLI helper of the same name). Registry authoritative;
+ * known-but-retired stays retired; truly unknown ids fall back to
+ * locally-held keys so the operator's own issuance verifies. Proofs still
+ * need private keys that never leave the host.
+ */
+function resolveKeyWithLocalFallback(
+  reg: RecipientRegistry,
+  keys: Record<string, Uint8Array>
+): (id: string) => Uint8Array | null {
+  return (id: string): Uint8Array | null => {
+    const bound = reg.resolve(id);
+    if (bound !== null) return bound;
+    if (reg.history(id) !== null) return null;
+    const seed = keys[id];
+    if (seed === undefined) return null;
+    try {
+      return rawPublicKey(publicKeyFromPrivate(privateKeyFromPkcs8(seed)));
+    } catch {
+      return null;
+    }
+  };
+}
+
 export function createPtfServer(opts: PtfServerOptions): McpServer {
   const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
   if (opts.principal.length === 0) fail("server principal is required");
   if (opts.actor.length === 0) fail("server actor is required");
+  const executor = opts.executor ?? new FakePaymentExecutor();
   // Fixed verified ingress: stdio is local-only (see module header).
   const ingress: VerifiedIdentity = {
     id: opts.actor,
@@ -356,7 +390,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         fail(`server holds no key for principal ${demand.principal}`);
       const principalPriv = privateKeyFromPkcs8(seed);
       const caps = new Capabilities({
-        resolveKey: (id: string) => reg.resolve(id),
+        resolveKey: resolveKeyWithLocalFallback(reg, keys),
         nowSec: now,
       });
       if (
@@ -466,8 +500,13 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         proposal.status = "denied";
         fail(`authority denied at redeem time: ${decision.reason}`);
       }
+      // Persist the consumption BEFORE executing (ticket 05): a crash or a
+      // failing rail between persist and execute can only burn a use, never
+      // double-spend — the safe direction. CAS failure here fails the redeem
+      // closed before any money moves.
+      saveAuthority(opts.dir, auth);
       const receipt = await executeAndReceipt(
-        new FakePaymentExecutor(),
+        executor,
         {
           capabilityId: leafCidHex(challenge.cap),
           recipient,
@@ -479,10 +518,8 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         redeemed,
         now()
       );
-      // Persist authority BEFORE audit: a crash between must not replay.
-      // (Authority consumed + no receipt is safe; receipt + unconsumed is not.)
-      // The entry stamps post-save revisions for the load-time freshness check.
-      saveAuthority(opts.dir, auth);
+      // Authority already persisted above: the entry stamps the post-save
+      // revisions so a later file rollback fails the freshness check.
       audit.append({
         actor: agent,
         action: "redeem",

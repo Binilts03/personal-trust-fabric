@@ -42,6 +42,7 @@ import type {
   AttributeBound,
   AuthorityOperation,
   AuthorityRequest,
+  PaymentExecutor,
   VerifiedIdentity,
 } from "./index.js";
 import type { KeyObject } from "node:crypto";
@@ -57,6 +58,34 @@ import type { KeyObject } from "node:crypto";
 /** Private keys live in the keystore as PKCS#8 DER; rebuild them on use. */
 function toPrivateKey(der: Uint8Array): KeyObject {
   return privateKeyFromPkcs8(der);
+}
+
+/**
+ * Issuer/recipient key resolution for capability checks (ticket 05). The
+ * registry is authoritative: a known-but-retired alias stays retired (null,
+ * no fallback — revocation must keep failing closed). Truly unknown ids
+ * fall back to locally-held keys, because issuers are the operator's own
+ * identities and the quickstart never registers the principal as a
+ * "recipient". This changes nothing for attackers: proofs still need the
+ * private key, which never leaves the host; it only stops the operator's
+ * own issuance from failing closed against itself.
+ */
+function resolveKeyWithLocalFallback(
+  reg: RecipientRegistry,
+  keys: Record<string, Uint8Array>
+): (id: string) => Uint8Array | null {
+  return (id: string): Uint8Array | null => {
+    const bound = reg.resolve(id);
+    if (bound !== null) return bound;
+    if (reg.history(id) !== null) return null;
+    const seed = keys[id];
+    if (seed === undefined) return null;
+    try {
+      return rawPublicKey(publicKeyFromPrivate(toPrivateKey(seed)));
+    } catch {
+      return null;
+    }
+  };
 }
 
 const COMMANDS = [
@@ -339,11 +368,14 @@ export async function run(
   argv: string[],
   io: CliIo,
   env: Record<string, string | undefined>,
-  opts: { promptPassphrase?: () => string } = {}
+  opts: { promptPassphrase?: () => string; executor?: PaymentExecutor } = {}
 ): Promise<number> {
   const { command, dir, flags } = parseArgs(argv);
   const now = () => io.now();
   const prompt = opts.promptPassphrase;
+  // Value-movement rail, injectable for fault-injection tests; production
+  // hosts supply their own PaymentExecutor (ticket 05).
+  const executor = opts.executor ?? new FakePaymentExecutor();
 
   if (command === "help") {
     io.print(helpText());
@@ -629,8 +661,13 @@ export async function run(
       io.print(`denied at redeem time: ${decision.reason}`);
       return 1;
     }
+    // Persist the consumption BEFORE executing (ticket 05): a crash or a
+    // failing rail between persist and execute can only burn a use, never
+    // double-spend — the safe direction. A failed execute therefore denies
+    // the retry (uses-exhausted), it does not refund it.
+    persistState(ctx);
     const capabilities = new Capabilities({
-      resolveKey: (id: string) => ctx.reg.resolve(id),
+      resolveKey: resolveKeyWithLocalFallback(ctx.reg, ctx.keys),
       nowSec: now,
     });
     const cap = capabilities.issue(
@@ -676,7 +713,7 @@ export async function run(
       return 1;
     }
     const receipt = await executeAndReceipt(
-      new FakePaymentExecutor(),
+      executor,
       {
         capabilityId: leafCidHex(cap),
         recipient,
@@ -691,11 +728,8 @@ export async function run(
     const cited = decision.allow
       ? decision.citations[0]?.authorityId
       : undefined;
-    // Persist BEFORE audit: a crash between must not replay (authority
-    // consumed + no receipt is safe; receipt + unconsumed is not — same
-    // order as the MCP server). The entry stamps the post-save revisions
-    // so a later file rollback fails the freshness check at load.
-    persistState(ctx);
+    // Authority already persisted above; the entry stamps the post-save
+    // revisions so a later file rollback fails the freshness check at load.
     ctx.audit.append({
       actor: agent,
       action: "pay",

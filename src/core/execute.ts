@@ -54,7 +54,8 @@ export interface Receipt {
  * The result is bound to the redeemed leaf (`chainId` must equal
  * `instruction.capabilityId`); a bare `{ok:true}` or a redemption for a
  * different capability is rejected. (It cannot prove freshness — redeem
- * immediately before executing.)
+ * immediately before executing. Callers persist consumption BEFORE calling
+ * this, so a crash/failing rail burns a use instead of double-spending.)
  */
 export async function executeAndReceipt(
   executor: PaymentExecutor,
