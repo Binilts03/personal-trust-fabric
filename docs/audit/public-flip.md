@@ -52,12 +52,14 @@ PUBLIC. §1–§5 done via `gh`/API with outputs below; §6–§8 are ticket 07.
 
 ## 6. Scorecard + SLSA (already wired, verify live after flip)
 
-- [ ] `.github/workflows/scorecard.yml` first run green (needs public repo for
-      code-upload; SARIF via run artifacts until then).
-- [ ] Remove any Scorecard PAT if added as a workaround (public needs none).
+- [x] `.github/workflows/scorecard.yml` first run green on public main
+      (2026-09-14, 19s, success; SARIF via run artifacts — no GHAS needed).
+- [x] No Scorecard PAT ever added (config documents leaving it out).
 - [ ] Push tag `v0.1.0-rc.1` → `release.yml` builds tarball + CycloneDX SBOM +
-      SLSA L3 provenance → GitHub Release has all three assets.
-- [ ] Verify: `npm audit signatures` / Sigstore verify on the provenance.
+      SLSA L3 provenance → GitHub Release has all three assets — runs below
+      (ticket 07).
+- [ ] Verify: `npm audit signatures` / Sigstore verify on the provenance —
+      runs below (ticket 07).
 
 ## 7. npm publish (OIDC trusted publishing, no long-lived token)
 
@@ -71,7 +73,7 @@ PUBLIC. §1–§5 done via `gh`/API with outputs below; §6–§8 are ticket 07.
       from a laptop with a stored token.
 - [ ] Verify: `npm view personal-trust-fabric dist.attestations` shows
       provenance; `npm install` in a blank dir + `node -e
-  "import('personal-trust-fabric')"` resolves via `exports`.
+"import('personal-trust-fabric')"` resolves via `exports`.
 - [ ] Revoke any classic `NPM_TOKEN` after the first OIDC publish.
 
 ## 8. Post-publish hygiene
