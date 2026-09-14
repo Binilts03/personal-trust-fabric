@@ -11,3 +11,5 @@ Durable MCP proposals/challenges must survive restarts and concurrent redeems wi
 ## Consequences
 
 `src/store/challenges.ts` owns the file-CAS module behind the `src/index.ts` seam; MCP server and CLI consume it, never raw `fs`. Crash test (kill -9 mid-redeem) must show exactly-one receipt. References: SQLite Atomic Commit / WAL docs; Borrill 2026 FITO impossibility (no syscall alone defines a commit boundary — hence file+dir fsync protocol); Crosby–Wallach history-tree lineage for the audit side (see T5 anchor work, Yağız et al. arXiv:2605.00065).
+
+> Superseded by ADR-0014 (2026-09-13): durable CAS rejected as unneeded complexity — MCP proposals stay in-memory Maps (short TTL, lost on restart, fail-closed, single-writer); `src/store/challenges.ts` remains as an unwired reference, receipts survive in `audit.jsonl`.

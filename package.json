@@ -27,7 +27,8 @@
   },
   "bin": {
     "ptf": "./dist/src/cli.js",
-    "ptf-mcp-server": "./dist/src/mcp-server.js"
+    "ptf-mcp-server": "./dist/src/mcp-server.js",
+    "ptf-pdp-server": "./dist/src/pdp-server.js"
   },
   "keywords": [
     "trust",

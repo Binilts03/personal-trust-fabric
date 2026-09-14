@@ -27,8 +27,15 @@ export function resolveSelector(args: unknown, selector: string): Resolved {
       if (typeof cur !== "object" || cur === null || Array.isArray(cur)) {
         return optional ? { found: true, value: null } : { found: false };
       }
+      if (
+        name === "__proto__" ||
+        name === "constructor" ||
+        name === "prototype"
+      ) {
+        return { found: false };
+      }
       const rec = cur as Record<string, unknown>;
-      if (!(name in rec)) {
+      if (!Object.hasOwn(rec, name)) {
         return optional ? { found: true, value: null } : { found: false };
       }
       cur = rec[name];

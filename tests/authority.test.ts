@@ -13,7 +13,8 @@ import {
 import type {
   ActorSelector,
   AttributeBound,
-  AuthorityRequest,
+  AuthorityOperation,
+  VerifiedIdentity,
 } from "../src/index.js";
 
 const NOW = 1_700_000_000;
@@ -23,10 +24,29 @@ const OTHER_AGENT = "did:test:other-agent";
 const ATTACKER = "did:attacker:anything";
 const MERCHANT = "did:test:merchant";
 
-function op(amount = 1790) {
+const INGRESS: VerifiedIdentity = {
+  id: AGENT,
+  principal: PRINCIPAL,
+  source: "local-registration",
+  proofRef: "authority-test",
+};
+
+function ingressFor(
+  actor: string,
+  chain?: readonly string[]
+): VerifiedIdentity {
   return {
+    id: actor,
     principal: PRINCIPAL,
-    actor: AGENT,
+    source: "local-registration",
+    proofRef: "authority-test",
+    ...(chain !== undefined ? { chain } : {}),
+  };
+}
+
+/** Identity-free operation: the engine binds identity from the ingress. */
+function op(amount = 1790): AuthorityOperation {
+  return {
     action: { name: "/pay" as const },
     resource: { type: "invoice", id: "invoice:inv_8472" },
     context: { amount, currency: "INR", recipient: MERCHANT },
@@ -34,9 +54,9 @@ function op(amount = 1790) {
   };
 }
 
-function honest(amount = 1790): AuthorityRequest {
-  const operation = op(amount);
-  return { ...operation, termsDigest: digestForOperation(operation) };
+/** Engine-bound form (for digest comparisons and approval cross-checks). */
+function bound(amount = 1790) {
+  return { ...op(amount), principal: PRINCIPAL, actor: AGENT };
 }
 
 interface GrantExtra {
@@ -67,14 +87,14 @@ function payGrant(id: string, extra: GrantExtra = {}) {
   };
 }
 
-describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)", () => {
+describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010, ingress 0013)", () => {
   it("allows under a covering grant with citation; policy alone never allows", () => {
     const auth = new Authority({ nowSec: () => NOW });
     auth.addPolicy({
       id: "business-hours",
       bounds: paymentBounds({ amountMax: 100_000, currency: "INR" }),
     });
-    const lonely = auth.evaluate(honest());
+    const lonely = auth.evaluate(op(), INGRESS);
     assert.equal(lonely.allow, false);
     if (!lonely.allow) assert.equal(lonely.reason, "no-authority");
 
@@ -84,7 +104,7 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
         resource: { type: "invoice", id: "invoice:inv_8472" },
       })
     );
-    const ok = auth.evaluate(honest());
+    const ok = auth.evaluate(op(), INGRESS);
     assert.equal(ok.allow, true);
     if (ok.allow) {
       assert.equal(ok.citations[0]?.authorityId, "grocery-weekly");
@@ -101,13 +121,13 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
       bounds: paymentBounds({ amountMax: 1000, currency: "INR" }),
     });
 
-    const over = auth.evaluate(honest(1500));
+    const over = auth.evaluate(op(1500), INGRESS);
     assert.equal(over.allow, false);
     if (!over.allow) {
       assert.equal(over.reason, "forbidden");
       assert.equal(over.policyId, "frugal-cap");
     }
-    const under = auth.evaluate(honest(500));
+    const under = auth.evaluate(op(500), INGRESS);
     assert.equal(under.allow, true);
   });
 
@@ -124,19 +144,12 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
       context: { amount: 1790, currency: "INR", recipient: MERCHANT },
       ttlSec: 300,
     });
-    assert.equal(approval.termsDigest, digestForOperation(operation));
-    const ok = auth.evaluate({
-      ...operation,
-      termsDigest: approval.termsDigest,
-    });
+    assert.equal(approval.termsDigest, digestForOperation(bound(1790)));
+    const ok = auth.evaluate(operation, INGRESS);
     assert.equal(ok.allow, true);
     if (ok.allow) assert.equal(ok.citations[0]?.kind, "approval");
 
-    const mutatedOp = op(1791);
-    const mutated = auth.evaluate({
-      ...mutatedOp,
-      termsDigest: digestForOperation(mutatedOp),
-    });
+    const mutated = auth.evaluate(op(1791), INGRESS);
     assert.equal(mutated.allow, false);
     if (!mutated.allow) assert.equal(mutated.reason, "terms");
   });
@@ -144,19 +157,19 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
   it("enforces expiry, single use, and revocation", () => {
     const auth = new Authority({ nowSec: () => NOW });
     auth.addGrant(payGrant("stale", { exp: NOW - 3600 }));
-    const expired = auth.evaluate(honest());
+    const expired = auth.evaluate(op(), INGRESS);
     assert.equal(expired.allow, false);
     if (!expired.allow) assert.equal(expired.reason, "expired");
 
     auth.addGrant(payGrant("once", { maxUses: 1 }));
-    assert.equal(auth.evaluate(honest(), { consume: true }).allow, true);
-    const replay = auth.evaluate(honest(), { consume: true });
+    assert.equal(auth.evaluate(op(), INGRESS, { consume: true }).allow, true);
+    const replay = auth.evaluate(op(), INGRESS, { consume: true });
     assert.equal(replay.allow, false);
     if (!replay.allow) assert.equal(replay.reason, "uses-exhausted");
 
     auth.addGrant(payGrant("doomed"));
     auth.revoke("doomed");
-    const revoked = auth.evaluate(honest());
+    const revoked = auth.evaluate(op(), INGRESS);
     assert.equal(revoked.allow, false);
     if (!revoked.allow) assert.equal(revoked.reason, "revoked");
   });
@@ -166,7 +179,7 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
     auth.addGrant(
       payGrant("scoped", { actor: { kind: "exact", id: OTHER_AGENT } })
     );
-    const wrongAgent = auth.evaluate(honest());
+    const wrongAgent = auth.evaluate(op(), INGRESS);
     assert.equal(wrongAgent.allow, false);
     if (!wrongAgent.allow) {
       assert.equal(wrongAgent.reason, "no-authority");
@@ -174,72 +187,74 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
     }
   });
 
-  it("supports set, rooted, and explicit-any actor selectors", () => {
+  it("supports set and explicit-any actor selectors; rooted is rejected", () => {
     const auth = new Authority({ nowSec: () => NOW });
     auth.addGrant(
       payGrant("team", { actor: { kind: "set", ids: [AGENT, OTHER_AGENT] } })
     );
-    const operation = op();
-    assert.equal(
-      auth.evaluate({
-        ...operation,
-        termsDigest: digestForOperation(operation),
-      }).allow,
-      true
-    );
-    const strangerOp = { ...op(), actor: ATTACKER };
-    const stranger = auth.evaluate({
-      ...strangerOp,
-      termsDigest: digestForOperation(strangerOp),
-    });
+    assert.equal(auth.evaluate(op(), INGRESS).allow, true);
+    const stranger = auth.evaluate(op(), ingressFor(ATTACKER));
     assert.equal(stranger.allow, false);
     if (!stranger.allow) assert.equal(stranger.reason, "no-authority");
 
-    const rooted = new Authority({ nowSec: () => NOW });
-    rooted.addGrant(
-      payGrant("delegated", { actor: { kind: "rooted", root: AGENT } })
-    );
-    const leafOp = {
-      ...op(),
-      actor: "did:test:sub-agent",
-      actorChain: [AGENT, "did:test:sub-agent"],
-    };
-    assert.equal(
-      rooted.evaluate({ ...leafOp, termsDigest: digestForOperation(leafOp) })
-        .allow,
-      true
-    );
-    const noChainOp = { ...op(), actor: "did:test:sub-agent" };
-    assert.equal(
-      rooted.evaluate({
-        ...noChainOp,
-        termsDigest: digestForOperation(noChainOp),
-      }).allow,
-      false
-    );
-    const foreignChainOp = {
-      ...op(),
-      actor: "did:test:sub-agent",
-      actorChain: [ATTACKER, "did:test:sub-agent"],
-    };
-    assert.equal(
-      rooted.evaluate({
-        ...foreignChainOp,
-        termsDigest: digestForOperation(foreignChainOp),
-      }).allow,
-      false
+    // `rooted` was removed (ADR-0013): delegation history is provenance,
+    // not authorization. Registration fails closed.
+    assert.throws(
+      () =>
+        auth.addGrant(
+          payGrant("delegated", {
+            actor: { kind: "rooted", root: AGENT } as unknown as ActorSelector,
+          })
+        ),
+      /rooted was removed/
     );
 
     // Explicit wildcard: deliberate and audit-visible — anyone allows.
     const open = new Authority({ nowSec: () => NOW });
     open.addGrant(payGrant("open-door", { actor: { kind: "any" } }));
-    assert.equal(open.evaluate(honest()).allow, true);
+    assert.equal(open.evaluate(op(), INGRESS).allow, true);
+    assert.equal(open.evaluate(op(), ingressFor(ATTACKER)).allow, true);
+  });
+
+  it("treats delegation chains as provenance only, never authority", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant(
+      payGrant("team", { actor: { kind: "set", ids: [AGENT, OTHER_AGENT] } })
+    );
+    // Actor in the set allows whatever chain provenance it carries — even a
+    // chain rooted at an attacker.
     assert.equal(
-      open.evaluate({
-        ...strangerOp,
-        termsDigest: digestForOperation(strangerOp),
-      }).allow,
+      auth.evaluate(op(), ingressFor(AGENT, [ATTACKER, AGENT])).allow,
       true
+    );
+    // A stranger carrying a chain THROUGH a legitimate agent still denies:
+    // chain entries never mint power.
+    const riding = auth.evaluate(
+      op(),
+      ingressFor("did:test:sub-agent", [AGENT, "did:test:sub-agent"])
+    );
+    assert.equal(riding.allow, false);
+    if (!riding.allow) assert.equal(riding.reason, "no-authority");
+  });
+
+  it("rejects malformed ingress fail-closed", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant(payGrant("grocery-weekly"));
+    assert.throws(
+      () => auth.evaluate(op(), { ...INGRESS, id: "" }),
+      /ingress\.id/
+    );
+    assert.throws(
+      () =>
+        auth.evaluate(op(), {
+          ...INGRESS,
+          source: "session-cookie",
+        } as unknown as VerifiedIdentity),
+      /ingress\.source/
+    );
+    assert.throws(
+      () => auth.evaluate(op(), { ...INGRESS, proofRef: "" }),
+      /ingress\.proofRef/
     );
   });
 
@@ -257,9 +272,7 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
         ...claimsSubset(["ca_status", "age_over_18"]),
       ],
     });
-    const good: AuthorityRequest = {
-      principal: PRINCIPAL,
-      actor: AGENT,
+    const good: AuthorityOperation = {
       action: { name: "/disclose" },
       resource: { type: "credential", id: "credential:issuer-1" },
       context: {
@@ -269,9 +282,8 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
         claims: ["ca_status"],
       },
       purpose: "disclose",
-      termsDigest: "00".repeat(32),
     };
-    assert.equal(auth.evaluate(good).allow, true);
+    assert.equal(auth.evaluate(good, INGRESS).allow, true);
     for (const patch of [
       { verifier: "did:test:impostor" },
       { attempt: 1 },
@@ -279,28 +291,72 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
       { claims: ["ca_status", "passport_no"] },
       { claims: "ca_status" },
     ]) {
-      const bad: AuthorityRequest = {
+      const bad: AuthorityOperation = {
         ...good,
         context: { ...good.context, ...patch },
       };
       assert.equal(
-        auth.evaluate(bad).allow,
+        auth.evaluate(bad, INGRESS).allow,
         false,
         `expected deny for ${JSON.stringify(patch)}`
       );
     }
   });
 
-  it("derives stable digests from the normalized operation", () => {
-    const first = digestForOperation(op());
-    assert.equal(first, digestForOperation(op()));
+  it("derives stable digests from the normalized bound operation", () => {
+    const first = digestForOperation(bound());
+    assert.equal(first, digestForOperation(bound()));
     assert.equal(first.length, 64);
-    const mutated = { ...op(), purpose: "pay invoice twice" };
+    const mutated = { ...bound(), purpose: "pay invoice twice" };
     assert.notEqual(digestForOperation(mutated), first);
     // Absent chain normalizes like an empty chain.
-    const noChain = { ...op() };
-    const emptyChain = { ...op(), actorChain: [] };
-    assert.equal(digestForOperation(noChain), digestForOperation(emptyChain));
+    assert.equal(
+      digestForOperation(bound()),
+      digestForOperation({ ...bound(), actorChain: [] })
+    );
+  });
+
+  it("folds verified external bindings into the digest; approvals bind them", () => {
+    const binding = {
+      scheme: "ap2" as const,
+      value: "ap2-tx-1",
+      evidenceRef: "ap2-mandate",
+    };
+    const plain = digestForOperation(bound());
+    const folded = digestForOperation(bound(), binding);
+    assert.notEqual(folded, plain);
+    assert.equal(folded, digestForOperation(bound(), { ...binding }));
+    assert.notEqual(
+      folded,
+      digestForOperation(bound(), { ...binding, value: "ap2-tx-2" })
+    );
+    assert.throws(
+      () =>
+        digestForOperation(bound(), {
+          scheme: "other",
+          value: "x",
+          evidenceRef: "y",
+        } as unknown as typeof binding),
+      /binding scheme/
+    );
+
+    // An approval minted without the binding cannot cover a demand
+    // evaluated under it: same terms, different binding → terms mismatch.
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.createApproval({
+      id: "ap-plain",
+      principal: PRINCIPAL,
+      actor: AGENT,
+      action: { name: "/pay" },
+      purpose: "pay invoice",
+      resource: { type: "invoice", id: "invoice:inv_8472" },
+      context: { amount: 1790, currency: "INR", recipient: MERCHANT },
+      ttlSec: 300,
+    });
+    assert.equal(auth.evaluate(op(), INGRESS).allow, true);
+    const boundDemand = auth.evaluate(op(), INGRESS, { binding });
+    assert.equal(boundDemand.allow, false);
+    if (!boundDemand.allow) assert.equal(boundDemand.reason, "terms");
   });
 
   it("rejects missing actors, bad bounds, and non-finite numbers at registration", () => {
@@ -397,7 +453,7 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
       },
     });
     auth.addGrant(payGrant("grocery"));
-    const digest = digestForOperation(op(100));
+    const digest = digestForOperation(bound(100));
     const cap = caps.issue(
       null,
       {
@@ -464,6 +520,6 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010)
     );
     // Bounded /pay grants still register and allow.
     auth.addGrant(payGrant("bounded-pay"));
-    assert.equal(auth.evaluate(honest()).allow, true);
+    assert.equal(auth.evaluate(op(), INGRESS).allow, true);
   });
 });

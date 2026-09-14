@@ -33,11 +33,9 @@ instead of emitting internals (`src/adapters/authzen.ts`,
 `src/adapters/audit-interop.ts`; canonical demo: `tests/three-env.test.ts`).
 
 ```ts
-import {
-  Authority,
-  digestForOperation,
-  paymentBounds,
-} from "personal-trust-fabric";
+import { Authority, paymentBounds } from "personal-trust-fabric";
+import { recipientBounds } from "personal-trust-fabric/profiles/payment";
+import type { VerifiedIdentity } from "personal-trust-fabric";
 
 const ids = {
   p: "did:example:you",
@@ -52,26 +50,38 @@ authority.addGrant({
   principal: ids.p,
   actor: { kind: "exact", id: ids.a },
   action: { name: "/pay" },
-  bounds: paymentBounds({ amountMax: 2000, currency: "INR" }),
+  bounds: [
+    ...paymentBounds({ amountMax: 2000, currency: "INR" }),
+    ...recipientBounds([ids.m]),
+  ],
 });
 
-// 2. Operation: structured action/resource/context (amounts in atomic units).
+// 2. Operation: identity-free action/resource/context (amounts in atomic units).
 const operation = {
-  principal: ids.p,
-  actor: ids.a,
   action: { name: "/pay" as const },
   resource: { type: "invoice", id: "invoice:inv-1" },
   context: { amount: 1790, currency: "INR", recipient: ids.m },
   purpose: "groceries",
 };
 
-// 3. Decision: the digest is derived, never caller-supplied; every allow cites its grant.
-const decision = authority.evaluate({
-  ...operation,
-  termsDigest: digestForOperation(operation),
-});
+// 3. Verified ingress: the host authenticates the caller OUT-OF-BAND
+// (token/session/key) and binds identity here — never from the request body.
+const ingress: VerifiedIdentity = {
+  id: ids.a,
+  principal: ids.p,
+  source: "local-registration",
+  proofRef: "example",
+};
+
+// 4. Decision: identity binds from the ingress and the digest derives
+// inside the engine — demands never self-certify. Every allow cites its grant.
+const decision = authority.evaluate(operation, ingress);
 if (!decision.allow) throw new Error("denied");
 ```
+
+Safe grants combine `paymentBounds` + `recipientBounds` (recipient-bounded).
+Merchant-agnostic grants (no recipient bound) require explicit intent — they
+allow payment to any recipient and must be audited as deliberate.
 
 The capability envelope (`src/core/capability.ts`) is internal-only local
 receipt machinery (ADR-0009) — never emitted across systems.
@@ -108,7 +118,7 @@ node dist/src/cli.js --dir ./ptf-store init
 node dist/src/cli.js --dir ./ptf-store keygen --alias you
 node dist/src/cli.js --dir ./ptf-store keygen --alias shop
 node dist/src/cli.js --dir ./ptf-store recipient --alias shop --key <hex-from-keygen>
-node dist/src/cli.js --dir ./ptf-store grant --id g1 --principal you --cmd /pay --amount-max 2000 --currency INR
+node dist/src/cli.js --dir ./ptf-store grant --id g1 --principal you --cmd /pay --agent shopper --amount-max 2000 --currency INR --recipient shop
 node dist/src/cli.js --dir ./ptf-store pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes
 node dist/src/cli.js --dir ./ptf-store audit --verify
 node dist/src/cli.js --help
@@ -118,6 +128,11 @@ Single-writer ceiling: one CLI/MCP writer per store; proposals are in-memory
 (lost on restart, fail-closed). Back up `ptf-store/` for high-value use.
 
 ## Agent quickstart (MCP stdio)
+
+Commerce reference host with FIXED identity at startup: the server takes
+principal+actor at instantiation (configured once, not per-tool), and tool
+schemas carry NO principal/agent fields — every propose/redeem is bound to
+that fixed identity.
 
 ```json
 {
@@ -137,7 +152,9 @@ Single-writer ceiling: one CLI/MCP writer per store; proposals are in-memory
 
 Tools: `ptf_propose` (dry-run, returns terms + digest, status `pending`),
 `ptf_check` (status by digest), `ptf_redeem` (challenge `cidHex`, then proof
-→ receipt). No approve tool: humans approve in the CLI; the server only
+→ receipt). Propose/redeem schemas carry demand fields (amount, currency,
+recipient, resource, purpose) with NO principal/agent fields — the fixed
+startup identity applies. No approve tool: humans approve in the CLI; the server only
 spends standing grants. See `examples/mcp-client-config.json`.
 
 ## Security model in one paragraph

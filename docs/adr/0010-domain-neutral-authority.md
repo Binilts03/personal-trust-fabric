@@ -1,5 +1,12 @@
 # ADR-0010: Domain-neutral authority with verified actor binding
 
+> Amended by ADR-0013 (2026-09-13): `rooted` removed from `ActorSelector`
+> (now `exact|set|any` — delegation history is provenance, not
+> authorization); `termsDigest` removed from the public evaluation input
+> (engine derives it via `evaluate(operation, ingress)`; verified protocol
+> bindings travel as `VerifiedExternalBinding`). The sections below remain
+> the historical record of the ticket-08 decision.
+
 **Date**: 2026-09-13
 **Status**: accepted
 **Deciders**: PTF maintainer + standards-pivot loop (ticket 08)

@@ -20,6 +20,13 @@ const A = "did:test:a";
 const M = "did:test:m";
 const X = "did:test:x";
 
+const INGRESS_A = {
+  id: A,
+  principal: P,
+  source: "local-registration",
+  proofRef: "attacks-test",
+} as const;
+
 function kit() {
   const mk = () => generateEd25519Keypair();
   const p = mk();
@@ -102,17 +109,12 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
       bounds: paymentBounds({ amountMax: 100, currency: "INR" }),
     });
     const operation = {
-      principal: P,
-      actor: A,
       action: { name: "/pay" as const },
       resource: { type: "invoice", id: "r" },
       context: { amount: 5000, currency: "INR", recipient: M },
       purpose: "p",
     };
-    const d = auth.evaluate({
-      ...operation,
-      termsDigest: digestForOperation(operation),
-    });
+    const d = auth.evaluate(operation, { ...INGRESS_A });
     assert.equal(d.allow, false);
   });
 
@@ -134,10 +136,15 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
       exp: NOW - 500,
       maxUses: 1,
     });
-    const expired = auth.evaluate({
-      ...oldOp,
-      termsDigest: digestForOperation(oldOp),
-    });
+    const expired = auth.evaluate(
+      {
+        action: { name: "/pay" as const },
+        resource: { type: "invoice", id: "r" },
+        context: { amount: 10, currency: "INR", recipient: M },
+        purpose: "p",
+      },
+      { ...INGRESS_A }
+    );
     assert.equal(expired.allow, false);
 
     const caps = new Capabilities({
@@ -174,17 +181,12 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
       ttlSec: 300,
     });
     const mutatedOp = {
-      principal: P,
-      actor: A,
       action: { name: "/pay" as const },
       resource: { type: "invoice", id: "r" },
       context: { amount: 11, currency: "INR", recipient: M },
       purpose: "p",
     };
-    const mutated = auth.evaluate({
-      ...mutatedOp,
-      termsDigest: digestForOperation(mutatedOp),
-    });
+    const mutated = auth.evaluate(mutatedOp, { ...INGRESS_A });
     assert.equal(mutated.allow, false);
     if (!mutated.allow) assert.equal(mutated.reason, "terms");
     void approval;

@@ -5,6 +5,7 @@ import {
   assertSafeUrl,
   canonicalJcs,
   requestToDisclosureDemand,
+  resolveSelector,
 } from "../src/index.js";
 
 describe("adapter hardening round (v04/06)", () => {
@@ -52,5 +53,33 @@ describe("adapter hardening round (v04/06)", () => {
         ),
       /claim_sets|mdoc/
     );
+  });
+
+  it("resolveSelector denies prototype traversal (ticket 17)", () => {
+    // `__proto__` / `constructor` / `prototype` never resolve, even though
+    // every object inherits them — fail-closed, never inherited values.
+    const obj = { amount: 10, nested: { currency: "INR" } };
+    assert.deepEqual(resolveSelector(obj, ".__proto__"), { found: false });
+    assert.deepEqual(resolveSelector(obj, ".constructor"), { found: false });
+    assert.deepEqual(resolveSelector(obj, ".prototype"), { found: false });
+    assert.deepEqual(resolveSelector(obj, ".nested.constructor"), {
+      found: false,
+    });
+    // Ordinary own properties still resolve.
+    assert.deepEqual(resolveSelector(obj, ".amount"), {
+      found: true,
+      value: 10,
+    });
+    // The deny-list wins even over own data: a bound path can never be
+    // smuggled through an own `constructor` key.
+    assert.deepEqual(
+      resolveSelector({ constructor: "own-value" }, ".constructor"),
+      { found: false }
+    );
+    assert.deepEqual(resolveSelector(obj, ".nested.currency"), {
+      found: true,
+      value: "INR",
+    });
+    assert.deepEqual(resolveSelector(obj, ".missing"), { found: false });
   });
 });

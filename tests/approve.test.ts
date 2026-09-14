@@ -7,7 +7,7 @@ import {
   renderProposal,
   termsDigestOf,
 } from "../src/index.js";
-import type { AuthorityRequest } from "../src/index.js";
+import type { AuthorityRequest, VerifiedIdentity } from "../src/index.js";
 
 const NOW = 1_700_000_000;
 
@@ -113,7 +113,18 @@ describe("approval presenter (ptf-v02/02, neutral 0010)", () => {
       },
       ttlSec: 300,
     });
-    const decision = auth.evaluate(demand());
+    // The engine binds identity from the verified ingress — the operation
+    // carries none.
+    const { principal: _principal, actor: _actor, ...opOnly } = op;
+    void _principal;
+    void _actor;
+    const ingress: VerifiedIdentity = {
+      id: "did:test:grocery",
+      principal: "did:test:principal",
+      source: "local-registration",
+      proofRef: "approve-test",
+    };
+    const decision = auth.evaluate(opOnly, ingress);
     assert.equal(decision.allow, true);
   });
 

@@ -12,19 +12,28 @@ import { resolveSelector } from "./policy.js";
  * approvals-exact → grants-bounds → policies-narrow → citations, with
  * time/uses/revocation/cascade handled by the caller-side checks in step 2.
  *
- * Actor binding: every StandingGrant carries a REQUIRED ActorSelector.
- * Missing is never wildcard — addGrant throws when absent; the explicit
- * `{ kind: "any" }` wildcard exists so audits can see the deliberate choice.
+ * Actor binding: the engine binds identity from a host-verified ingress
+ * (`VerifiedIdentity`), never from caller-supplied fields. Every StandingGrant
+ * carries a REQUIRED ActorSelector. Missing is never wildcard — addGrant
+ * throws when absent; the explicit `{ kind: "any" }` wildcard exists so
+ * audits can see the deliberate choice.
  *
- * Digest binding: demands never self-certify. The termsDigest is DERIVED from
- * the normalized operation via digestForOperation (createApproval computes it
- * internally; translators recompute it and ignore caller-supplied values).
+ * Digest binding: demands never self-certify. The termsDigest is DERIVED
+ * inside `evaluate` from the normalized operation + ingress identity (plus
+ * the verified external binding when one is passed via opts) — there is no
+ * caller-supplied digest to disagree about. `createApproval` computes it
+ * internally; translators recompute it and ignore caller-supplied values.
  * evaluate keeps comparing digests, so any term change needs a new approval.
  */
 
 const SKEW_SEC = CLOCK_SKEW_SEC;
 
-/** Domain-neutral demand. `termsDigest` is derived, never trusted (see above). */
+/**
+ * @internal INTERNAL bound form: an operation + ingress identity + derived
+ * digest, assembled by the engine (or by translators from verified ingress)
+ * for citations/snapshots. Never construct by hand from caller-supplied
+ * identity — call `evaluate(operation, ingress)` and let the engine bind.
+ */
 export interface AuthorityRequest {
   readonly principal: string;
   readonly actor: string;
@@ -44,6 +53,57 @@ export interface AuthorityRequest {
 }
 
 /**
+ * Trusted ingress identity (ADR-0013). The host verifies the caller
+ * OUT-OF-BAND (OAuth, token, DPoP, mTLS, local registration, API key) and
+ * hands the engine this record; the engine binds principal/actor/chain from
+ * it and derives the digest internally. Callers NEVER choose their own
+ * identity: request-carried identity fields are untrusted hints that fail
+ * closed on mismatch (see `adapters/authzen.ts`).
+ */
+export interface VerifiedIdentity {
+  /** Verified actor id. Binds the demand `actor`. */
+  readonly id: string;
+  /** Verified principal. Binds the demand `principal`. */
+  readonly principal: string;
+  readonly source:
+    "oauth" | "mcp-token" | "dpop" | "mtls" | "local-registration" | "api-key";
+  /**
+   * Pointer to the verification evidence (token jti, key id, stdio handle).
+   * Never a secret.
+   */
+  readonly proofRef: string;
+  /**
+   * Delegation evidence. Recorded as the demand `actorChain` for provenance
+   * ONLY — it never confers authority (`rooted` selectors were removed).
+   */
+  readonly chain?: readonly string[];
+}
+
+/**
+ * Verified external binding folded into digest derivation (ADR-0013). The
+ * `value` (e.g. an AP2 transaction id that arrived as verified mandate
+ * evidence) is covered by the digest so approvals bind it; the full record
+ * is echoed in citations.
+ */
+export interface VerifiedExternalBinding {
+  readonly scheme: "ap2";
+  /** The bound value. Covered by the digest. */
+  readonly value: string;
+  /** Pointer to the evidence (e.g. mandate ref). Echoed, never digested. */
+  readonly evidenceRef: string;
+}
+
+/**
+ * Caller-supplied operation: action + resource + context (+ purpose).
+ * Carries NO identity and NO digest — those bind from the verified ingress
+ * inside `evaluate`.
+ */
+export type AuthorityOperation = Omit<
+  AuthorityRequest,
+  "termsDigest" | "principal" | "actor" | "actorChain"
+>;
+
+/**
  * Attribute bound evaluated against the demand with policy.ts resolveSelector
  * syntax (e.g. ".context.amount", ".action.name", ".principal").
  * Op semantics: `==` canonical deep-equal; `<=`/`>=` finite numbers only;
@@ -58,12 +118,13 @@ export interface AttributeBound {
 
 /**
  * Who may act under a grant. `any` is an explicit, audit-visible wildcard —
- * prefer exact / set / rooted. Absent is NOT wildcard: registration throws.
+ * prefer exact / set. Absent is NOT wildcard: registration throws.
+ * (`rooted` was removed in ADR-0013: delegation history is provenance, not
+ * authorization — a chain entry must never mint power.)
  */
 export type ActorSelector =
   | { readonly kind: "exact"; readonly id: string }
   | { readonly kind: "set"; readonly ids: readonly string[] }
-  | { readonly kind: "rooted"; readonly root: string }
   | { readonly kind: "any" };
 
 export interface StandingGrant {
@@ -122,6 +183,8 @@ export interface Citation {
   readonly authorityId: string;
   readonly kind: "grant" | "approval";
   readonly policyIds: readonly string[];
+  /** Echo of the verified external binding the decision was derived under. */
+  readonly binding?: VerifiedExternalBinding;
 }
 
 export type AuthorityDenyReason =
@@ -184,20 +247,29 @@ export function claimsSubset(allowed: readonly string[]): AttributeBound[] {
   return [{ path: ".context.claims", op: "subset", value: [...allowed] }];
 }
 
-type Operation = Omit<AuthorityRequest, "termsDigest">;
+/** Bound operation: identity attached, digest not yet derived. */
+type BoundOperation = Omit<AuthorityRequest, "termsDigest">;
 
 /**
- * Canonical form of an operation for digesting. Absent optionals normalize to
- * stable sentinels (absent chain ≡ [], absent purpose ≡ null, absent property
- * bags ≡ {}), so two operations with the same meaning bind the same digest.
- * Array ORDER is significant: ["b","a"] and ["a","b"] bind different digests
- * (the engine cannot know which arrays are order-insensitive).
+ * Canonical form of a bound operation for digesting. Absent optionals
+ * normalize to stable sentinels (absent chain ≡ [], absent purpose ≡ null,
+ * absent property bags ≡ {}), so two operations with the same meaning bind
+ * the same digest. Array ORDER is significant: ["b","a"] and ["a","b"] bind
+ * different digests (the engine cannot know which arrays are
+ * order-insensitive). A verified external binding, when present, folds its
+ * scheme + value into the digest (evidenceRef is a log pointer, not terms).
  */
-function normalizeOperation(op: Operation): Record<string, unknown> {
+function normalizeOperation(
+  op: BoundOperation,
+  binding?: VerifiedExternalBinding
+): Record<string, unknown> {
   return {
     action: { name: op.action.name, properties: op.action.properties ?? {} },
     actor: op.actor,
     actorChain: [...(op.actorChain ?? [])],
+    ...(binding !== undefined
+      ? { binding: { scheme: binding.scheme, value: binding.value } }
+      : {}),
     context: op.context ?? {},
     principal: op.principal,
     purpose: op.purpose ?? null,
@@ -209,15 +281,84 @@ function normalizeOperation(op: Operation): Record<string, unknown> {
   };
 }
 
+/** Fail-closed validation for verified external bindings. */
+function checkBinding(binding: VerifiedExternalBinding, what: string): void {
+  if (
+    typeof binding !== "object" ||
+    binding === null ||
+    Array.isArray(binding)
+  ) {
+    throw new Error(`${what}: binding must be an object`);
+  }
+  const rec = binding as unknown as Record<string, unknown>;
+  if (rec["scheme"] !== "ap2") {
+    throw new Error(`${what}: unknown binding scheme (expected "ap2")`);
+  }
+  if (typeof rec["value"] !== "string" || rec["value"].length === 0) {
+    throw new Error(`${what}: binding value must be a non-empty string`);
+  }
+  if (
+    typeof rec["evidenceRef"] !== "string" ||
+    rec["evidenceRef"].length === 0
+  ) {
+    throw new Error(`${what}: binding evidenceRef must be a non-empty string`);
+  }
+}
+
+/** Fail-closed validation for trusted ingress identities. */
+function checkIngress(ingress: VerifiedIdentity): void {
+  if (
+    typeof ingress !== "object" ||
+    ingress === null ||
+    Array.isArray(ingress)
+  ) {
+    throw new Error("evaluate: ingress must be a VerifiedIdentity object");
+  }
+  const rec = ingress as unknown as Record<string, unknown>;
+  if (typeof rec["id"] !== "string" || rec["id"].length === 0) {
+    throw new Error("evaluate: ingress.id must be a non-empty string");
+  }
+  if (typeof rec["principal"] !== "string" || rec["principal"].length === 0) {
+    throw new Error("evaluate: ingress.principal must be a non-empty string");
+  }
+  const source: unknown = rec["source"];
+  if (
+    source !== "oauth" &&
+    source !== "mcp-token" &&
+    source !== "dpop" &&
+    source !== "mtls" &&
+    source !== "local-registration" &&
+    source !== "api-key"
+  ) {
+    throw new Error(
+      "evaluate: ingress.source must be one of oauth|mcp-token|dpop|mtls|local-registration|api-key"
+    );
+  }
+  if (typeof rec["proofRef"] !== "string" || rec["proofRef"].length === 0) {
+    throw new Error("evaluate: ingress.proofRef must be a non-empty string");
+  }
+  const chain: unknown = rec["chain"];
+  if (
+    chain !== undefined &&
+    (!Array.isArray(chain) ||
+      !(chain as unknown[]).every((x) => typeof x === "string" && x.length > 0))
+  ) {
+    throw new Error("evaluate: ingress.chain must be a non-empty-string array");
+  }
+}
+
 /**
- * Derive the binding digest for an operation. Callers NEVER supply termsDigest:
- * createApproval computes it internally and translators recompute it from the
- * normalized operation, ignoring any caller-supplied value.
+ * Derive the binding digest for a bound operation. Callers NEVER supply
+ * termsDigest: `evaluate` computes it internally from (operation, ingress,
+ * binding); `createApproval` computes it internally; translators recompute
+ * it from the normalized operation, ignoring any caller-supplied value.
  */
 export function digestForOperation(
-  op: Omit<AuthorityRequest, "termsDigest">
+  op: BoundOperation,
+  binding?: VerifiedExternalBinding
 ): string {
-  return termsDigestOf(normalizeOperation(op));
+  if (binding !== undefined) checkBinding(binding, "digestForOperation");
+  return termsDigestOf(normalizeOperation(op, binding));
 }
 
 function canonicalEqual(a: unknown, b: unknown): boolean {
@@ -228,20 +369,14 @@ function canonicalEqual(a: unknown, b: unknown): boolean {
   }
 }
 
-function actorMatches(
-  sel: ActorSelector,
-  actor: string,
-  chain: readonly string[] | undefined
-): boolean {
+function actorMatches(sel: ActorSelector, actor: string): boolean {
   switch (sel.kind) {
     case "exact":
       return actor === sel.id;
     case "set":
       return sel.ids.includes(actor);
-    case "rooted":
-      return chain !== undefined && chain.includes(sel.root);
     case "any":
-      // Explicit wildcard — deliberate and audit-visible. Prefer exact/set/rooted.
+      // Explicit wildcard — deliberate and audit-visible. Prefer exact/set.
       return true;
   }
 }
@@ -331,19 +466,13 @@ function checkActorSelector(sel: unknown, what: string): void {
       }
       return;
     }
-    case "rooted": {
-      if (typeof rec["root"] !== "string" || rec["root"].length === 0) {
-        throw new Error(
-          `${what}: rooted actor root must be a non-empty string`
-        );
-      }
-      return;
-    }
     case "any":
-      // Explicit wildcard — deliberate, audit-visible. Prefer exact/set/rooted.
+      // Explicit wildcard — deliberate, audit-visible. Prefer exact/set.
       return;
     default:
-      throw new Error(`${what}: unknown actor selector kind`);
+      throw new Error(
+        `${what}: unknown actor selector kind (rooted was removed — see ADR-0013)`
+      );
   }
 }
 
@@ -420,8 +549,7 @@ function grantMatches(
   ignoreActor: boolean
 ): boolean {
   if (g.principal !== demand.principal) return false;
-  if (!ignoreActor && !actorMatches(g.actor, demand.actor, demand.actorChain))
-    return false;
+  if (!ignoreActor && !actorMatches(g.actor, demand.actor)) return false;
   if (!isCovered(g.action.name, demand.action.name)) return false;
   if (
     g.action.properties !== undefined &&
@@ -484,10 +612,7 @@ function approvalExact(a: OneTimeApproval, demand: AuthorityRequest): boolean {
 }
 
 function policyApplies(p: PolicyConstraint, demand: AuthorityRequest): boolean {
-  if (
-    p.actor !== undefined &&
-    !actorMatches(p.actor, demand.actor, demand.actorChain)
-  )
+  if (p.actor !== undefined && !actorMatches(p.actor, demand.actor))
     return false;
   if (
     p.actionName !== undefined &&
@@ -724,7 +849,7 @@ export class Authority {
         ? { properties: { ...params.resource.properties } }
         : {}),
     };
-    const op: Operation = {
+    const op: BoundOperation = {
       principal: params.principal,
       actor: params.actor,
       ...(params.chain !== undefined ? { actorChain: [...params.chain] } : {}),
@@ -888,10 +1013,44 @@ export class Authority {
     return auth;
   }
 
+  /**
+   * Evaluate an operation under a verified ingress identity. The engine
+   * binds principal/actor/chain from the ingress and derives the digest
+   * internally (folding opts.binding when present) — the operation carries
+   * NO identity and NO digest, so callers cannot choose their own identity
+   * or self-certify terms. Never throws on deny, only on malformed
+   * operation/ingress/binding (fail-closed at the caller).
+   */
   evaluate(
-    demand: AuthorityRequest,
-    opts: { readonly consume?: boolean; readonly nowSec?: number } = {}
+    operation: AuthorityOperation,
+    ingress: VerifiedIdentity,
+    opts: {
+      readonly consume?: boolean;
+      readonly nowSec?: number;
+      readonly binding?: VerifiedExternalBinding;
+    } = {}
   ): AuthorityDecision {
+    if (
+      typeof operation !== "object" ||
+      operation === null ||
+      Array.isArray(operation)
+    ) {
+      throw new Error("evaluate: operation must be an object");
+    }
+    checkIngress(ingress);
+    if (opts.binding !== undefined) checkBinding(opts.binding, "evaluate");
+    const bound: BoundOperation = {
+      ...operation,
+      principal: ingress.principal,
+      actor: ingress.id,
+      ...(ingress.chain !== undefined
+        ? { actorChain: [...ingress.chain] }
+        : {}),
+    };
+    const demand: AuthorityRequest = {
+      ...bound,
+      termsDigest: digestForOperation(bound, opts.binding),
+    };
     const now = opts.nowSec ?? this.nowSec();
 
     // 1. Candidate approvals: exact binding. Identity match with any deviation
@@ -1021,17 +1180,23 @@ export class Authority {
     }
 
     // 6. Allow with citation. Approvals outrank grants; first applicable policy set cited.
+    // A verified external binding is echoed so auditors can see what the
+    // derived digest was bound under.
+    const boundEcho =
+      opts.binding !== undefined ? { binding: opts.binding } : {};
     const primary: Citation =
       usableApprovals.length > 0
         ? {
             authorityId: (usableApprovals[0] as OneTimeApproval).id,
             kind: "approval",
             policyIds: applicable.map((p) => p.id),
+            ...boundEcho,
           }
         : {
             authorityId: (grantHits[0] as StandingGrant).id,
             kind: "grant",
             policyIds: applicable.map((p) => p.id),
+            ...boundEcho,
           };
     if (opts.consume === true) {
       this.used.set(

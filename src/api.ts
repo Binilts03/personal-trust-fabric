@@ -28,6 +28,9 @@ export {
 } from "./core/authority.js";
 export type {
   AuthorityRequest,
+  AuthorityOperation,
+  VerifiedIdentity,
+  VerifiedExternalBinding,
   ActorSelector,
   AttributeBound,
   StandingGrant,

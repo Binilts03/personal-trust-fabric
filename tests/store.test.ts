@@ -7,14 +7,12 @@ import {
   Authority,
   FileAuditLog,
   RecipientRegistry,
-  digestForOperation,
   generateEd25519Keypair,
   loadAuthority,
   loadRegistry,
   paymentBounds,
   saveAuthority,
   saveRegistry,
-  termsDigestOf,
 } from "../src/index.js";
 
 const NOW = 1_700_000_000;
@@ -40,23 +38,33 @@ describe("durable JSON stores (prod-01)", () => {
       maxUses: 2,
     });
     const operation = {
-      principal: P,
-      actor: A,
       action: { name: "/pay" as const },
       resource: { type: "invoice", id: "r" },
       context: { amount: 100, currency: "INR", recipient: M },
       purpose: "p",
     };
-    const ask = {
-      ...operation,
-      termsDigest: digestForOperation(operation),
-    };
-    assert.equal(auth.evaluate(ask, { consume: true }).allow, true);
+    const ingress = {
+      id: A,
+      principal: P,
+      source: "local-registration",
+      proofRef: "store-test",
+    } as const;
+    assert.equal(
+      auth.evaluate(operation, { ...ingress }, { consume: true }).allow,
+      true
+    );
     saveAuthority(dir, auth);
 
     const reloaded = loadAuthority(dir, { nowSec: () => NOW });
-    assert.equal(reloaded.evaluate(ask, { consume: true }).allow, true);
-    const exhausted = reloaded.evaluate(ask, { consume: true });
+    assert.equal(
+      reloaded.evaluate(operation, { ...ingress }, { consume: true }).allow,
+      true
+    );
+    const exhausted = reloaded.evaluate(
+      operation,
+      { ...ingress },
+      { consume: true }
+    );
     assert.equal(exhausted.allow, false);
     if (!exhausted.allow) assert.equal(exhausted.reason, "uses-exhausted");
   });

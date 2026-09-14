@@ -7,7 +7,6 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   Authority,
-  digestForOperation,
   loadAuthority,
   paymentBounds,
   saveAuthority,
@@ -46,18 +45,22 @@ function seedStore(): string {
   return dir;
 }
 
-function demandFor(agent: string, amount: number): string {
-  const operation = {
-    principal: PRINCIPAL,
-    actor: agent,
+function operationFor(amount: number): string {
+  // Identity-free operation: the worker binds identity from the ingress.
+  return JSON.stringify({
     action: { name: "/pay" as const },
     resource: { type: "flight", id: "flight:domestic:economy" },
     context: { amount, currency: "INR", recipient: MERCHANT },
     purpose: "book domestic economy flight",
-  };
+  });
+}
+
+function ingressFor(agent: string): string {
   return JSON.stringify({
-    ...operation,
-    termsDigest: digestForOperation(operation),
+    id: agent,
+    principal: PRINCIPAL,
+    source: "local-registration",
+    proofRef: "three-process-worker",
   });
 }
 
@@ -68,7 +71,7 @@ function evaluateInFreshProcess(
 ): { readonly allow: boolean; readonly reason?: string } {
   const out = execFileSync(
     process.execPath,
-    [WORKER, dir, String(NOW), demandFor(agent, amount)],
+    [WORKER, dir, String(NOW), operationFor(amount), ingressFor(agent)],
     { encoding: "utf8", timeout: 30000 }
   );
   return JSON.parse(out) as {

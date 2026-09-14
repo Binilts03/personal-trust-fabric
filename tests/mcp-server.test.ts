@@ -146,6 +146,8 @@ describe("MCP server conformance over stdio (prod-04)", () => {
     const rpc = connect({
       PTF_STORE_DIR: store.dir,
       PTF_PASSPHRASE: "test-pass",
+      PTF_MCP_PRINCIPAL: "did:test:p",
+      PTF_MCP_ACTOR: "did:test:a",
     });
     try {
       const init = await rpc.call("initialize", {
@@ -169,8 +171,6 @@ describe("MCP server conformance over stdio (prod-04)", () => {
       const proposed = await rpc.call("tools/call", {
         name: "ptf_propose",
         arguments: {
-          principal: "did:test:p",
-          agent: "did:test:a",
           cmd: "/pay",
           purpose: "widgets",
           resource: "order:7",
@@ -240,6 +240,8 @@ describe("MCP server conformance over stdio (prod-04)", () => {
     const rpc = connect({
       PTF_STORE_DIR: store.dir,
       PTF_PASSPHRASE: "test-pass",
+      PTF_MCP_PRINCIPAL: "did:test:p",
+      PTF_MCP_ACTOR: "did:test:a",
     });
     try {
       await rpc.call("initialize", {

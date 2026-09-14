@@ -32,7 +32,9 @@ import {
 import type {
   ActorSelector,
   AttributeBound,
+  AuthorityOperation,
   AuthorityRequest,
+  VerifiedIdentity,
 } from "./index.js";
 import type { KeyObject } from "node:crypto";
 
@@ -82,8 +84,8 @@ export function helpText(): string {
     "  init                                   create store (refuses to overwrite)",
     "  keygen --alias NAME                    generate Ed25519 key into encrypted keystore",
     "  recipient --alias NAME --key HEX       register 32-byte recipient key",
-    "  grant --id ID --principal P --cmd /pay (--agent A | --actor-set a,b | --rooted-from ID | --any-agent) [--amount-max N] [--currency C] [--allowed-claims a,b] [--exp-in S] [--max-uses N] [--purpose T] [--resource R] [--resource-type T] [--recipient R]",
-    "         --any-agent is an explicit wildcard (audited, deliberate) — prefer --agent / --actor-set / --rooted-from",
+    "  grant --id ID --principal P --cmd /pay (--agent A | --actor-set a,b | --any-agent) [--amount-max N] [--currency C] [--allowed-claims a,b] [--exp-in S] [--max-uses N] [--purpose T] [--resource R] [--resource-type T] [--recipient R]",
+    "         --any-agent is an explicit wildcard (audited, deliberate) — prefer --agent / --actor-set",
     "  pay --principal P --agent A --recipient R --amount N --currency C --resource R [--purpose T] [--yes]",
     "  disclose --holder H --verifier V --claims a,b --credential JSON [--allowed a,b] [--yes]",
     "  audit [--verify]                       verify hash chain (needs no passphrase)",
@@ -94,7 +96,9 @@ export function helpText(): string {
     "examples:",
     "  PTF_PASSPHRASE=hunter2 ptf --dir ./ptf-store init",
     "  PTF_PASSPHRASE=hunter2 ptf keygen --alias you",
-    "  ptf grant --id g1 --principal you --cmd /pay --amount-max 2000 --currency INR",
+    "  ptf grant --id g1 --principal you --cmd /pay --agent shopper --amount-max 2000 --currency INR",
+    "  ptf grant --id g2 --principal you --cmd /pay --actor-set shopper,groceries --amount-max 2000 --currency INR",
+    "  ptf grant --id g3 --principal you --cmd /pay --any-agent --amount-max 500 --currency INR",
     "  PTF_PASSPHRASE=hunter2 ptf pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes",
     "docs: README.md, docs/audit/README.md",
   ].join("\n");
@@ -179,7 +183,6 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "agent",
     "actor-set",
     "any-agent",
-    "rooted-from",
     "cmd",
     "purpose",
     "resource",
@@ -391,17 +394,15 @@ export async function run(
     // Actor binding is mandatory: exactly one selector, never a silent wildcard.
     const agentRaw = opt(flags, "agent");
     const actorSetRaw = opt(flags, "actor-set");
-    const rootedRaw = opt(flags, "rooted-from");
     const anyAgent = flags["any-agent"] === true;
     const given = [
       agentRaw !== undefined,
       actorSetRaw !== undefined,
-      rootedRaw !== undefined,
       anyAgent,
     ].filter((v) => v).length;
     if (given !== 1) {
       throw new Error(
-        "usage: grant needs exactly one of --agent A | --actor-set a,b | --rooted-from ID | --any-agent"
+        "usage: grant needs exactly one of --agent A | --actor-set a,b | --any-agent"
       );
     }
     let actor: ActorSelector;
@@ -413,8 +414,6 @@ export async function run(
         throw new Error("usage: --actor-set must be a non-empty comma list");
       }
       actor = { kind: "set", ids };
-    } else if (rootedRaw !== undefined) {
-      actor = { kind: "rooted", root: rootedRaw };
     } else {
       actor = { kind: "any" };
     }
@@ -493,17 +492,23 @@ export async function run(
     const currency = str(flags, "currency");
     const resource = str(flags, "resource");
     const purpose = opt(flags, "purpose") ?? "payment";
-    // Binding is derived from the operation — never caller-supplied.
-    const op = {
-      principal,
-      actor: agent,
+    // Binding is derived from the operation + the trusted operator ingress
+    // (ADR-0013) — never caller-supplied.
+    const op: AuthorityOperation = {
       action: { name: "/pay" as const },
       resource: { type: "ptf-resource", id: resource },
       context: { amount, currency, recipient },
       purpose,
     };
-    const digest = digestForOperation(op);
-    const demand: AuthorityRequest = { ...op, termsDigest: digest };
+    const ingress: VerifiedIdentity = {
+      id: agent,
+      principal,
+      source: "local-registration",
+      proofRef: "cli-operator",
+    };
+    const bound = { ...op, principal, actor: agent };
+    const digest = digestForOperation(bound);
+    const demand: AuthorityRequest = { ...bound, termsDigest: digest };
     const capExp = now() + 300;
     // Fail fast before spending authority: keys must exist first.
     const principalSeed = ctx.keys[principal];
@@ -516,7 +521,7 @@ export async function run(
         `no local key for recipient ${recipient} (v0.1 CLI pays self-controlled identities only)`
       );
     }
-    const preview = ctx.auth.evaluate(demand, { nowSec: now() });
+    const preview = ctx.auth.evaluate(op, ingress, { nowSec: now() });
     if (!preview.allow) {
       io.print(`denied before approval: ${preview.reason}`);
       return 1;
@@ -534,7 +539,7 @@ export async function run(
       io.print("denied by human");
       return 1;
     }
-    const decision = ctx.auth.evaluate(demand, {
+    const decision = ctx.auth.evaluate(op, ingress, {
       consume: true,
       nowSec: now(),
     });
@@ -635,22 +640,28 @@ export async function run(
       throw new Error("usage: --credential must be valid JSON");
     }
     const allowed = (opt(flags, "allowed") ?? requested.join(",")).split(",");
-    // Binding is derived from the operation: claims + verifier ride in context.
-    const op = {
-      principal: holder,
-      actor: holder,
+    // Binding is derived from the operation + the trusted operator ingress:
+    // claims + verifier ride in context.
+    const op: AuthorityOperation = {
       action: { name: "/disclose" as const },
       resource: { type: "credential", id: `credential:${credential.issuer}` },
       context: { claims: requested, verifier },
       purpose: "disclose",
     };
-    const digest = digestForOperation(op);
-    const demand: AuthorityRequest = { ...op, termsDigest: digest };
+    const ingress: VerifiedIdentity = {
+      id: holder,
+      principal: holder,
+      source: "local-registration",
+      proofRef: "cli-operator",
+    };
+    const bound = { ...op, principal: holder, actor: holder };
+    const digest = digestForOperation(bound);
+    const demand: AuthorityRequest = { ...bound, termsDigest: digest };
     const holderSeed = ctx.keys[holder];
     if (holderSeed === undefined) {
       throw new Error(`no key for holder ${holder}`);
     }
-    const preview = ctx.auth.evaluate(demand, { nowSec: now() });
+    const preview = ctx.auth.evaluate(op, ingress, { nowSec: now() });
     if (!preview.allow) {
       io.print(`denied before approval: ${preview.reason}`);
       return 1;
@@ -667,7 +678,7 @@ export async function run(
       io.print("denied by human");
       return 1;
     }
-    const decision = ctx.auth.evaluate(demand, {
+    const decision = ctx.auth.evaluate(op, ingress, {
       consume: true,
       nowSec: now(),
     });

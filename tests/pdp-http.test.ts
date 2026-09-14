@@ -129,7 +129,12 @@ describe("reference HTTP PDP over loopback (ticket 12)", () => {
     child =
       child ??
       spawn(process.execPath, [SERVER, dir, "0"], {
-        env: { ...process.env, PTF_PDP_API_KEY: API_KEY },
+        env: {
+          ...process.env,
+          PTF_PDP_API_KEY: API_KEY,
+          PTF_PDP_PRINCIPAL: PRINCIPAL,
+          PTF_PDP_ACTOR: AGENT_A,
+        },
         stdio: ["ignore", "pipe", "pipe"],
       });
     port = await waitForListening(child);
@@ -155,12 +160,24 @@ describe("reference HTTP PDP over loopback (ticket 12)", () => {
   });
 
   it("denies as 200 + decision:false, never smuggled into an error", async () => {
+    // Over-ceiling amount under the verified identity: policy denies
+    // with a decision, not a transport error.
     const { status, json } = await post("/access/v1/evaluation", {
-      body: evaluationBody(ATTACKER, 12000),
+      body: evaluationBody(AGENT_A, 999999),
       key: API_KEY,
     });
     assert.equal(status, 200);
     assert.equal((json as { readonly decision: boolean }).decision, false);
+  });
+
+  it("spoofed subject hints fail closed with 400, never evaluated", async () => {
+    // Same trusted key but a body claiming another actor: the hint
+    // disagrees with the key-mapped ingress → 400, no decision.
+    const { status } = await post("/access/v1/evaluation", {
+      body: evaluationBody(ATTACKER, 12000),
+      key: API_KEY,
+    });
+    assert.equal(status, 400);
   });
 
   it("rejects bad or missing PEP credentials with 401", async () => {

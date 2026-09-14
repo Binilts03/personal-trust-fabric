@@ -18,14 +18,21 @@ import {
   renderAgentView,
   toAp2PaymentDemand,
 } from "../src/index.js";
-import type { AuthorityRequest } from "../src/index.js";
+import type {
+  AuthorityOperation,
+  AuthorityRequest,
+  VerifiedExternalBinding,
+  VerifiedIdentity,
+} from "../src/index.js";
 
-// Three-env proof (ticket 11): ONE FILE-BACKED store drives three runtimes.
-// Grant: agents A/B of the principal may book domestic economy ≤₹15,000
-// (explicit set — replaceable but never open), plus a rooted grant so a valid
-// delegated chain under AGENT_A allows, plus an ap2-payment grant so the REAL
-// toAp2PaymentDemand output (resource type "ap2-payment") evaluates. Expiry
-// Sep 30 2026. Above the ceiling needs a fresh exact-terms approval.
+// Three-env proof (ticket 11, ingress model tickets 15+16): ONE FILE-BACKED
+// store drives three runtimes. Grant: agents A/B of the principal may book
+// domestic economy ≤₹15,000 (explicit set — replaceable but never open),
+// plus a delegated grant explicitly naming AGENT_A's sub-agent (set —
+// chains are provenance only, never authority, since ADR-0013 removed
+// `rooted`), plus an ap2-payment grant so the REAL toAp2PaymentDemand output
+// (resource type "ap2-payment") evaluates. Expiry Sep 30 2026. Above the
+// ceiling needs a fresh exact-terms approval.
 //
 // Cross-vendor gap (fixtures stay local/unsigned): same process, no real
 // broker, no real AP2 party signatures, no separate hosts, no DPoP/mTLS cnf
@@ -37,6 +44,8 @@ const EXP = 1790812740;
 const PRINCIPAL = "did:test:traveler";
 const AGENT_A = "did:test:agent-a";
 const AGENT_B = "did:test:agent-b";
+const SUB_AGENT = "did:test:sub-agent";
+const OTHER_SUB = "did:test:sub-agent-2";
 const ATTACKER = "did:attacker:anything";
 const MERCHANT = "did:test:airline";
 const SECRET = "CARD-SECRET-never-leaves-host-9917";
@@ -56,7 +65,7 @@ function buildSnapshot(): unknown {
   auth.addGrant({
     id: "travel-delegated",
     principal: PRINCIPAL,
-    actor: { kind: "rooted", root: AGENT_A },
+    actor: { kind: "set", ids: [AGENT_A, SUB_AGENT] },
     action: { name: "/pay" },
     purpose: "book domestic economy flight",
     resource: { type: "flight", id: "flight:domestic:economy" },
@@ -92,24 +101,63 @@ function restoredAuth(): Authority {
   return Authority.restore(JSON.parse(raw) as unknown, { nowSec: () => NOW });
 }
 
-function demand(
-  agent: string,
-  amount: number,
-  actorChain?: readonly string[]
-): AuthorityRequest {
-  const operation = {
-    principal: PRINCIPAL,
-    actor: agent,
-    ...(actorChain !== undefined ? { actorChain } : {}),
+/** Identity-free operation: identity binds from the ingress at evaluation. */
+function operation(amount: number): AuthorityOperation {
+  return {
     action: { name: "/pay" as const },
     resource: { type: "flight", id: "flight:domestic:economy" },
     context: { amount, currency: "INR", recipient: MERCHANT },
     purpose: "book domestic economy flight",
   };
-  return { ...operation, termsDigest: digestForOperation(operation) };
 }
 
-describe("three-env proof: one store, three executors (pivot/04, neutral 0010)", () => {
+function ingressFor(
+  agent: string,
+  source: VerifiedIdentity["source"],
+  proofRef: string,
+  chain?: readonly string[]
+): VerifiedIdentity {
+  return {
+    id: agent,
+    principal: PRINCIPAL,
+    source,
+    proofRef,
+    ...(chain !== undefined ? { chain } : {}),
+  };
+}
+
+/** Engine-bound demand (what the engine assembles from operation+ingress). */
+function bind(
+  operation_: AuthorityOperation,
+  ingress: VerifiedIdentity
+): AuthorityRequest {
+  const bound = {
+    ...operation_,
+    principal: ingress.principal,
+    actor: ingress.id,
+    ...(ingress.chain !== undefined ? { actorChain: [...ingress.chain] } : {}),
+  };
+  return { ...bound, termsDigest: digestForOperation(bound) };
+}
+
+function decide(
+  auth: Authority,
+  operation_: AuthorityOperation,
+  ingress: VerifiedIdentity,
+  opts: {
+    readonly consume?: boolean;
+    readonly binding?: VerifiedExternalBinding;
+  } = {}
+) {
+  return evaluateAuthZen(
+    auth,
+    demandToAuthZen(bind(operation_, ingress)),
+    ingress,
+    opts
+  );
+}
+
+describe("three-env proof: one store, three executors (pivot/04, neutral 0010, ingress 0013)", () => {
   it("env A (OAuth/MCP): attenuated token + same PDP allow for replaceable agents", () => {
     const auth = restoredAuth();
     const root = mintRoot({
@@ -138,19 +186,36 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010)",
     assert.throws(() => assertDistinctTokens("same-token", "same-token"));
 
     for (const agent of [AGENT_A, AGENT_B]) {
-      const out = evaluateAuthZen(auth, demandToAuthZen(demand(agent, 12000)));
+      const out = decide(
+        auth,
+        operation(12000),
+        ingressFor(agent, "oauth", "three-env-a-token")
+      );
       assert.equal(out.decision, true, `agent ${agent} should allow ₹12k`);
     }
 
-    // Bind token→demand: the leaf actor from the delegated child drives the
-    // PDP with the full chain, matching the rooted grant.
+    // Token-bound leaf: the delegated child's leaf actor drives the PDP
+    // with the full chain as provenance. It allows because travel-delegated
+    // explicitly names the leaf (set) — the chain itself confers nothing.
     const leafAgent = child.act[child.act.length - 1] as string;
     const leafChain = [...child.act];
-    const leafOut = evaluateAuthZen(
-      auth,
-      demandToAuthZen(demand(leafAgent, 12000, leafChain))
+    const leafIngress = ingressFor(
+      leafAgent,
+      "oauth",
+      "three-env-a-token",
+      leafChain
     );
+    const leafOut = decide(auth, operation(12000), leafIngress);
     assert.equal(leafOut.decision, true, "delegated leaf should allow ₹12k");
+
+    // Chain-alone grants nothing: a different sub-agent riding the same
+    // root chain denies (provenance, not authorization — ADR-0013).
+    const impostorOut = decide(
+      auth,
+      operation(12000),
+      ingressFor(OTHER_SUB, "oauth", "three-env-a-token", [AGENT_A, OTHER_SUB])
+    );
+    assert.equal(impostorOut.decision, false);
 
     // Scope binding: the PDP decision must correspond to the token. The child
     // was narrowed to book-only, so a pay demand requiring pay scope is
@@ -158,13 +223,13 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010)",
     // demand mints from the token and allows at the PDP.
     assert.ok(child.scope.includes("book:economy"));
     assert.equal(child.scope.includes("pay:flight"), false);
-    function mintPayDemandFromToken(): AuthorityRequest | null {
+    function mintPayDemandFromToken(): AuthorityOperation | null {
       if (!child.scope.includes("pay:flight")) return null;
-      return demand(leafAgent, 12000, leafChain);
+      return operation(12000);
     }
-    function mintBookDemandFromToken(): AuthorityRequest | null {
+    function mintBookDemandFromToken(): AuthorityOperation | null {
       if (!child.scope.includes("book:economy")) return null;
-      return demand(leafAgent, 12000, leafChain);
+      return operation(12000);
     }
     assert.equal(
       mintPayDemandFromToken(),
@@ -174,7 +239,7 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010)",
     const bookDemand = mintBookDemandFromToken();
     assert.ok(bookDemand !== null);
     assert.equal(
-      evaluateAuthZen(auth, demandToAuthZen(bookDemand)).decision,
+      decide(auth, bookDemand, leafIngress).decision,
       true,
       "book-scoped token demand allows at PDP"
     );
@@ -182,7 +247,11 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010)",
 
   it("arbitrary unauthenticated agents deny on the identical demand", () => {
     const auth = restoredAuth();
-    const out = evaluateAuthZen(auth, demandToAuthZen(demand(ATTACKER, 12000)));
+    const out = decide(
+      auth,
+      operation(12000),
+      ingressFor(ATTACKER, "oauth", "three-env-a-token")
+    );
     assert.equal(out.decision, false);
     const ctx = out.context as { reason: string; detail?: string };
     assert.equal(ctx.reason, "no-authority");
@@ -208,7 +277,11 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010)",
     assert.ok(!serialized.includes(SECRET));
     assert.ok(!serialized.includes("P12345"));
 
-    const out = evaluateAuthZen(auth, demandToAuthZen(demand(AGENT_A, 12000)));
+    const out = decide(
+      auth,
+      operation(12000),
+      ingressFor(AGENT_A, "local-registration", "three-env-b")
+    );
     assert.equal(out.decision, true);
     // Host-side executor receives sanitized instruction only — never the vault secret.
     const executor = new FakePaymentExecutor();
@@ -227,10 +300,11 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010)",
 
   it("env C (AP2-style): mandate evidence maps to the same demand and decision", () => {
     const auth = restoredAuth();
-    // REAL AP2 evidence path: toAp2PaymentDemand output is the demand. The
-    // caller-supplied digest is stripped and recomputed, then routed via the
-    // AuthZEN translator (which recomputes again on recovery) — binding is
-    // derived, never trusted.
+    // REAL AP2 evidence path: toAp2PaymentDemand output is evidence. The
+    // adapter-built bound form is stripped back to the identity-free
+    // operation, and the verified transaction id travels as a binding via
+    // opts (never as wire) — digest derivation folds it in, citations echo
+    // it.
     const verified = {
       payeeId: MERCHANT,
       payeeName: MERCHANT,
@@ -248,19 +322,45 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010)",
     });
     assert.equal(mapped.capabilityArgs.amount, verified.amountMinor);
     assert.equal(mapped.capabilityArgs.currency, verified.currency);
-    const { termsDigest: _stripped, ...ap2Op } = mapped.demand;
+    const {
+      termsDigest: _stripped,
+      principal: _strippedPrincipal,
+      actor: _strippedActor,
+      ...ap2Op
+    } = mapped.demand;
     void _stripped;
-    const rebound = { ...ap2Op, termsDigest: digestForOperation(ap2Op) };
-    const out = evaluateAuthZen(auth, demandToAuthZen(rebound));
+    void _strippedPrincipal;
+    void _strippedActor;
+    const binding: VerifiedExternalBinding = {
+      scheme: "ap2",
+      value: verified.transactionId,
+      evidenceRef: "ap2-mandate",
+    };
+    const ingressB = ingressFor(AGENT_B, "local-registration", "three-env-c");
+    const out = evaluateAuthZen(
+      auth,
+      demandToAuthZen(bind(ap2Op, ingressB)),
+      ingressB,
+      { binding }
+    );
     assert.equal(out.decision, true);
+    const ctx = out.context as {
+      citations: {
+        authorityId: string;
+        binding?: VerifiedExternalBinding;
+      }[];
+    };
+    assert.equal(ctx.citations[0]?.authorityId, "travel-ap2");
+    assert.deepEqual(ctx.citations[0]?.binding, binding);
   });
 
   it("over-ceiling denies everywhere until exact-terms approval, then allows", () => {
     const auth = restoredAuth();
     for (const agent of [AGENT_A, AGENT_B]) {
-      const denied = evaluateAuthZen(
+      const denied = decide(
         auth,
-        demandToAuthZen(demand(agent, 18000))
+        operation(18000),
+        ingressFor(agent, "oauth", "three-env-a-token")
       );
       assert.equal(denied.decision, false);
     }
@@ -275,44 +375,44 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010)",
       ttlSec: 600,
       maxUses: 1,
     });
-    const allowed = evaluateAuthZen(
-      auth,
-      demandToAuthZen(demand(AGENT_A, 18000)),
-      { consume: true }
-    );
+    const ingressA = ingressFor(AGENT_A, "oauth", "three-env-a-token");
+    const allowed = decide(auth, operation(18000), ingressA, {
+      consume: true,
+    });
     assert.equal(allowed.decision, true);
     // Approval is actor-bound: AGENT_B still denies after AGENT_A's approval.
-    const stillDeniedB = evaluateAuthZen(
+    const stillDeniedB = decide(
       auth,
-      demandToAuthZen(demand(AGENT_B, 18000))
+      operation(18000),
+      ingressFor(AGENT_B, "oauth", "three-env-a-token")
     );
     assert.equal(stillDeniedB.decision, false);
     // Cross-agent reuse: the attacker cannot reuse AGENT_A's approval either.
-    const attackerReuse = evaluateAuthZen(
+    const attackerReuse = decide(
       auth,
-      demandToAuthZen(demand(ATTACKER, 18000))
+      operation(18000),
+      ingressFor(ATTACKER, "oauth", "three-env-a-token")
     );
     assert.equal(attackerReuse.decision, false);
     // Single-use approval: second consume must deny.
-    const second = evaluateAuthZen(
-      auth,
-      demandToAuthZen(demand(AGENT_A, 18000)),
-      { consume: true }
-    );
+    const second = decide(auth, operation(18000), ingressA, {
+      consume: true,
+    });
     assert.equal(second.decision, false);
     assert.equal(
       (second.context as { reason: string }).reason,
       "uses-exhausted"
     );
     // Mutated context at the same amount must deny with "terms".
-    const base = demand(AGENT_A, 18000);
-    const mutatedContext = { ...base.context, recipient: "did:test:impostor" };
-    const mutatedOperation = { ...base, context: mutatedContext };
-    const mutated: AuthorityRequest = {
-      ...mutatedOperation,
-      termsDigest: digestForOperation(mutatedOperation),
+    const mutatedOperation: AuthorityOperation = {
+      ...operation(18000),
+      context: {
+        amount: 18000,
+        currency: "INR",
+        recipient: "did:test:impostor",
+      },
     };
-    const mutatedOut = evaluateAuthZen(auth, demandToAuthZen(mutated));
+    const mutatedOut = decide(auth, mutatedOperation, ingressA);
     assert.equal(mutatedOut.decision, false);
     assert.equal((mutatedOut.context as { reason: string }).reason, "terms");
   });
@@ -323,14 +423,19 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010)",
     auth.revoke("travel-delegated", EXP);
     auth.revoke("travel-ap2", EXP);
     for (const agent of [AGENT_A, AGENT_B]) {
-      const out = evaluateAuthZen(auth, demandToAuthZen(demand(agent, 12000)));
+      const out = decide(
+        auth,
+        operation(12000),
+        ingressFor(agent, "oauth", "three-env-a-token")
+      );
       assert.equal(out.decision, false);
       assert.equal((out.context as { reason: string }).reason, "revoked");
     }
     // Env A token-bound leaf still denies at the PDP after revoke.
-    const leafOut = evaluateAuthZen(
+    const leafOut = decide(
       auth,
-      demandToAuthZen(demand("did:test:sub-agent", 12000, [AGENT_A]))
+      operation(12000),
+      ingressFor(SUB_AGENT, "oauth", "three-env-a-token", [AGENT_A])
     );
     assert.equal(leafOut.decision, false);
     assert.equal((leafOut.context as { reason: string }).reason, "revoked");
@@ -350,14 +455,27 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010)",
       purpose: "book domestic economy flight",
       resource: "flight:domestic:economy",
     });
-    const { termsDigest: _strippedRevoke, ...ap2OpRevoke } = mapped.demand;
+    const {
+      termsDigest: _strippedRevoke,
+      principal: _strippedPrincipalRevoke,
+      actor: _strippedActorRevoke,
+      ...ap2OpRevoke
+    } = mapped.demand;
     void _strippedRevoke;
+    void _strippedPrincipalRevoke;
+    void _strippedActorRevoke;
+    const ingressB = ingressFor(AGENT_B, "local-registration", "three-env-c");
     const ap2Out = evaluateAuthZen(
       auth,
-      demandToAuthZen({
-        ...ap2OpRevoke,
-        termsDigest: digestForOperation(ap2OpRevoke),
-      })
+      demandToAuthZen(bind(ap2OpRevoke, ingressB)),
+      ingressB,
+      {
+        binding: {
+          scheme: "ap2",
+          value: verified.transactionId,
+          evidenceRef: "ap2-mandate",
+        },
+      }
     );
     assert.equal(ap2Out.decision, false);
     assert.equal((ap2Out.context as { reason: string }).reason, "revoked");

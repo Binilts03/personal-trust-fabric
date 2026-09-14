@@ -72,8 +72,6 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       exp: NOW + 600,
     });
     const operation = {
-      principal: PRINCIPAL,
-      actor: AGENT,
       action: { name: "/pay" as const },
       resource: { type: "invoice", id: "invoice:inv_8472" },
       context: { amount: 1790, currency: "INR", recipient: MERCHANT },
@@ -81,9 +79,12 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
     };
 
     const decision = auth.evaluate(
+      operation,
       {
-        ...operation,
-        termsDigest: digestForOperation(operation),
+        id: AGENT,
+        principal: PRINCIPAL,
+        source: "local-registration",
+        proofRef: "execute-test",
       },
       { consume: true }
     );
@@ -93,16 +94,13 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       resolveKey: (id) => keys.get(id) ?? null,
       nowSec: () => NOW,
     });
-    const cap = issueCap(
-      caps,
-      principal.privateKey,
-      digestForOperation(operation)
-    );
+    const bound = { ...operation, principal: PRINCIPAL, actor: AGENT };
+    const cap = issueCap(caps, principal.privateKey, digestForOperation(bound));
     const demand = {
       cmd: "/pay" as const,
       args: { amount: 1790, currency: "INR" },
       recipient: MERCHANT,
-      termsDigest: digestForOperation(operation),
+      termsDigest: digestForOperation(bound),
     };
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
     const proof = {

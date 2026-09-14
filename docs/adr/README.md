@@ -13,3 +13,5 @@
 | [0009](0009-authority-engine-over-standards.md) | Authority engine over open standards, proprietary wire internal                                                | accepted | 2026-09-13 |
 | [0010](0010-domain-neutral-authority.md)        | Domain-neutral authority with verified actor binding and derived digests                                       | accepted | 2026-09-13 |
 | [0011](0011-public-surface.md)                  | Curated public surface, internal by packaging                                                                  | accepted | 2026-09-13 |
+| [0013](0013-trusted-ingress.md)                 | Trusted identity ingress (VerifiedIdentity; rooted removed; digest by construction)                            | accepted | 2026-09-13 |
+| [0014](0014-proposal-durability.md)             | Proposal durability: in-memory fail-closed (supersedes 0008)                                                   | accepted | 2026-09-13 |

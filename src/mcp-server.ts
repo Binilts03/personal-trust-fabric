@@ -23,10 +23,18 @@ import {
   digestForOperation,
 } from "./index.js";
 import { readFileSync } from "node:fs";
-import type { AuthorityRequest, SealedCapability } from "./index.js";
+import type {
+  AuthorityOperation,
+  AuthorityRequest,
+  SealedCapability,
+  VerifiedIdentity,
+} from "./index.js";
 
 /**
  * PTF MCP server (prod-04): the LLM-facing side of the harness (ADR-0007).
+ * Commerce reference host — the simple payment/disclosure schema is the
+ * reference-host convention, not the generic engine (which stays
+ * domain-neutral behind `Authority.evaluate`).
  * Tools: ptf_propose (dry-run evaluate + render, no side effects),
  * ptf_check (status by terms digest), ptf_redeem (re-verify, issue, prove,
  * execute, receipt). There is deliberately NO approve tool: approval happens
@@ -39,12 +47,27 @@ import type { AuthorityRequest, SealedCapability } from "./index.js";
  * reloaded per call and saved on success; concurrent redeems can lost-update
  * (last write wins). Run one server per store, or add external locking.
  * Receipts survive restarts in audit.jsonl; proposal status does not.
+ *
+ * IDENTITY (ADR-0013): the server speaks for ONE fixed identity — principal
+ * + actor are pinned at instantiation (`PtfServerOptions`, from
+ * `PTF_MCP_PRINCIPAL` / `PTF_MCP_ACTOR` in `main`) and bound as the verified
+ * ingress for every evaluation. Tool inputs carry NO identity fields: a
+ * caller choosing its own principal/agent would be self-certification.
+ * The stdio transport is local-only, so the fixed ingress is
+ * `source: "local-registration"` with `proofRef "stdio:<storeDir>"`.
+ * REMOTE / MULTI-TENANT hosts must NOT reuse this binding: derive a
+ * per-caller ingress from a verified token (OAuth/DPoP/mTLS) and pass it to
+ * `Authority.evaluate` — that mapping is host duty, not this file's.
  */
 
 export interface PtfServerOptions {
   readonly dir: string;
   readonly env: Record<string, string | undefined>;
   readonly now?: () => number;
+  /** Fixed verified principal. Every evaluation binds this — callers cannot. */
+  readonly principal: string;
+  /** Fixed verified actor. Every evaluation binds this — callers cannot. */
+  readonly actor: string;
 }
 
 interface Proposal {
@@ -56,8 +79,6 @@ interface Proposal {
 
 const demandSchema = z
   .object({
-    principal: z.string().min(1),
-    agent: z.string().min(1),
     cmd: z.enum(["/pay", "/disclose"]),
     purpose: z.string().min(1),
     resource: z.string().min(1),
@@ -85,6 +106,15 @@ function fail(message: string): never {
 
 export function createPtfServer(opts: PtfServerOptions): McpServer {
   const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
+  if (opts.principal.length === 0) fail("server principal is required");
+  if (opts.actor.length === 0) fail("server actor is required");
+  // Fixed verified ingress: stdio is local-only (see module header).
+  const ingress: VerifiedIdentity = {
+    id: opts.actor,
+    principal: opts.principal,
+    source: "local-registration",
+    proofRef: `stdio:${opts.dir}`,
+  };
   const proposals = new Map<string, Proposal>();
 
   const load = (): {
@@ -158,12 +188,11 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       const { auth } = load();
       pruneProposals();
       prunePending();
-      // Binding is derived server-side from the normalized operation: an
-      // untrusted agent must not supply it, so the schema takes no terms
-      // input. Payment/disclosure attributes ride in the context bag.
-      const op = {
-        principal: args.principal,
-        actor: args.agent,
+      // Binding is derived server-side from the normalized operation +
+      // the fixed verified ingress: untrusted callers supply neither
+      // identity nor digest, so the schema takes neither. Payment/disclosure
+      // attributes ride in the context bag.
+      const op: AuthorityOperation = {
         action: { name: args.cmd },
         resource: { type: "ptf-resource", id: args.resource },
         context: {
@@ -174,9 +203,14 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         },
         purpose: args.purpose,
       };
-      const digest = digestForOperation(op);
-      const demand: AuthorityRequest = { ...op, termsDigest: digest };
-      const decision = auth.evaluate(demand, { nowSec: now() });
+      const bound = {
+        ...op,
+        principal: ingress.principal,
+        actor: ingress.id,
+      };
+      const digest = digestForOperation(bound);
+      const demand: AuthorityRequest = { ...bound, termsDigest: digest };
+      const decision = auth.evaluate(op, ingress, { nowSec: now() });
       const text = renderProposal({
         demand,
         citations: decision.allow ? decision.citations : [],
@@ -273,6 +307,19 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       }
       const { auth, reg, audit, keys } = load();
       const demand = { ...proposal.demand, termsDigest: args.termsDigest };
+      // Re-evaluate under the fixed ingress: strip the stored bound form
+      // back to the identity-free operation and let the engine rebind.
+      const {
+        termsDigest: _storedDigest,
+        principal: _storedPrincipal,
+        actor: _storedActor,
+        actorChain: _storedChain,
+        ...op
+      } = demand;
+      void _storedDigest;
+      void _storedPrincipal;
+      void _storedActor;
+      void _storedChain;
       if (demand.action.name !== "/pay") {
         fail(
           "redeem supports /pay demands only in v1 (present disclosures via the CLI)"
@@ -322,7 +369,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         }
         // Dry-run first: no signed capability leaves the server unless live
         // authority would allow it. Still no consumption here.
-        const preview = auth.evaluate(demand, { nowSec: now() });
+        const preview = auth.evaluate(op, ingress, { nowSec: now() });
         if (!preview.allow) {
           proposal.status = "denied";
           fail(`authority denied at challenge time: ${preview.reason}`);
@@ -407,7 +454,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         fail(`redeem failed: ${redeemed.reason}`);
       }
       // Only now spend standing authority.
-      const decision = auth.evaluate(demand, { consume: true, nowSec: now() });
+      const decision = auth.evaluate(op, ingress, {
+        consume: true,
+        nowSec: now(),
+      });
       if (!decision.allow) {
         proposal.status = "denied";
         fail(`authority denied at redeem time: ${decision.reason}`);
@@ -454,7 +504,14 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
 async function main(): Promise<void> {
   const dir = process.env["PTF_STORE_DIR"] ?? "./ptf-store";
   const env: Record<string, string | undefined> = { ...process.env };
-  const server = createPtfServer({ dir, env });
+  const principal = env["PTF_MCP_PRINCIPAL"] ?? "";
+  const actor = env["PTF_MCP_ACTOR"] ?? "";
+  if (principal.length === 0 || actor.length === 0) {
+    throw new Error(
+      "mcp-server: PTF_MCP_PRINCIPAL and PTF_MCP_ACTOR are required (fixed server identity)"
+    );
+  }
+  const server = createPtfServer({ dir, env, principal, actor });
   await server.connect(new StdioServerTransport());
 }
 

@@ -15,8 +15,36 @@
  * - ceilings via `paymentBounds({ amountMax, currency })` (bounds
  *   `.context.amount <=` + `.context.currency ==`); disclosure allow-lists
  *   via `claimsSubset(allowed)` (bound `.context.claims subset`).
+ * - recipient pinning via `recipientBounds(recipients)` (bound
+ *   `.context.recipient in [...]`). Safe grants combine
+ *   `paymentBounds` + `recipientBounds`; merchant-agnostic grants (no
+ *   recipient bound) require explicit intent — they allow payment to any
+ *   recipient and must be audited as deliberate.
  *
- * No new logic here — re-exports of the engine helpers.
+ * No new logic here — re-exports of the engine helpers plus the small
+ * recipient-bound helper below.
  */
 
+import type { AttributeBound } from "../core/authority.js";
+
 export { paymentBounds, claimsSubset } from "../core/authority.js";
+
+/**
+ * Recipient-bound payment grants: the demanded `.context.recipient` must be
+ * a member of `recipients`. Combine with `paymentBounds` for safe grants:
+ * `[...paymentBounds({ amountMax, currency }), ...recipientBounds([...])]`.
+ * Merchant-agnostic (no recipient bound) requires explicit intent.
+ */
+export function recipientBounds(
+  recipients: readonly string[]
+): AttributeBound[] {
+  if (recipients.length === 0) {
+    throw new Error("recipientBounds: recipients must be non-empty");
+  }
+  for (const r of recipients) {
+    if (typeof r !== "string" || r.length === 0) {
+      throw new Error("recipientBounds: recipients must be non-empty strings");
+    }
+  }
+  return [{ path: ".context.recipient", op: "in", value: [...recipients] }];
+}

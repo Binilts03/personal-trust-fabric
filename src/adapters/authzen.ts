@@ -1,9 +1,13 @@
 import type {
   Authority,
+  AuthorityOperation,
   AuthorityRequest,
   Citation,
+  VerifiedExternalBinding,
+  VerifiedIdentity,
 } from "../core/authority.js";
 import { digestForOperation } from "../core/authority.js";
+import { canonicalize } from "../core/canonical.js";
 import { isRecord, reqString } from "./guards.js";
 
 /**
@@ -25,8 +29,15 @@ import { isRecord, reqString } from "./guards.js";
  *
  * PTF vocabulary placement (PTF fields in `properties`/`context`, never
  * new envelope keys):
- * - `subject.id` = principal; `subject.properties.actor` (+ optional
- *   `subject.properties.actorChain: string[]`) carry verified actor binding.
+ * - `subject.id` / `subject.properties.actor` (+ optional
+ *   `subject.properties.actorChain: string[]`) are UNTRUSTED HINTS, never
+ *   identity. `authZenToDemand(req, ingress)` throws fail-closed when a
+ *   present hint disagrees with the verified ingress (spoof attempt, e.g. a
+ *   PEP echoing `actor: "did:agent:trusted-payments"` it was never verified
+ *   as); absence is fine — the normal generic-PEP case binds everything
+ *   from the ingress. The bound demand carries identity from the ingress
+ *   ONLY (`principal` ← ingress.principal, `actor` ← ingress.id,
+ *   `actorChain` ← ingress.chain).
  * - `action.name` carries the /-path; `action.properties` carries the demand
  *   action properties plus `purpose` when present.
  * - `resource` (`type`, `id`, `properties`) passes through. Unlike the
@@ -55,11 +66,15 @@ import { isRecord, reqString } from "./guards.js";
  * declarative mapping) as a PTF-local mapping choice; it is not a
  * conformance claim against the draft.
  *
- * Digest derivation (ADR-0010): recovery builds the operation WITHOUT any
- * digest, computes it via digestForOperation, and IGNORES any
- * caller-supplied `context.termsDigest`. Untrusted PEPs must not supply
- * binding — the decision follows the true terms even when the envelope
- * carries a tampered digest. AP2 EXCEPTION: verified mandates
+ * Digest derivation (ADR-0010, ADR-0013): recovery builds the operation
+ * WITHOUT any digest, computes it via digestForOperation from the
+ * ingress-bound demand, and IGNORES any caller-supplied
+ * `context.termsDigest`. Untrusted PEPs must not supply binding — the
+ * decision follows the true terms even when the envelope carries a tampered
+ * digest. Verified external bindings (e.g. an AP2 transaction id that arrived
+ * as verified mandate evidence) flow via `evaluateAuthZen` opts, never via
+ * the wire: the engine folds the binding value into the derived digest and
+ * echoes it in citations. AP2 EXCEPTION: verified mandates
  * (`adapters/ap2.ts` toAp2PaymentDemand) may bind an external transaction id
  * as the digest, because there the id is verified evidence (checkout_hash
  * linkage recomputed during verification), not caller assertion. That path
@@ -73,9 +88,11 @@ import { isRecord, reqString } from "./guards.js";
  * - PTF-local: `action.name` must be a /-path; bare `"/"` is forbidden.
  *   Reason: core forbids wildcard actions; the /-path rule keeps AuthZEN
  *   actions mappable to PTF's attenuation lattice.
- * - PTF-local: `actorChain`, when present, must be a non-empty string array.
- *   Reason: preserves delegation trace for rooted-grant matching; empty or
- *   non-string chains would be ambiguous evidence.
+ * - PTF-local: `actorChain`, when present, must be a non-empty string array
+ *   AND must equal the verified ingress chain (canonical comparison).
+ *   Reason: the chain is delegation provenance for audit, never authority
+ *   (`rooted` selectors were removed in ADR-0013); an unverified chain
+ *   would be spoofable evidence.
  * - PTF-local: `purpose`, when present, must be non-empty. Reason: purpose
  *   participates in grant narrowing; empty purpose would silently widen.
  * - PTF-local: `context.termsDigest` echo (projection) + strip-and-recompute
@@ -229,14 +246,17 @@ export function demandToAuthZen(d: AuthorityRequest): AuthZenEvaluationRequest {
 }
 
 /**
- * Recover a PTF demand from an AuthZEN request. Fail-closed on shape: every
- * malformed input throws `Error` (never `TypeError`). `subject.type` is
- * untrusted envelope metadata and is not read. Any caller-supplied
- * `context.termsDigest` is IGNORED: the binding is recomputed from the
- * normalized operation via digestForOperation (see module header; AP2
- * exception documented there).
+ * Recover the caller-supplied operation from an AuthZEN request, checking
+ * untrusted identity hints against the verified ingress (ADR-0013).
+ * `subject.id` / `subject.properties.actor` / `subject.properties.actorChain`
+ * are HINTS: absent is fine (generic PEP — everything binds from the
+ * ingress), but present-and-unequal throws fail-closed (spoof attempt).
+ * Identity NEVER flows from the request into the bound demand.
  */
-export function authZenToDemand(r: AuthZenEvaluationRequest): AuthorityRequest {
+function recoverOperation(
+  r: AuthZenEvaluationRequest,
+  ingress: VerifiedIdentity
+): AuthorityOperation {
   if (!isRecord(r)) throw new Error("authzen: request must be an object");
   const raw = r as unknown as Record<string, unknown>;
   if (!isRecord(raw["subject"])) {
@@ -248,24 +268,62 @@ export function authZenToDemand(r: AuthZenEvaluationRequest): AuthorityRequest {
   if (!isRecord(raw["resource"])) {
     throw new Error("authzen: resource must be an object");
   }
+  if (
+    typeof ingress !== "object" ||
+    ingress === null ||
+    Array.isArray(ingress)
+  ) {
+    throw new Error("authzen: ingress must be a VerifiedIdentity object");
+  }
   const subject = raw["subject"] as Record<string, unknown>;
   const action = raw["action"] as Record<string, unknown>;
   const resource = raw["resource"] as Record<string, unknown>;
-  const principal = reqString(subject["id"], "authzen: subject missing id");
+  // Untrusted hints: present-and-unequal is a spoof attempt, absence binds
+  // from the ingress. `subject.type` stays ignored envelope metadata.
+  const idHint: unknown = subject["id"];
+  if (idHint !== undefined) {
+    if (typeof idHint !== "string" || idHint.length === 0) {
+      throw new Error("authzen: subject.id must be a non-empty string");
+    }
+    if (idHint !== ingress.principal) {
+      throw new Error(
+        "authzen: subject.id hint does not match verified ingress (spoof attempt)"
+      );
+    }
+  }
   const subjPropsRaw: unknown = subject["properties"] ?? {};
   if (!isRecord(subjPropsRaw)) {
     throw new Error("authzen: subject.properties must be an object");
   }
-  const actor = reqString(
-    (subjPropsRaw as Record<string, unknown>)["actor"],
-    "authzen: subject.properties missing actor"
-  );
-  let actorChain: readonly string[] | undefined;
+  const actorHint: unknown = (subjPropsRaw as Record<string, unknown>)["actor"];
+  if (actorHint !== undefined) {
+    if (typeof actorHint !== "string" || actorHint.length === 0) {
+      throw new Error(
+        "authzen: subject.properties.actor must be a non-empty string"
+      );
+    }
+    if (actorHint !== ingress.id) {
+      throw new Error(
+        "authzen: subject.properties.actor hint does not match verified ingress (spoof attempt)"
+      );
+    }
+  }
   const chainRaw: unknown = (subjPropsRaw as Record<string, unknown>)[
     "actorChain"
   ];
   if (chainRaw !== undefined) {
-    actorChain = parseActorChain(chainRaw);
+    const hinted = parseActorChain(chainRaw);
+    let same = false;
+    try {
+      same = canonicalize(hinted) === canonicalize([...(ingress.chain ?? [])]);
+    } catch {
+      same = false;
+    }
+    if (!same) {
+      throw new Error(
+        "authzen: subject.properties.actorChain hint does not match verified ingress (spoof attempt)"
+      );
+    }
   }
   const actionName = reqString(action["name"], "authzen: action missing name");
   if (!actionName.startsWith("/") || actionName === "/") {
@@ -312,10 +370,7 @@ export function authZenToDemand(r: AuthZenEvaluationRequest): AuthorityRequest {
     Object.keys(resPropsRaw as Record<string, unknown>).length > 0
       ? { ...(resPropsRaw as Record<string, unknown>) }
       : undefined;
-  const op = {
-    principal,
-    actor,
-    ...(actorChain !== undefined ? { actorChain: [...actorChain] } : {}),
+  return {
     action: {
       name: actionName as `/${string}`,
       ...(actionPropsOut !== undefined ? { properties: actionPropsOut } : {}),
@@ -330,25 +385,64 @@ export function authZenToDemand(r: AuthZenEvaluationRequest): AuthorityRequest {
     context: { ...restCtx },
     ...(purposeRaw !== undefined ? { purpose: purposeRaw as string } : {}),
   };
-  return { ...op, termsDigest: digestForOperation(op) };
 }
 
 /**
- * Evaluate an AuthZEN-shaped request against PTF authority (local decision
- * over the information model — NOT a network PDP endpoint; see transport
- * mapping in the module header for real v1 PDP calls).
- * Allow carries citations; deny carries reason. Never throws on deny —
- * only on malformed requests (fail-closed at the caller).
+ * Recover a PTF demand from an AuthZEN request under a verified ingress.
+ * Fail-closed on shape: every malformed input throws `Error` (never
+ * `TypeError`). Identity comes from the ingress ONLY — request hints are
+ * checked (spoof attempts throw) and otherwise ignored. Any
+ * caller-supplied `context.termsDigest` is IGNORED: the binding is
+ * recomputed from the ingress-bound operation via digestForOperation (see
+ * module header; verified external bindings flow via `evaluateAuthZen`
+ * opts, never via this function).
+ */
+export function authZenToDemand(
+  r: AuthZenEvaluationRequest,
+  ingress: VerifiedIdentity
+): AuthorityRequest {
+  const op = recoverOperation(r, ingress);
+  const bound = {
+    ...op,
+    principal: ingress.principal,
+    actor: ingress.id,
+    ...(ingress.chain !== undefined ? { actorChain: [...ingress.chain] } : {}),
+  };
+  return { ...bound, termsDigest: digestForOperation(bound) };
+}
+
+/**
+ * Evaluate an AuthZEN-shaped request against PTF authority under a verified
+ * ingress (local decision over the information model — NOT a network PDP
+ * endpoint; see transport mapping in the module header for real v1 PDP
+ * calls). Allow carries citations (echoing opts.binding when present);
+ * deny carries reason. Never throws on deny — only on malformed requests
+ * or spoofed identity hints (fail-closed at the caller).
  */
 export function evaluateAuthZen(
   auth: Authority,
   req: AuthZenEvaluationRequest,
-  opts: { readonly consume?: boolean; readonly nowSec?: number } = {}
+  ingress: VerifiedIdentity,
+  opts: {
+    readonly consume?: boolean;
+    readonly nowSec?: number;
+    readonly binding?: VerifiedExternalBinding;
+  } = {}
 ): AuthZenDecision {
-  const demand = authZenToDemand(req);
-  const verdict = auth.evaluate(demand, opts);
+  const op = recoverOperation(req, ingress);
+  const verdict = auth.evaluate(op, ingress, opts);
   if (verdict.allow) {
     const citations: readonly Citation[] = verdict.citations;
+    // Log echo of the DERIVED digest. authZenToDemand is binding-unaware,
+    // so refold the verified binding (if any) — the echo must name the
+    // exact terms the decision was derived under.
+    const demand = authZenToDemand(req, ingress);
+    const { termsDigest: _drop, ...boundEcho } = demand;
+    void _drop;
+    const echoDigest =
+      opts.binding !== undefined
+        ? digestForOperation(boundEcho, opts.binding)
+        : demand.termsDigest;
     return {
       decision: true,
       context: {
@@ -356,8 +450,9 @@ export function evaluateAuthZen(
           authorityId: c.authorityId,
           kind: c.kind,
           policyIds: [...c.policyIds],
+          ...(c.binding !== undefined ? { binding: { ...c.binding } } : {}),
         })),
-        termsDigest: demand.termsDigest,
+        termsDigest: echoDigest,
       },
     };
   }

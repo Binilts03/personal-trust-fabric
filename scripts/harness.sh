@@ -10,8 +10,8 @@ cd "$ROOT"
 echo "→ typecheck"; npm run typecheck
 echo "→ build+unit"; npm test
 echo "→ eval"; npm run eval
-echo "→ seam check (tests via ../src/index.js; bin entries src/cli.js + src/mcp-server.js exempt per cli.ts:34-36)"
-if grep -R "from \"\.\./src/[^\"]*\.js\"" tests --include="*.ts" | grep -v "from \"\.\./src/index\.js\"" | grep -v "from \"\.\./src/cli\.js\"" | grep -v "from \"\.\./src/mcp-server\.js\""; then
+echo "→ seam check (tests via ../src/index.js; bin entries src/cli.js + src/mcp-server.js + src/pdp-server.js exempt per cli.ts:34-36)"
+if grep -R "from \"\.\./src/[^\"]*\.js\"" tests --include="*.ts" | grep -v "from \"\.\./src/index\.js\"" | grep -v "from \"\.\./src/cli\.js\"" | grep -v "from \"\.\./src/mcp-server\.js\"" | grep -v "from \"\.\./src/pdp-server\.js\""; then
   echo "FAIL: test reaches past public seam"; exit 1;
 fi
 echo "→ zero-dep check (src/core: node:crypto + relative only)"
