@@ -481,6 +481,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       );
       // Persist authority BEFORE audit: a crash between must not replay.
       // (Authority consumed + no receipt is safe; receipt + unconsumed is not.)
+      // The entry stamps post-save revisions for the load-time freshness check.
       saveAuthority(opts.dir, auth);
       audit.append({
         actor: agent,
@@ -490,6 +491,8 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           : {}),
         capabilityId: receipt.capabilityId,
         detail: receipt.transaction,
+        authorityRev: auth.loadedRevision(),
+        registryRev: reg.loadedRevision(),
       });
       proposal.status = "executed";
       proposal.receipt = JSON.parse(JSON.stringify(receipt)) as Record<

@@ -89,6 +89,14 @@ export interface AuditEvent {
   readonly capabilityId?: string;
   /** Must stay secret-free. Host obligation; covered by secretness test. */
   readonly detail?: string;
+  /**
+   * Store revisions this entry was recorded under (ticket 03). Writers stamp
+   * the post-save revisions so loads can prove the files were not rolled
+   * back past recorded history; readers treat absent fields as
+   * unconstrained (pre-revision lines).
+   */
+  readonly authorityRev?: number;
+  readonly registryRev?: number;
 }
 
 export interface AuditEntry extends Required<
@@ -97,6 +105,8 @@ export interface AuditEntry extends Required<
   readonly authorityId?: string;
   readonly capabilityId?: string;
   readonly detail?: string;
+  readonly authorityRev?: number;
+  readonly registryRev?: number;
   readonly seq: number;
   readonly prevHash: string;
   readonly hash: string;
@@ -140,6 +150,15 @@ export class Audit {
   }
 
   append(event: AuditEvent): AuditEntry {
+    for (const field of ["authorityRev", "registryRev"] as const) {
+      const v: unknown = event[field];
+      if (
+        v !== undefined &&
+        (typeof v !== "number" || !Number.isInteger(v) || v < 0)
+      ) {
+        throw new Error(`audit: ${field} must be a non-negative integer`);
+      }
+    }
     const prev =
       this.entries.length === 0
         ? GENESIS
@@ -157,6 +176,12 @@ export class Audit {
         ? { capabilityId: event.capabilityId }
         : {}),
       ...(event.detail !== undefined ? { detail: event.detail } : {}),
+      ...(event.authorityRev !== undefined
+        ? { authorityRev: event.authorityRev }
+        : {}),
+      ...(event.registryRev !== undefined
+        ? { registryRev: event.registryRev }
+        : {}),
     };
     const entry: AuditEntry = {
       ...body,
@@ -181,7 +206,15 @@ export class Audit {
         typeof raw["authorityId"] !== "string") ||
       (raw["capabilityId"] !== undefined &&
         typeof raw["capabilityId"] !== "string") ||
-      (raw["detail"] !== undefined && typeof raw["detail"] !== "string")
+      (raw["detail"] !== undefined && typeof raw["detail"] !== "string") ||
+      (raw["authorityRev"] !== undefined &&
+        (typeof raw["authorityRev"] !== "number" ||
+          !Number.isInteger(raw["authorityRev"] as number) ||
+          (raw["authorityRev"] as number) < 0)) ||
+      (raw["registryRev"] !== undefined &&
+        (typeof raw["registryRev"] !== "number" ||
+          !Number.isInteger(raw["registryRev"] as number) ||
+          (raw["registryRev"] as number) < 0))
     ) {
       throw new Error("audit: malformed entry");
     }

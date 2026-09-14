@@ -23,8 +23,13 @@ tested at the boundary.
   executing (documented at the function).
 - Unbounded `/pay*` standing grants rejected at `addGrant` (soft guard) — add
   a `.context.amount` ceiling or use a one-time exact-terms approval.
-- Restored snapshots decide from copied state — revocation/usage freshness
-  needs the live store; stale copies ignore later revokes (threat model v2).
+- Rollback is detected, not prevented: every audit entry commits to the
+  post-save store revisions, and loads fail closed when the files predate
+  recorded history (single-step and partial rollbacks alarm). A
+  full-directory rollback to consistently-old files is undetectable without
+  an external anchor — export `store/anchor.ts` checkpoints and verify them
+  on restore (runbook duty). In-memory restored copies still decide from
+  their copy but can never persist over newer state (revision CAS).
 - Audit/detail secret-freedom is host-enforced — core never emits raw secrets,
   but host-supplied `detail`/context strings can leak into backups/logs.
 

@@ -15,3 +15,4 @@
 | [0011](0011-public-surface.md)                  | Curated public surface, internal by packaging                                                                  | accepted | 2026-09-13 |
 | [0013](0013-trusted-ingress.md)                 | Trusted identity ingress (VerifiedIdentity; rooted removed; digest by construction)                            | accepted | 2026-09-13 |
 | [0014](0014-proposal-durability.md)             | Proposal durability: in-memory fail-closed (supersedes 0008)                                                   | accepted | 2026-09-13 |
+| [0015](0015-store-integrity.md)                 | Store integrity via revision CAS + audit freshness binding                                                     | accepted | 2026-09-14 |

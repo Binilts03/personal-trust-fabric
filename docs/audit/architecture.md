@@ -32,7 +32,8 @@ no lateral delegation.
 - `core/capability`: `issue/authorize/revoke`, subtree use-budget, cascade
   revocation via `revocationId` links, recipient Ed25519 proof over leaf CID.
 - `core/authority`: grants + one-time digest-bound approvals + constraints,
-  citations on every allow, `snapshot/restore` for durability.
+  citations on every allow, `snapshot/restore` for durability (revision CAS
+  - audit freshness binding per ADR-0015).
 - `core/approve`: pure `renderProposal/parseDecision`; `\r\n\t`→space,
   ANSI/C0 stripped, NaN-expiry safe.
 - `core/disclose`: `requested ∩ available ∩ allowed`, `Object.hasOwn` (no

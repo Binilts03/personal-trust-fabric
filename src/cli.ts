@@ -386,6 +386,15 @@ export async function run(
     const key = new Uint8Array(Buffer.from(str(flags, "key"), "hex"));
     ctx.reg.register(alias, key, now());
     persistState(ctx);
+    // Authority mutations are audit-worthy: the entry stamps post-save
+    // revisions so rolling back registry.json past this point alarms.
+    ctx.audit.append({
+      actor: "operator",
+      action: "register",
+      detail: alias,
+      authorityRev: ctx.auth.loadedRevision(),
+      registryRev: ctx.reg.loadedRevision(),
+    });
     io.print(`registered ${alias}`);
     return 0;
   }
@@ -480,7 +489,15 @@ export async function run(
         : {}),
     });
     persistState(ctx);
-    io.print(`grant ${str(flags, "id")} recorded`);
+    const grantId = str(flags, "id");
+    ctx.audit.append({
+      actor: "operator",
+      action: "grant",
+      authorityId: grantId,
+      authorityRev: ctx.auth.loadedRevision(),
+      registryRev: ctx.reg.loadedRevision(),
+    });
+    io.print(`grant ${grantId} recorded`);
     return 0;
   }
 
@@ -609,14 +626,20 @@ export async function run(
     const cited = decision.allow
       ? decision.citations[0]?.authorityId
       : undefined;
+    // Persist BEFORE audit: a crash between must not replay (authority
+    // consumed + no receipt is safe; receipt + unconsumed is not — same
+    // order as the MCP server). The entry stamps the post-save revisions
+    // so a later file rollback fails the freshness check at load.
+    persistState(ctx);
     ctx.audit.append({
       actor: agent,
       action: "pay",
       ...(cited !== undefined ? { authorityId: cited } : {}),
       capabilityId: receipt.capabilityId,
       detail: receipt.transaction,
+      authorityRev: ctx.auth.loadedRevision(),
+      registryRev: ctx.reg.loadedRevision(),
     });
-    persistState(ctx);
     io.print(JSON.stringify(receipt));
     return 0;
   }
@@ -694,12 +717,16 @@ export async function run(
       { id: holder, privateKey: holderPriv },
       now()
     );
+    // Persist BEFORE audit (same crash order as pay/MCP): the entry stamps
+    // the post-save revisions for the load-time freshness check.
+    persistState(ctx);
     ctx.audit.append({
       actor: holder,
       action: "disclose",
       detail: pres.disclosures.map((d) => d.name).join(","),
+      authorityRev: ctx.auth.loadedRevision(),
+      registryRev: ctx.reg.loadedRevision(),
     });
-    persistState(ctx);
     io.print(JSON.stringify(pres.disclosures.map((d) => d.name)));
     return 0;
   }
@@ -720,12 +747,26 @@ export async function run(
     if (grant !== undefined) {
       ctx.auth.revoke(grant);
       persistState(ctx);
+      ctx.audit.append({
+        actor: "operator",
+        action: "revoke",
+        authorityId: grant,
+        authorityRev: ctx.auth.loadedRevision(),
+        registryRev: ctx.reg.loadedRevision(),
+      });
       io.print(`revoked grant ${grant}`);
       return 0;
     }
     if (recipient !== undefined) {
       ctx.reg.revoke(recipient);
       persistState(ctx);
+      ctx.audit.append({
+        actor: "operator",
+        action: "revoke",
+        detail: recipient,
+        authorityRev: ctx.auth.loadedRevision(),
+        registryRev: ctx.reg.loadedRevision(),
+      });
       io.print(`revoked recipient ${recipient}`);
       return 0;
     }

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -205,5 +205,123 @@ describe("durable JSON stores (prod-01)", () => {
     rmSync(join(dir, "authority.json"));
     h.revoke("g1");
     assert.throws(() => saveAuthority(dir, h), /store missing/);
+  });
+
+  it("rolled-back authority past recorded history alarms at load (ticket 03)", () => {
+    const dir = tmp();
+    const seed = new Authority({ nowSec: () => NOW });
+    seed.addGrant({
+      id: "g1",
+      principal: P,
+      actor: { kind: "exact", id: A },
+      action: { name: "/pay" },
+      bounds: paymentBounds({ amountMax: 2000, currency: "INR" }),
+      exp: NOW + 3600,
+    });
+    saveAuthority(dir, seed); // rev 0
+    const reg = new RecipientRegistry(() => NOW);
+    reg.register(M, generateEd25519Keypair().publicKeyRaw);
+    saveRegistry(dir, reg); // rev 0
+    FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW).append({
+      actor: "operator",
+      action: "grant",
+      authorityId: "g1",
+      authorityRev: 0,
+      registryRev: 0,
+    });
+    const preRevokeBytes = readFileSync(join(dir, "authority.json"), "utf8");
+
+    // Revoke commits mutation + audit trace together (rev 1).
+    const h = loadAuthority(dir, { nowSec: () => NOW });
+    h.revoke("g1");
+    saveAuthority(dir, h);
+    FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW).append({
+      actor: "operator",
+      action: "revoke",
+      authorityId: "g1",
+      authorityRev: 1,
+      registryRev: 0,
+    });
+
+    // Attacker restores the pre-revoke file: load alarms, never decides.
+    writeFileSync(join(dir, "authority.json"), preRevokeBytes);
+    assert.throws(() => loadAuthority(dir), /predates|rollback/);
+  });
+
+  it("rolled-back registry past recorded history alarms at load (ticket 03)", () => {
+    const dir = tmp();
+    const seed = new Authority({ nowSec: () => NOW });
+    seed.addGrant({
+      id: "g1",
+      principal: P,
+      actor: { kind: "exact", id: A },
+      action: { name: "/pay" },
+      bounds: paymentBounds({ amountMax: 2000, currency: "INR" }),
+      exp: NOW + 3600,
+    });
+    saveAuthority(dir, seed);
+    const reg = new RecipientRegistry(() => NOW);
+    const k1 = generateEd25519Keypair();
+    reg.register(M, k1.publicKeyRaw);
+    saveRegistry(dir, reg); // rev 0
+    const preRotateBytes = readFileSync(join(dir, "registry.json"), "utf8");
+
+    const r = loadRegistry(dir, () => NOW);
+    r.rotate(M, generateEd25519Keypair().publicKeyRaw);
+    saveRegistry(dir, r); // rev 1
+    FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW).append({
+      actor: "operator",
+      action: "register",
+      detail: M,
+      authorityRev: 0,
+      registryRev: 1,
+    });
+
+    writeFileSync(join(dir, "registry.json"), preRotateBytes);
+    assert.throws(() => loadRegistry(dir), /predates|rollback/);
+  });
+
+  it("pre-revision audit lines impose no constraint; stale copies decide but cannot persist (ticket 03)", () => {
+    const dir = tmp();
+    const seed = new Authority({ nowSec: () => NOW });
+    seed.addGrant({
+      id: "g1",
+      principal: P,
+      actor: { kind: "exact", id: A },
+      action: { name: "/pay" },
+      bounds: paymentBounds({ amountMax: 2000, currency: "INR" }),
+      exp: NOW + 3600,
+    });
+    saveAuthority(dir, seed);
+    // Old-format audit line (no revision fields): loads fine, no constraint.
+    FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW).append({
+      actor: A,
+      action: "redeem",
+      capabilityId: "cid-1",
+    });
+    loadAuthority(dir, { nowSec: () => NOW });
+
+    // A stale in-memory copy still decides from its copy (documented
+    // residual — freshness of decisions needs the live store), but the
+    // ticket-02 CAS stops it persisting over newer state.
+    const live = loadAuthority(dir, { nowSec: () => NOW });
+    const staleCopy = JSON.parse(JSON.stringify(live.snapshot())) as unknown;
+    live.revoke("g1");
+    saveAuthority(dir, live);
+    const operation = {
+      action: { name: "/pay" as const },
+      resource: { type: "invoice", id: "r" },
+      context: { amount: 100, currency: "INR", recipient: M },
+      purpose: "p",
+    };
+    const ingress = {
+      id: A,
+      principal: P,
+      source: "local-registration",
+      proofRef: "store-test",
+    } as const;
+    const restored = Authority.restore(staleCopy, { nowSec: () => NOW });
+    assert.equal(restored.evaluate(operation, { ...ingress }).allow, true);
+    assert.throws(() => saveAuthority(dir, restored), /changed under us/);
   });
 });

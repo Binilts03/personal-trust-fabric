@@ -136,10 +136,12 @@ export function loadAuthority(
   dir: string,
   opts?: ConstructorParameters<typeof Authority>[0]
 ): Authority {
-  return Authority.restore(
+  const auth = Authority.restore(
     parseFile(join(dir, "authority.json"), "authority"),
     opts
   );
+  checkFreshness(dir, "authority", auth.loadedRevision());
+  return auth;
 }
 
 export function saveRegistry(dir: string, reg: RecipientRegistry): void {
@@ -153,10 +155,54 @@ export function loadRegistry(
   dir: string,
   nowSec?: () => number
 ): RecipientRegistry {
-  return RecipientRegistry.restore(
+  const reg = RecipientRegistry.restore(
     parseFile(join(dir, "registry.json"), "registry"),
     nowSec
   );
+  checkFreshness(dir, "registry", reg.loadedRevision());
+  return reg;
+}
+
+/**
+ * Rollback detection (ticket 03): every audit entry commits to the store
+ * revisions it was recorded under, so a file rolled back past recorded
+ * history fails closed at load instead of silently resurrecting revokes
+ * and spent uses. Lines without revision fields (pre-revision history)
+ * impose no constraint; a missing audit file imposes none either. A full
+ * directory rollback (all files consistently old) is undetectable here —
+ * that needs an external anchor (`store/anchor.ts` checkpoints, ticket 12
+ * runbook). Linear scan per load: operator-scale by design; high-throughput
+ * PDP hosts pin snapshots (ticket 10).
+ */
+function checkFreshness(
+  dir: string,
+  what: "authority" | "registry",
+  fileRev: number
+): void {
+  const field = what === "authority" ? "authorityRev" : "registryRev";
+  const path = join(dir, "audit.jsonl");
+  if (!existsSync(path)) return;
+  let maxRef: number | null = null;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    const t = line.trim();
+    if (t.length === 0) continue;
+    let rec: unknown;
+    try {
+      rec = JSON.parse(t) as unknown;
+    } catch {
+      continue; // corrupt lines detonate at FileAuditLog.open, not here
+    }
+    if (typeof rec !== "object" || rec === null || Array.isArray(rec)) continue;
+    const v: unknown = (rec as Record<string, unknown>)[field];
+    if (typeof v === "number" && Number.isInteger(v) && v >= 0) {
+      maxRef = maxRef === null ? v : Math.max(maxRef, v);
+    }
+  }
+  if (maxRef !== null && fileRev < maxRef) {
+    throw new Error(
+      `${what} store at revision ${fileRev} predates audit history (references revision ${maxRef}) — suspected partial rollback; restore authority.json, registry.json, and audit.jsonl from the same backup`
+    );
+  }
 }
 
 /** Append-only audit log file. Entries are canonical JSON, one per line. */
