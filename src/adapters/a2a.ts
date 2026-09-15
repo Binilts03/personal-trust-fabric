@@ -4,7 +4,8 @@ import { canonicalize, utf8Bytes } from "../core/canonical.js";
 import { signBytes, verifyBytes } from "../core/crypto.js";
 import { isRecord, reqString } from "./guards.js";
 import { b64uEncode, esDerToRaw, verifyEs256Key } from "./jws.js";
-import { assertSafeUrl } from "./urls.js";
+import { assertSafeUrl, fetchWithPinning } from "./urls.js";
+import type { PinnedFetchOptions } from "./urls.js";
 
 /**
  * A2A edge guards — card structure, signed-card verification, task states, push URLs.
@@ -353,4 +354,78 @@ export function checkTaskTransition(from: string, to: string): void {
 /** Push endpoints obey the same safety rules as any fetched URL. No loopback delivery. */
 export function checkPushUrl(url: string): void {
   assertSafeUrl(url, "push", false);
+}
+
+/**
+ * Pinned-HTTPS key-fetch guard (ticket 11, host-owned).
+ * Card/key bytes MUST arrive over pinned HTTPS fetched via
+ * `fetchWithPinning` — never http, never a private-range host, never
+ * `jku`-directed. Expiry + revocation are host-checked here so a stale
+ * or retired key fails closed before any signature verifies.
+ */
+export function assertKeyFetchUrl(raw: string): URL {
+  return assertSafeUrl(raw, "a2a key", false);
+}
+
+export interface CardKeyPolicy {
+  /** Lowercased-host allowlist. Absent = any public-https host. */
+  readonly allowedHosts?: readonly string[];
+  /** Host revocation callback. True = retired, fail closed. */
+  readonly isRevoked?: (kid: string) => boolean;
+  /** Epoch-ms expiry for the resolved key. Absent = no expiry claim. */
+  readonly expiresAtMs?: number;
+  readonly nowMs?: number;
+}
+
+export function checkCardKeyPolicy(
+  kid: string,
+  rawUrl: string,
+  policy?: CardKeyPolicy
+): URL {
+  if (kid.length === 0) throw new A2aError("key policy: missing kid");
+  const url = assertKeyFetchUrl(rawUrl);
+  const allowed = policy?.allowedHosts;
+  if (allowed !== undefined && !allowed.includes(url.hostname.toLowerCase())) {
+    throw new A2aError(`key host not pinned: ${url.hostname}`);
+  }
+  if (policy?.isRevoked?.(kid) === true) {
+    throw new A2aError(`revoked signing key ${kid}`);
+  }
+  const expiresAt = policy?.expiresAtMs;
+  if (expiresAt !== undefined) {
+    const now = policy?.nowMs ?? Date.now();
+    if (!Number.isFinite(now) || !Number.isFinite(expiresAt)) {
+      throw new A2aError("key policy: non-finite time");
+    }
+    if (now > expiresAt) throw new A2aError(`expired signing key ${kid}`);
+  }
+  return url;
+}
+
+export interface PinnedKeySource {
+  /** Host mapping from key id to its fetch URL (never `jku`-directed). */
+  readonly urlForKid: (kid: string) => string;
+  readonly policy?: CardKeyPolicy;
+  /** Passed through to `fetchWithPinning` (lookup/fetchFn injectable). */
+  readonly fetch?: PinnedFetchOptions;
+}
+
+/**
+ * Fetch one card key's bytes over the pinned path (review follow-up — the
+ * guard above had no caller). Policy first (https, host, revocation,
+ * expiry), then `fetchWithPinning` (DNS + redirect re-check, no-follow
+ * by default). Parsing the bytes into a `CardKey` stays host duty:
+ * feed them to `verifyEs256Key`/Ed25519 verification behind the host's
+ * own trust root.
+ */
+export async function fetchCardKeyBytes(
+  kid: string,
+  source: PinnedKeySource
+): Promise<{ readonly url: string; readonly text: string }> {
+  const url = checkCardKeyPolicy(kid, source.urlForKid(kid), source.policy);
+  const res = await fetchWithPinning(url.toString(), {
+    ...source.fetch,
+    what: "a2a key",
+  });
+  return { url: url.toString(), text: await res.text() };
 }

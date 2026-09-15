@@ -80,6 +80,26 @@ export function parseClientId(
   return { prefix: prefix as ClientIdPrefix, origin };
 }
 
+/**
+ * Production client_id policy (ticket 11, CUT by default).
+ * Only `redirect_uri` (https, no fragment) is supported in production:
+ * x509_san_dns / x509_hash / decentralized_identifier /
+ * verifier_attestation / openid_federation require full PKI / DID /
+ * attestation validation this layer does not perform, so they fail
+ * closed here. Open wider only with an owner-signed accepted-risk and
+ * real cryptographic verification behind a host flag.
+ */
+export const PRODUCTION_OID4VP_PREFIXES = {
+  allowed: ["redirect_uri"],
+} as const;
+
+export function parseClientIdProduction(clientId: string): {
+  prefix: ClientIdPrefix;
+  origin: string;
+} {
+  return parseClientId(clientId, PRODUCTION_OID4VP_PREFIXES);
+}
+
 export interface DisclosureDemandInput {
   readonly verifier: string;
   readonly nonce: string;
@@ -91,7 +111,8 @@ export interface DisclosureDemandInput {
 /** Validate the request and map DCQL top-level claim paths to a bounded demand. */
 export function requestToDisclosureDemand(
   request: Record<string, unknown>,
-  pinned: PinnedPrefixes
+  pinned: PinnedPrefixes,
+  opts?: { readonly allowUnverifiedClientIdPrefixes?: boolean }
 ): DisclosureDemandInput {
   const responseType = reqString(
     request["response_type"],
@@ -107,7 +128,19 @@ export function requestToDisclosureDemand(
     request["client_id"],
     "oid4vp: request: missing client_id"
   );
-  parseClientId(clientId, pinned);
+  const { prefix } = parseClientId(clientId, pinned);
+  // Production-default CUT (ticket 11, review follow-up): x509 / DID /
+  // attestation / federation prefixes need real cryptographic verification
+  // this layer does not perform, so they fail closed unless the host
+  // explicitly opts out with verified validation behind its own flag.
+  if (
+    opts?.allowUnverifiedClientIdPrefixes !== true &&
+    prefix !== "redirect_uri"
+  ) {
+    throw new Oid4vpError(
+      `client_id prefix ${prefix} cut in production (no verified x509/DID/attestation validation here)`
+    );
+  }
   const responseMode = reqString(
     request["response_mode"],
     "oid4vp: request: missing response_mode"
@@ -153,16 +186,12 @@ export function requestToDisclosureDemand(
         cred["format"],
         `oid4vp: credential ${i}: missing format`
       );
-      if (
-        format !== "sd_jwt_vc" &&
-        format !== "mso_mdoc" &&
-        format !== "ldp_vc"
-      ) {
-        // Allow-list the formats the disclosure intersection understands;
-        // mdoc is structurally rejected downstream — fail loudly here.
-        if (format === "mso_mdoc") {
-          throw new Oid4vpError("mdoc presentations out of scope");
-        }
+      // Production CUT (ticket 11): mdoc presentations are out of scope —
+      // fail loudly here, not downstream. Other formats pass through
+      // structurally (pre-existing permissiveness: callers use "dc+sd-jwt");
+      // tightening the format allow-list further is future work.
+      if (format === "mso_mdoc") {
+        throw new Oid4vpError("mdoc presentations out of scope");
       }
       const claims = cred["claims"];
       if (claims === undefined) continue;

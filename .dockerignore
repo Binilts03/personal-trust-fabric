@@ -1,0 +1,8 @@
+node_modules
+dist
+.git
+.scratch
+evidence
+*.tsbuildinfo
+npm-debug.log
+ptf-store

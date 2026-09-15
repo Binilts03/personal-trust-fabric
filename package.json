@@ -68,7 +68,7 @@
     "eval": "npm run build && node --test \"dist/tests/eval/*.test.js\"",
     "prepublishOnly": "npm run typecheck && npm test && npm run eval",
     "dev-local": "bash scripts/dev-local.sh up",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "devDependencies": {
     "@types/node": "^26.5.0",
