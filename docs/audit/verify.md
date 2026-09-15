@@ -9,8 +9,8 @@ npm run typecheck && npm test && npm run eval
 npm pack --dry-run
 ```
 
-Expected (2026-09-14; CI is the source of truth as counts grow):
-typecheck clean; unit 212 green across 42 suites; eval 9 green; tarball
+Expected (2026-09-15; CI is the source of truth as counts grow):
+typecheck clean; unit 234 green across 49 suites; eval 9 green; tarball
 contains `package.json`, `README.md`, `LICENSE`, `dist/` (bins `ptf`,
 `ptf-mcp-server`, `ptf-pdp-server`).
 

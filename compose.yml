@@ -1,0 +1,43 @@
+# PTF PDP deployment (ticket 10). Single-operator front door.
+#
+# replicas: 1 is load-bearing, not a suggestion: the PDP's rate buckets
+# are per-process, so a second replica doubles every key's RPM cap.
+# Duplicate replicas are visible (distinct `replica` ids in decision
+# logs, 429 bodies, /readyz) — if you see two ids, kill one.
+# Outgrowing one replica means a shared limiter (gateway quota / Redis
+# cell) in front — host duty, see docs/audit/operations.md.
+#
+# Bring up:  docker compose up --build -d
+# Rotate keys: edit ./pdp-keys.json (old+new) → curl new key → 200 →
+#              edit again (new only) → old key → 401. Zero restarts.
+#              Full runbook: docs/audit/operations.md.
+
+services:
+  pdp:
+    build: .
+    image: ptf:0.1.0
+    command: ["dist/src/pdp-server.js"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ptf-store:/data:ro
+      - ./pdp-keys.json:/data/pdp-keys.json:ro
+      - ./tls:/tls:ro
+    environment:
+      PTF_PDP_STORE_DIR: /data
+      PTF_PDP_KEYS_FILE: /data/pdp-keys.json
+      PTF_PDP_TLS_KEY: /tls/key.pem
+      PTF_PDP_TLS_CERT: /tls/cert.pem
+      PTF_PDP_PORT: "3000"
+      PTF_PDP_RPM: "60"
+      PTF_PDP_REPLICA_ID: pdp-single
+    ports:
+      - "127.0.0.1:3000:3000"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+volumes:
+  ptf-store:

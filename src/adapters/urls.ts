@@ -90,12 +90,13 @@ function isAlwaysBlockedHost(host: string): boolean {
  * Fail-closed URL check. HTTPS only, except explicit loopback-HTTP callers
  * (the MCP redirect case). Returns the parsed URL on success.
  *
- * DNS LIMIT (documented, not code-fixable here): this checks the hostname
- * string only. An attacker domain resolving to a private IP, or a clean URL
- * 302-redirecting to one, still passes. Callers that fetch must pin DNS,
- * disable redirect-following (or re-check every hop), and prefer an egress
- * proxy (see deep read). `userinfo` (user:pass@) is always rejected — it
- * leaks via logs and confuses origin equality.
+ * STRING-CHECK LIMIT: this checks the hostname string only. An attacker
+ * domain resolving to a private IP, or a clean URL 302-redirecting to one,
+ * still passes here — that is what `fetchWithPinning` below closes
+ * (DNS lookup per hop + manual-redirect re-check, no-follow by default).
+ * Egress proxying stays host duty (accepted-risk for single-operator;
+ * see `docs/audit/limits.md`). `userinfo` (user:pass@) is always
+ * rejected — it leaks via logs and confuses origin equality.
  */
 export function assertSafeUrl(
   raw: string,
@@ -125,4 +126,128 @@ export function assertSafeUrl(
     throw new UrlError(`${what}: blocked network range`);
   if (url.protocol !== "https:") throw new UrlError(`${what}: https required`);
   return url;
+}
+
+/** Strip a zone id (%eth0) and WHATWG brackets before IP matching. */
+function bareIp(host: string): string {
+  return (host.split("%")[0] ?? host).replace(/^\[/, "").replace(/\]$/, "");
+}
+
+/** True when a resolved/literal IP must never be fetched (v4 + v6). */
+export function isBlockedIp(ip: string): boolean {
+  return isAlwaysBlockedHost(bareIp(ip));
+}
+
+function ipLiteralOf(host: string): string | null {
+  const bare = bareIp(host);
+  if (ipv4Octets(bare) !== null) return bare;
+  if (bare.includes(":")) return bare;
+  return null;
+}
+
+/** Injectable DNS lookup (hostname → IP string) for tests and host pinning. */
+export type PinnedLookup = (host: string) => Promise<string>;
+
+/** Minimal fetch shape so hosts can inject a proxy-aware client in tests. */
+export interface PinnedFetchResponse {
+  readonly status: number;
+  readonly location: string | null;
+  readonly url: string;
+  readonly text: () => Promise<string>;
+}
+
+export type PinnedFetchFn = (
+  url: string,
+  init: { readonly redirect: "manual" }
+) => Promise<PinnedFetchResponse>;
+
+export interface PinnedFetchOptions {
+  readonly maxRedirects?: number;
+  readonly allowLoopbackHttp?: boolean;
+  /** Error-label prefix (same convention as `assertSafeUrl`'s `what`). */
+  readonly what?: string;
+  readonly lookup?: PinnedLookup;
+  readonly fetchFn?: PinnedFetchFn;
+  /** Host-pinned hostname → IP. Checked before DNS; still blocked-range enforced. */
+  readonly pinnedIps?: Readonly<Record<string, string>>;
+}
+
+async function defaultLookup(host: string): Promise<string> {
+  const dns = await import("node:dns/promises");
+  const found = await dns.lookup(host);
+  return found.address;
+}
+
+async function defaultFetchFn(
+  url: string,
+  init: { readonly redirect: "manual" }
+): Promise<PinnedFetchResponse> {
+  const g = globalThis as unknown as { readonly fetch?: unknown };
+  if (typeof g.fetch !== "function")
+    throw new UrlError("fetch: global fetch unavailable");
+  const fetchFn = g.fetch as (
+    input: string,
+    init: { readonly redirect: "manual" }
+  ) => Promise<{
+    readonly status: number;
+    readonly headers: { readonly get: (name: string) => string | null };
+    readonly url: string;
+    readonly text: () => Promise<string>;
+  }>;
+  const res = await fetchFn(url, init);
+  return {
+    status: res.status,
+    location: res.headers.get("location"),
+    url: res.url,
+    text: () => res.text(),
+  };
+}
+
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * Production fetch path (ticket 11, host-owned, behind `PinnedFetchOptions`).
+ * Per hop: `assertSafeUrl` string check → DNS lookup (or `pinnedIps` /
+ * IP-literal fast path) → `isBlockedIp` fail-closed → fetch with
+ * `redirect: "manual"` → redirect targets re-resolved and re-checked.
+ * Defaults to no-follow (`maxRedirects: 0`): any 3xx with a Location
+ * fails closed unless the host explicitly opts into following.
+ *
+ * Residual (stated, not silent): lookup-then-connect is TOCTOU — DNS can
+ * change between the check and the socket. Single-operator deployments
+ * accept this with reputable DNS; high-value hosts must add OS-level
+ * pinning or an egress proxy (accepted-risk, see `docs/audit/limits.md`).
+ */
+export async function fetchWithPinning(
+  raw: string,
+  opts?: PinnedFetchOptions
+): Promise<PinnedFetchResponse> {
+  const maxRedirects = opts?.maxRedirects ?? 0;
+  const allowLoopbackHttp = opts?.allowLoopbackHttp ?? false;
+  const what = opts?.what ?? "fetch";
+  const lookup = opts?.lookup ?? defaultLookup;
+  const fetchFn = opts?.fetchFn ?? defaultFetchFn;
+  let current = raw;
+  for (let hop = 0; ; hop += 1) {
+    const url = assertSafeUrl(current, what, allowLoopbackHttp);
+    const literal = ipLiteralOf(url.hostname);
+    const pinned = opts?.pinnedIps?.[url.hostname.toLowerCase()];
+    const ip =
+      literal ?? pinned ?? (await lookup(url.hostname).catch(() => null));
+    if (ip === null || ip.length === 0)
+      throw new UrlError(`${what}: DNS lookup failed`);
+    if (isBlockedIp(ip)) throw new UrlError(`${what}: DNS resolves private`);
+    const res = await fetchFn(url.toString(), { redirect: "manual" });
+    if (!REDIRECT_STATUS.has(res.status)) return res;
+    const loc = res.location;
+    if (loc === null || loc.length === 0)
+      throw new UrlError(`${what}: redirect without location`);
+    if (hop >= maxRedirects)
+      throw new UrlError(`${what}: redirect blocked (no-follow)`);
+    try {
+      current = new URL(loc, url.toString()).toString();
+    } catch {
+      throw new UrlError(`${what}: malformed redirect target`);
+    }
+  }
 }

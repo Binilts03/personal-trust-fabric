@@ -1,3 +1,5 @@
 {
-  "*": "prettier --ignore-unknown --write"
+  "src/**/*.{ts,js,mjs}": "prettier --ignore-unknown --write",
+  "tests/**/*.ts": "prettier --ignore-unknown --write",
+  "**/*.{json,md,yml,yaml}": "prettier --ignore-unknown --write"
 }

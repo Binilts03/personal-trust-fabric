@@ -15,8 +15,8 @@ trust layer: agents propose, the deterministic core disposes.
   A2A, JWS, URLs. Evidence in, never authority out (ADR-0005). Every adapter
   fails closed; subset limits are documented, not silent.
 - **Operator surface** (`src/store/`, `src/cli.ts`, `src/mcp-server.ts`):
-  JSON file stores (atomic writes, single-writer ceiling), scrypt+AES-GCM
-  keystore (passphrase from env only), `ptf` CLI (human approval), MCP stdio
+  JSON file stores (atomic writes, revision-CAS single-writer), scrypt+AES-GCM
+  keystore (passphrase from file, TTY prompt, or env legacy), `ptf` CLI (human approval), MCP stdio
   server (`ptf_propose` / `ptf_check` / `ptf_redeem`, no approve tool).
 
 Golden rules: `AGENTS.md`. Language: `CONTEXT.md`. Decisions: `docs/adr/`.
@@ -32,6 +32,10 @@ Protocols: `docs/research/2026-09-09-deep-*.md`.
 | What is explicitly NOT claimed?         | `limits.md`                                                |
 | How do I re-verify from scratch?        | `verify.md`                                                |
 | How do we go public / publish?          | `public-flip.md`                                           |
+| How do I run it (image/health/backup)?  | `operations.md`                                            |
+| What did the prod-ready loop decide?    | `decisions.md` (vendored; `.scratch/` is gitignored)       |
+| How do we get an outside audit?         | `commissioning.md` (brief for the owner to send firms)     |
+| How do we pilot before live assets?     | `pilot.md` (owner-run, test rails only)                    |
 
 ## Verdict shortcut
 
@@ -40,7 +44,8 @@ npm run typecheck && npm test && npm run eval
 npm pack --dry-run
 ```
 
-Expected: typecheck clean, 95+ unit green, 9 eval green, tarball lists
+Expected: typecheck clean, 220+ unit green, 9 eval green (CI is the
+source of truth as counts grow), tarball lists
 `dist/` + `LICENSE` + `README.md` only (+ `package.json` always).
 Evidence sample: `evidence/2026-09-12-security-fixes.log` (gitignored live
 runs; committed fixtures in `tests/`).

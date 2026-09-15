@@ -19,18 +19,50 @@
  *
  * RATE LIMITING: in-memory token bucket per key id, lazy interval refill
  * (`tokens += elapsed * rpm / 60000`, capped at `rpm`). Buckets are
- * PER-PROCESS: N replicas allow ~N×RPM. Real deployments needing a global
- * cap must share state (gateway quota / Redis cell) — host duty. Ticket 14
- * should decide whether that shared limiter lives in front of this bin.
+ * PER-PROCESS by design, and the supported topology is a SINGLE replica
+ * (`compose.yml` pins `replicas: 1`): N replicas would allow ~N×RPM, so
+ * running more is a misconfiguration, not a scale-out. Every decision log
+ * line, 429 body, and `/readyz` carries the replica id
+ * (`PTF_PDP_REPLICA_ID`, default `hostname:pid`) — two ids in one log
+ * stream prove a duplicate deployment; the runbook says to kill it.
+ * A shared cross-replica limiter (gateway quota / Redis cell) stays host
+ * duty for deployments that outgrow one replica (ticket 10 residual).
+ *
+ * SCOPES: keys-file entries accept an optional `scopes` array (known:
+ * `"evaluate"`). Unknown scopes fail startup; absent scopes are legacy
+ * full access; present-but-empty parks the key (401 passes auth, 403 on
+ * evaluate). Scope checks run before rate limiting (forbidden callers
+ * never burn budget) and log nothing.
+ *
+ * ROTATION: the keys file is hot-reloaded on size/mtime change, so
+ * rotation is write-file (old+new) → verify new 200s → write-file
+ * (new only) → old 401s, with zero restarts and zero downtime. Buckets
+ * are keyed by key id, so rotation never resets limits. A malformed
+ * rewrite keeps last-good keys (availability); the broken file fails
+ * the next deploy instead. Full runbook: `docs/audit/operations.md`.
  *
  * LOGGING: one structured JSON line per DECISION to stdout —
- * `{ at, keyId, decision, reason?, authorityId? }` (citations are reduced to
- * their `authorityId`; digests would be equally fine). The key id identifies
+ * `{ at, keyId, replica, decision, reason?, authorityId? }` (citations
+ * are reduced to their `authorityId`; digests would be equally fine).
+ * Retention: stdout ships to the log collector; keep decision logs ≥400
+ * days like the audit trail (they carry no secrets by construction —
+ * regression-tested in `tests/pdp-fronting.test.ts`).
+ *
+ * LOGGING: one structured JSON line per DECISION to stdout, fields as
+ * listed above. The key id identifies
  * the PEP; the key NEVER appears. Request bodies are NEVER echoed (they may
  * carry amounts/recipients/context an attacker could mine from logs), nor
  * are secrets, TLS material, or digests-as-proof. Transport errors
- * (401/404/405/400/413/429/500) log nothing — only `evaluateAuthZen`
- * verdicts do, so a log line always means a decision happened.
+ * (401/403/404/405/400/413/429/500) log nothing — only `evaluateAuthZen`
+ * verdicts do, so a log line always means a decision happened. Health
+ * probes (`GET /healthz`, `GET /readyz`) are transport, not decisions:
+ * they log nothing and need no auth.
+ *
+ * HEALTH (ticket 12, operator signals): `GET /healthz` is liveness —
+ * 200 `{ ok: true, version }` without touching the store. `GET /readyz`
+ * is readiness — 200 `{ ready: true }` when the authority store loads,
+ * 503 `{ ready: false }` otherwise. Both are unauthenticated (probes
+ * carry no credentials) and expose nothing sensitive.
  *
  * DEV REFERENCE: `examples/pdp-server.mjs` is the loopback AuthZEN-shape
  * reference (single API key mapped to a configured identity — same ingress
@@ -41,7 +73,8 @@ import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { hostname } from "node:os";
 import { evaluateAuthZen } from "./adapters/authzen.js";
 import type { AuthZenEvaluationRequest } from "./adapters/authzen.js";
 import type { VerifiedIdentity } from "./core/authority.js";
@@ -54,7 +87,17 @@ interface PdpKey {
   readonly principal: string;
   /** Verified actor every request on this key is evaluated as. */
   readonly actor: string;
+  /**
+   * Endpoint scopes (ticket 10). The only known scope is `"evaluate"`
+   * (`POST /access/v1/evaluation`). Absent = legacy full access.
+   * Present-but-empty = authenticated but forbidden everywhere (parked
+   * keys keep their id without authorizing anything).
+   */
+  readonly scopes?: readonly string[];
 }
+
+/** Scopes the evaluation endpoint honours. Unknown scopes fail the file. */
+const KNOWN_SCOPES: readonly string[] = ["evaluate"];
 
 interface Bucket {
   tokens: number;
@@ -94,6 +137,25 @@ function parsePositiveInt(raw: string, name: string): number {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+/** mtime+size snapshot for the keys-file hot reload; null when unreadable. */
+function statOf(
+  file: string
+): { readonly mtimeMs: number; readonly size: number } | null {
+  try {
+    const st = statSync(file);
+    return { mtimeMs: st.mtimeMs, size: st.size };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Bin version for `GET /healthz`. Drift against `package.json` fails
+ * `tests/operations.test.ts` (healthz contract), so the sync is
+ * test-enforced, not by hand.
+ */
+const PTF_PDP_VERSION = "0.1.0";
 
 function loadKeys(file: string): readonly PdpKey[] {
   let raw: string;
@@ -138,7 +200,23 @@ function loadKeys(file: string): readonly PdpKey[] {
     if (typeof actor !== "string" || actor.length === 0) {
       fail("pdp-server: every keys-file entry needs a non-empty string actor");
     }
-    out.push({ id, key, principal, actor });
+    const scopes: unknown = entry["scopes"];
+    if (scopes !== undefined) {
+      if (
+        !Array.isArray(scopes) ||
+        !scopes.every(
+          (s: unknown): s is string =>
+            typeof s === "string" && KNOWN_SCOPES.includes(s)
+        )
+      ) {
+        fail(
+          "pdp-server: keys-file scopes must be an array of known scopes [evaluate] when present"
+        );
+      }
+      out.push({ id, key, principal, actor, scopes });
+    } else {
+      out.push({ id, key, principal, actor });
+    }
   }
   const seen = new Set<string>();
   for (const k of out) {
@@ -222,7 +300,6 @@ function sendJson(
 function main(): void {
   const storeDir = requiredEnv("PTF_PDP_STORE_DIR");
   const keysFile = requiredEnv("PTF_PDP_KEYS_FILE");
-  const keys = loadKeys(keysFile);
   const portRaw: string | undefined = process.env["PTF_PDP_PORT"];
   const port =
     portRaw === undefined || portRaw.length === 0 ? 0 : parsePort(portRaw);
@@ -237,6 +314,36 @@ function main(): void {
       ? 1_048_576
       : parsePositiveInt(maxBodyRaw, "PTF_PDP_MAX_BODY");
   const allowPlaintext = process.env["PTF_PDP_ALLOW_PLAINTEXT"] === "1";
+  // Replica identity (ticket 10): stamped on decision logs, 429s, and
+  // /readyz so a duplicated deployment is visible. Override per replica;
+  // the default (host:pid) is already unique per process.
+  const replicaId =
+    process.env["PTF_PDP_REPLICA_ID"] ?? `${hostname()}:${process.pid}`;
+
+  // Keys-file hot reload (ticket 10, rotation without restarts): the file
+  // is re-read when its size/mtime changes. A failed reload keeps the
+  // last-good keys (availability) — rotation completes on the next
+  // successful reload, and a broken file fails the next deploy, not this
+  // process. Buckets are keyed by key id, so rotation never resets limits.
+  let keys = loadKeys(keysFile);
+  let keysStat = statOf(keysFile);
+  const keysLive = (): readonly PdpKey[] => {
+    const now = statOf(keysFile);
+    if (
+      now !== null &&
+      (keysStat === null ||
+        now.mtimeMs !== keysStat.mtimeMs ||
+        now.size !== keysStat.size)
+    ) {
+      try {
+        keys = loadKeys(keysFile);
+        keysStat = now;
+      } catch {
+        // Keep last-good keys; a malformed rotation must not wedge service.
+      }
+    }
+    return keys;
+  };
 
   const buckets = new Map<string, Bucket>();
 
@@ -267,7 +374,32 @@ function main(): void {
 
   const listener = (req: IncomingMessage, res: ServerResponse): void => {
     const rid = echoRequestId(req.headers["x-request-id"]);
-    if (req.url !== "/access/v1/evaluation") {
+    // Match the pathname only: probes habitually append query strings
+    // (?v=, cache-busters) that must not change routing.
+    const path = (req.url ?? "").split("?")[0] ?? "";
+    if (path === "/healthz") {
+      if (req.method !== "GET") {
+        sendJson(res, 405, { error: "method not allowed" }, rid);
+        return;
+      }
+      sendJson(res, 200, { ok: true, version: PTF_PDP_VERSION }, rid);
+      return;
+    }
+    if (path === "/readyz") {
+      if (req.method !== "GET") {
+        sendJson(res, 405, { error: "method not allowed" }, rid);
+        return;
+      }
+      try {
+        loadAuthority(storeDir);
+      } catch {
+        sendJson(res, 503, { ready: false, replica: replicaId }, rid);
+        return;
+      }
+      sendJson(res, 200, { ready: true, replica: replicaId }, rid);
+      return;
+    }
+    if (path !== "/access/v1/evaluation") {
       sendJson(res, 404, { error: "unknown endpoint" }, rid);
       return;
     }
@@ -275,12 +407,16 @@ function main(): void {
       sendJson(res, 405, { error: "method not allowed" }, rid);
       return;
     }
-    const entry = findKey(req.headers["authorization"], keys);
+    const entry = findKey(req.headers["authorization"], keysLive());
     if (entry === null) {
       sendJson(res, 401, { error: "unauthorized" }, rid);
       return;
     }
     const keyId = entry.id;
+    if (entry.scopes !== undefined && !entry.scopes.includes("evaluate")) {
+      sendJson(res, 403, { error: "forbidden" }, rid);
+      return;
+    }
     // API key → verified ingress (ADR-0013): the key is the authentication,
     // the keys-file principal/actor is the identity. Callers cannot choose.
     const ingress: VerifiedIdentity = {
@@ -294,7 +430,7 @@ function main(): void {
       sendJson(
         res,
         429,
-        { error: "rate limited" },
+        { error: "rate limited", replica: replicaId },
         { ...rid, "retry-after": String(rl.retryAfterSec) }
       );
       return;
@@ -384,6 +520,7 @@ function main(): void {
         `${JSON.stringify({
           at: new Date().toISOString(),
           keyId,
+          replica: replicaId,
           decision: decision.decision,
           ...(reason !== undefined ? { reason } : {}),
           ...(authorityId !== undefined ? { authorityId } : {}),
