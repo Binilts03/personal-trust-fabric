@@ -107,12 +107,23 @@ tested at the boundary.
 
 ## Vault / agent contract / providers (P0 slices 1–3)
 
-- Vault (`src/store/vault.ts`): plain JSON `personal-state.json` with
-  revision CAS mirroring `store/files.ts` (stale/missing/never-loaded saves
-  fail closed — `changed under us` / `store missing` / `never loaded`;
-  corrupt loads throw). No DEK/keystore envelope on this file. Audit is
-  ids-only — `vault.put`/`vault.put.persisted`/`vault.read`/`vault.use`
-  carry id/type/revision, never values (proof: `tests/vault.test.ts`).
+- Vault (`src/store/vault.ts`, ADR-0016): `personal-state.json` is an
+  AES-256-GCM envelope (v2) over the canonical snapshot — ciphertext only on
+  disk, in backups, and in container layers. The 32-byte DEK lives in the
+  passphrase-sealed keystore under `ptf/vault-dek`, so `ptf rekey`
+  (passphrase rotation) re-wraps the DEK without touching vault data, and
+  `ptf vault-rekey` (DEK rotation) re-seals vault data without touching the
+  passphrase. All record fields (owner, id, type, revision, sensitivity,
+  values) sit inside the authenticated plaintext plus a `ptf-vault/v2`
+  domain separator; wrong DEK or tamper fails closed (`decryption failed`),
+  malformed envelopes fail closed (`bad envelope`). Legacy plaintext files are refused at load and
+  save — one-time `ptf vault-migrate` seals them, then the operator must
+  destroy old plaintext backups by hand (migration cannot reach backup
+  media). Revision CAS + `vaultRev` audit freshness binding unchanged
+  (stale restores alarm; full-directory rollback needs the anchor).
+  Audit is ids-only — `vault.put`/`vault.put.persisted`/`vault.read`/
+  `vault.use`/`vault.migrated`/`vault.rekeyed` carry id/type/revision,
+  never values (proof: `tests/vault.test.ts`).
   `readForPurpose` evaluates `Authority.evaluate(/disclose)` first, then
   owner/purpose/agent/expiry filtering, and drops `secret` records entirely.
   `useCredential` is the sole in-host path for `secret` (receipt-only return;
@@ -122,6 +133,14 @@ tested at the boundary.
   Raw record access (`VaultStore` internals) is host-only by construction —
   the embedding host already possesses the vault file; the enforced boundary
   is MCP/CLI, which expose only evaluate-first reads and receipt-only use.
+  Backup honesty: a whole-directory backup holds ciphertext AND the DEK
+  (keystore lives in the store dir), so anyone holding a backup can decrypt
+  it — protect backup media accordingly. For DEK/file separation (DEK in
+  OS keychain / KMS, ciphertext on disk), implement the `KeyProvider` host
+  seam instead of the file keystore; HSM/KMS custody stays a host seam
+  (same residual as the keystore row above). DEK and plaintext buffers are
+  best-effort unzeroed (`Buffer.from(dek)` copies on every seal/open, plus
+  immutable strings and GC relocation — treat heap as sensitive).
   Vault carries `vaultRev` freshness binding like authority/registry:
   `loadVault` fails closed when the file predates audit history and
   `audit --verify` loads the vault when present; a full-directory rollback

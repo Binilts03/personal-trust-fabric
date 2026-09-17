@@ -78,6 +78,15 @@ export {
   putRecord,
   readForPurpose,
   useCredential,
+  createVaultDek,
+  ensureVaultDek,
+  migrateVault,
+  rotateVaultDek,
+  resolveVaultDek,
+  readVaultKid,
+  vaultDekFingerprint,
+  VAULT_DEK_ALIAS,
+  VAULT_DEK_NEXT_ALIAS,
 } from "./store/vault.js";
 export type {
   VaultSensitivity,

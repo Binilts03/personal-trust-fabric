@@ -1,10 +1,17 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  Authority,
   Capabilities,
+  FileAuditLog,
+  VaultStore,
   digestForOperation,
   executeAndReceipt,
   executeViaProvider,
+  executeWithCredential,
   generateEd25519Keypair,
   leafCidHex,
   makeFakeProviders,
@@ -337,5 +344,83 @@ describe("protected provider seam (P0 slice 3)", () => {
       "resource",
       "transaction",
     ]);
+  });
+
+  it("executeWithCredential uses a secret without leaking it (handles + refs only)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-orch-"));
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant({
+      id: "g-use",
+      principal: P,
+      actor: { kind: "exact", id: A },
+      action: { name: "/use" },
+      bounds: [{ path: ".context.claim", op: "==", value: "pan" }],
+      exp: NOW + 3600,
+    });
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r-pan",
+      owner: P,
+      type: "pan",
+      value: SECRET,
+      sensitivity: "secret",
+      source: "issuer",
+      allowedPurposes: ["pay"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    const audit = FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW);
+    const fakes = makeFakeProviders({ nowSec: () => NOW });
+    const provider = fakes.payment;
+    const redemption = { ok: true as const, chainId: "cid-orchestrator-1" };
+    const digest = "ab".repeat(16);
+    let seenInHost: unknown;
+    const receipt = await executeWithCredential(vault, {
+      ingress: {
+        id: A,
+        principal: P,
+        source: "local-registration",
+        proofRef: "orchestrator-test",
+      },
+      recordId: "r-pan",
+      purpose: "pay",
+      authority: auth,
+      nowSec: NOW,
+      provider,
+      redemption,
+      buildRequest: (instr) => {
+        seenInHost = instr.value;
+        // Handles + refs only: the record id travels, the secret never does.
+        return {
+          termsDigest: digest,
+          action: "/pay",
+          recipient: M,
+          resource: "invoice:7",
+          purpose: "pay",
+          context: {
+            amount: 500,
+            currency: "INR",
+            panRef: instr.recordId,
+          },
+        };
+      },
+      audit,
+      at: NOW,
+    });
+    assert.equal(seenInHost, SECRET);
+    assert.equal(receipt.capabilityId, redemption.chainId);
+    assert.equal(receipt.amount, 500);
+    assert.equal(receipt.currency, "INR");
+    assert.ok(receipt.transaction.startsWith("fake-payment-"));
+    assert.equal(provider.calls.length, 1);
+    const call = provider.calls[0] as {
+      context: Record<string, unknown>;
+    };
+    assert.equal(call.context["panRef"], "r-pan");
+    assert.ok(!canonicalize(call).includes(SECRET));
+    assert.ok(!canonicalize(receipt).includes(SECRET));
+    const auditBlob = readFileSync(join(dir, "audit.jsonl"), "utf8");
+    assert.ok(!auditBlob.includes(SECRET));
+    assert.ok(auditBlob.includes("r-pan"));
   });
 });

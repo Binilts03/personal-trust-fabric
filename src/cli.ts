@@ -37,10 +37,18 @@ import {
   readPassphrase,
   renderProposal,
   resealKeystore,
+  rotateVaultDek,
   saveAuthority,
   saveRegistry,
   sealKeystore,
   signBytes,
+  VAULT_DEK_ALIAS,
+  VAULT_DEK_NEXT_ALIAS,
+  createVaultDek,
+  ensureVaultDek,
+  migrateVault,
+  readVaultKid,
+  resolveVaultDek,
 } from "./index.js";
 import type {
   ActorSelector,
@@ -103,6 +111,8 @@ const COMMANDS = [
   "disclose",
   "vault-put",
   "vault-read",
+  "vault-migrate",
+  "vault-rekey",
   "audit",
   "revoke",
   "help",
@@ -138,11 +148,13 @@ export function helpText(): string {
     "         value from a 0600 file only (never argv: argv leaks into shell history/process list); one trailing newline stripped; values never print or audit",
     "  vault-read --holder H --agent A --purpose P --claims a,b --verifier V [--nonce N]",
     "         prints disclosed claim NAMES only (ids-only audit); secrets never leave via read (use in-host useCredential)",
+    "  vault-migrate                          one-time migration of a legacy plaintext vault to AEAD (then destroy old plaintext backups)",
+    "  vault-rekey                            rotate the vault DEK (re-seals vault data; keystore passphrase unchanged)",
     "  audit [--verify]                       verify hash chain (needs no passphrase)",
     "  revoke (--grant ID | --recipient ALIAS)",
     "  help                                   print this help",
     "",
-    "env: PTF_PASSPHRASE (required for keygen/pay/disclose/vault-read only; never passed as a flag)",
+    "env: PTF_PASSPHRASE (required for keygen/pay/disclose/vault-*; audit needs it only when a vault file exists; never passed as a flag)",
     "     alternatives: PTF_PASSPHRASE_FILE (0600 file, preferred over env), or an interactive TTY prompt",
     "examples:",
     "  PTF_PASSPHRASE=hunter2 ptf --dir ./ptf-store init",
@@ -186,7 +198,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = tokens;
   if (command === undefined) {
     throw new Error(
-      "usage: ptf [--dir D] <init|keygen|recipient|grant|pay|disclose|vault-put|vault-read|audit|revoke> ..."
+      "usage: ptf [--dir D] <init|keygen|recipient|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|revoke> ..."
     );
   }
   if (!(COMMANDS as readonly string[]).includes(command)) {
@@ -282,6 +294,8 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "verifier",
     "nonce",
   ]),
+  "vault-migrate": new Set([]),
+  "vault-rekey": new Set([]),
   audit: new Set(["verify"]),
   revoke: new Set(["grant", "recipient"]),
   help: new Set(),
@@ -500,13 +514,30 @@ export async function run(
     return 0;
   }
 
+  // Passphrase demand per command. Vault commands need the keystore: reads
+  // and rekeys open it; puts and migrates load-or-create it (missing keys
+  // are sealed below once the DEK exists). Audit opens it only when a vault
+  // file exists, since freshness verification needs the DEK.
+  const keystoreExists = existsSync(join(dir, "keystore.json"));
   const ctx = loadCtx(
     dir,
     env,
     now,
-    command === "pay" || command === "disclose" || command === "vault-read",
+    command === "pay" ||
+      command === "disclose" ||
+      command === "vault-read" ||
+      command === "vault-rekey" ||
+      ((command === "vault-put" || command === "vault-migrate") &&
+        keystoreExists) ||
+      (command === "audit" && existsSync(join(dir, "personal-state.json"))),
     prompt
   );
+
+  /** Vault error messages that are authorization denys (vs operational). */
+  const isVaultDeny = (msg: string): boolean =>
+    /authority denied|no records satisfy|purpose denied|agent denied|record expired|unknown record|owner mismatch|holder must equal/.test(
+      msg
+    );
 
   if (command === "recipient") {
     const alias = str(flags, "alias");
@@ -900,9 +931,14 @@ export async function run(
     }
     // Load-or-create: a missing personal-state.json starts a fresh vault at
     // revision 0 (saveVault CAS); a corrupt file fails closed via loadVault.
+    // The keystore is persisted BEFORE the vault write: a vault sealed under
+    // a DEK that never reaches the keystore would be unrecoverable.
+    const ensured = ensureVaultDek(ctx.keys);
+    if (ensured.created) persistKeys(dir, env, ensured.keys, prompt);
+    const dek = ensured.keys[VAULT_DEK_ALIAS] as Uint8Array;
     let vault: VaultStore;
     try {
-      vault = loadVault(dir, { nowSec: now });
+      vault = loadVault(dir, { nowSec: now, dek });
     } catch (err) {
       if (
         err instanceof Error &&
@@ -928,7 +964,7 @@ export async function run(
         allowedAgents: agents,
         ...(expiresAt !== null ? { expiresAt } : {}),
       },
-      { at: now(), audit: ctx.audit }
+      { at: now(), audit: ctx.audit, dek }
     );
     // ids-only: the value never prints, never audits (putVaultRecord detail
     // carries id/type/sensitivity/revision only).
@@ -953,9 +989,15 @@ export async function run(
     }
     let vault: VaultStore;
     try {
-      vault = loadVault(dir, { nowSec: now });
-    } catch {
-      throw new Error(`no vault yet at ${dir} (run: vault-put first)`);
+      vault = loadVault(dir, { nowSec: now, keys: ctx.keys });
+    } catch (err) {
+      if (err instanceof Error && /legacy plaintext/.test(err.message)) {
+        throw new Error(`${err.message} — vault-read needs ciphertext`);
+      }
+      if (err instanceof Error && /vault store missing/.test(err.message)) {
+        throw new Error(`no vault yet at ${dir} (run: vault-put first)`);
+      }
+      throw err;
     }
     try {
       const pres = readForPurpose(vault, {
@@ -979,9 +1021,59 @@ export async function run(
       io.print(JSON.stringify(pres.disclosures.map((d) => d.name)));
       return 0;
     } catch (err) {
-      io.print(`denied: ${err instanceof Error ? err.message : String(err)}`);
-      return 1;
+      // Authorization denys stay user-facing (`denied`, exit 1); operational
+      // failures (decrypt, corrupt, stale) rethrow with their message so a
+      // tampered store is never misreported as a policy deny.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isVaultDeny(msg)) {
+        io.print(`denied: ${msg}`);
+        return 1;
+      }
+      throw err;
     }
+  }
+
+  if (command === "vault-migrate") {
+    // One-time migration of a legacy plaintext vault to AEAD. Keystore
+    // persisted first (see vault-put ordering note), then the migration
+    // seals and audits. Old plaintext backups must be destroyed by hand.
+    const ensured = ensureVaultDek(ctx.keys);
+    if (ensured.created) persistKeys(dir, env, ensured.keys, prompt);
+    const dek = ensured.keys[VAULT_DEK_ALIAS] as Uint8Array;
+    const { records, revision } = migrateVault(dir, {
+      dek,
+      nowSec: now,
+      audit: ctx.audit,
+    });
+    io.print(
+      `vault migrated: ${records} records at rev ${revision} (destroy old plaintext backups)`
+    );
+    return 0;
+  }
+
+  if (command === "vault-rekey") {
+    // Crash-safe rotation in three persisted steps: stage the new DEK under
+    // the next alias first, re-seal vault data second, promote third. Every
+    // crash prefix leaves a keystore DEK matching the envelope kid on disk
+    // (current, next, or both), and every load resolves by kid — so no brick
+    // state exists. A crash before promotion is recovered by re-running this
+    // command (the staged next alias is reused, never duplicated).
+    const kid = readVaultKid(dir);
+    const cur = resolveVaultDek(ctx.keys, kid);
+    const vault = loadVault(dir, { nowSec: now, dek: cur });
+    const newDek = createVaultDek();
+    persistKeys(
+      dir,
+      env,
+      { ...ctx.keys, [VAULT_DEK_NEXT_ALIAS]: newDek },
+      prompt
+    );
+    rotateVaultDek(dir, vault, { dek: cur, newDek, audit: ctx.audit });
+    const { [VAULT_DEK_NEXT_ALIAS]: _staged, ...rest } = ctx.keys;
+    void _staged;
+    persistKeys(dir, env, { ...rest, [VAULT_DEK_ALIAS]: newDek }, prompt);
+    io.print(`vault rekeyed at rev ${vault.loadedRevision()}`);
+    return 0;
   }
 
   if (command === "audit") {
@@ -993,7 +1085,7 @@ export async function run(
       }
       if (existsSync(join(dir, "personal-state.json"))) {
         try {
-          loadVault(dir, { nowSec: now });
+          loadVault(dir, { nowSec: now, keys: ctx.keys });
         } catch (err) {
           io.print(
             `vault freshness failed: ${err instanceof Error ? err.message : String(err)}`

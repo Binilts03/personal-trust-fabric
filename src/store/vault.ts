@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import type { KeyObject } from "node:crypto";
 import { Authority } from "../core/authority.js";
 import type { VerifiedIdentity } from "../core/authority.js";
 import { canonicalize } from "../core/canonical.js";
+import { sha256Hex } from "../core/canonical.js";
 import { assembleCapsule } from "../core/persona.js";
 import { Disclose } from "../core/disclose.js";
 import type { Presentation } from "../core/disclose.js";
@@ -456,10 +458,254 @@ function parseVaultFile(path: string): unknown {
   }
 }
 
+/**
+ * At-rest encryption (ADR-0016). `personal-state.json` is an AEAD envelope —
+ * AES-256-GCM over the canonical snapshot — never plaintext records.
+ *
+ * Key custody: the 32-byte vault DEK lives in the existing passphrase-sealed
+ * keystore under {@link VAULT_DEK_ALIAS}, so passphrase rotation
+ * (`resealKeystore` / `ptf rekey`) re-wraps the DEK without touching vault
+ * data, and DEK rotation (`rotateVaultDek` / `ptf vault-rekey`) re-seals
+ * vault data without touching the passphrase. Every record field (owner,
+ * id, type, revision, sensitivity, value) sits inside the authenticated
+ * plaintext; the constant {@link VAULT_AAD} domain-separates the cipher
+ * from the keystore blob. Residuals (JS heap erasure, Windows rename,
+ * backups holding DEK + ciphertext together) are documented in
+ * `docs/audit/limits.md` — the honest boundary for a file-backed operator
+ * store; HSM/KMS custody stays a host seam.
+ */
+
+export const VAULT_DEK_ALIAS = "ptf/vault-dek";
+/**
+ * Pending-rotation DEK slot. Rekey stages the new DEK here and persists the
+ * keystore BEFORE re-sealing vault data, so every crash state keeps a DEK
+ * matching the envelope kid on disk (see `ptf vault-rekey` ordering).
+ */
+export const VAULT_DEK_NEXT_ALIAS = "ptf/vault-dek-next";
+const VAULT_ENVELOPE_VERSION = 2;
+const VAULT_AAD = "ptf-vault/v2";
+const DEK_BYTES = 32;
+const IV_BYTES = 12;
+const KID_BYTES = 8;
+
+export interface VaultEnvelopeFile {
+  readonly version: 2;
+  /** First 8 bytes of sha256(DEK), hex — selects the opening key. */
+  readonly kidHex: string;
+  readonly ivHex: string;
+  readonly ctHex: string;
+  readonly tagHex: string;
+}
+
+/** Fresh 32-byte vault DEK for keystore custody (hex never logged). */
+export function createVaultDek(): Uint8Array {
+  return new Uint8Array(randomBytes(DEK_BYTES));
+}
+
+/**
+ * Ensure the keystore map carries a vault DEK, generating one on first use.
+ * Returns a copy — callers persist it with their normal keystore write.
+ */
+export function ensureVaultDek(keys: Record<string, Uint8Array>): {
+  readonly keys: Record<string, Uint8Array>;
+  readonly created: boolean;
+} {
+  const existing = keys[VAULT_DEK_ALIAS];
+  if (existing !== undefined) {
+    if (!(existing instanceof Uint8Array) || existing.length !== DEK_BYTES) {
+      throw new Error("vault: DEK corrupt (expected 32 bytes)");
+    }
+    return { keys, created: false };
+  }
+  return {
+    keys: { ...keys, [VAULT_DEK_ALIAS]: createVaultDek() },
+    created: true,
+  };
+}
+
+function checkDek(dek: unknown): asserts dek is Uint8Array {
+  if (!(dek instanceof Uint8Array) || dek.length !== DEK_BYTES) {
+    throw new Error("vault: DEK must be 32 bytes");
+  }
+}
+
+/** Key id: first 8 bytes of sha256(DEK), hex. Identifies — never secret. */
+export function vaultDekFingerprint(dek: Uint8Array): string {
+  checkDek(dek);
+  return sha256Hex(Buffer.from(dek)).slice(0, KID_BYTES * 2);
+}
+
+/**
+ * Select the opening DEK from keystore entries. With a kid (read from the
+ * envelope), any alias whose fingerprint matches wins — this is what makes
+ * rotation crash-safe: mid-rotation the new DEK sits under the next alias
+ * and still opens the re-sealed file. Without a kid, the current alias.
+ */
+export function resolveVaultDek(
+  keys: Record<string, Uint8Array>,
+  kidHex?: string | null
+): Uint8Array {
+  if (kidHex !== undefined && kidHex !== null) {
+    for (const candidate of Object.values(keys)) {
+      if (
+        candidate instanceof Uint8Array &&
+        candidate.length === DEK_BYTES &&
+        vaultDekFingerprint(candidate) === kidHex
+      ) {
+        return candidate;
+      }
+    }
+    throw new Error(
+      `vault: no DEK matches envelope kid ${kidHex} (rotation incomplete — re-run vault-rekey)`
+    );
+  }
+  const current = keys[VAULT_DEK_ALIAS];
+  if (current instanceof Uint8Array && current.length === DEK_BYTES) {
+    return current;
+  }
+  throw new Error(
+    `no vault DEK under ${VAULT_DEK_ALIAS} (run: vault-put first)`
+  );
+}
+
+/** Envelope kid for a store dir, or null when no vault file exists. */
+export function readVaultKid(dir: string): string | null {
+  const path = join(dir, "personal-state.json");
+  if (!existsSync(path)) return null;
+  const parsed = parseVaultFile(path);
+  if (isLegacyPlaintext(parsed)) throw legacyError(path);
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    (parsed as { kidHex?: unknown }).kidHex === undefined
+  ) {
+    throw new Error(`vault store corrupt: ${path} (bad envelope)`);
+  }
+  const kid: unknown = (parsed as { kidHex?: unknown }).kidHex;
+  if (
+    typeof kid !== "string" ||
+    kid.length !== KID_BYTES * 2 ||
+    !/^[0-9a-fA-F]+$/.test(kid)
+  ) {
+    throw new Error(`vault store corrupt: ${path} (bad envelope)`);
+  }
+  return kid;
+}
+
+function sealSnapshot(
+  snap: { readonly records: readonly VaultRecord[]; readonly revision: number },
+  dek: Uint8Array
+): VaultEnvelopeFile {
+  checkDek(dek);
+  const plain = canonicalize({
+    records: snap.records,
+    revision: snap.revision,
+  });
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv("aes-256-gcm", Buffer.from(dek), iv);
+  cipher.setAAD(Buffer.from(VAULT_AAD, "utf8"));
+  const ct = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  return {
+    version: VAULT_ENVELOPE_VERSION,
+    kidHex: vaultDekFingerprint(dek),
+    ivHex: iv.toString("hex"),
+    ctHex: ct.toString("hex"),
+    tagHex: cipher.getAuthTag().toString("hex"),
+  };
+}
+
+function openSnapshot(
+  parsed: unknown,
+  dek: Uint8Array,
+  path: string
+): { readonly records: readonly VaultRecord[]; readonly revision: number } {
+  checkDek(dek);
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    (parsed as { version?: unknown }).version !== VAULT_ENVELOPE_VERSION ||
+    typeof (parsed as Record<string, unknown>)["kidHex"] !== "string" ||
+    typeof (parsed as Record<string, unknown>)["ivHex"] !== "string" ||
+    typeof (parsed as Record<string, unknown>)["ctHex"] !== "string" ||
+    typeof (parsed as Record<string, unknown>)["tagHex"] !== "string"
+  ) {
+    throw new Error(`vault store corrupt: ${path} (bad envelope)`);
+  }
+  const env = parsed as VaultEnvelopeFile;
+  if (
+    env.kidHex.length !== KID_BYTES * 2 ||
+    !/^[0-9a-fA-F]+$/.test(env.kidHex) ||
+    env.ivHex.length !== IV_BYTES * 2 ||
+    !/^[0-9a-fA-F]+$/.test(env.ivHex) ||
+    env.tagHex.length !== 32 ||
+    !/^[0-9a-fA-F]+$/.test(env.tagHex) ||
+    env.ctHex.length === 0 ||
+    env.ctHex.length % 2 !== 0 ||
+    !/^[0-9a-fA-F]+$/.test(env.ctHex)
+  ) {
+    throw new Error(`vault store corrupt: ${path} (bad envelope)`);
+  }
+  let plain: string;
+  try {
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      Buffer.from(dek),
+      Buffer.from(env.ivHex, "hex")
+    );
+    decipher.setAAD(Buffer.from(VAULT_AAD, "utf8"));
+    decipher.setAuthTag(Buffer.from(env.tagHex, "hex"));
+    plain =
+      decipher.update(Buffer.from(env.ctHex, "hex"), undefined, "utf8") +
+      decipher.final("utf8");
+  } catch {
+    throw new Error("vault: decryption failed (wrong DEK or tampered file)");
+  }
+  let snap: unknown;
+  try {
+    snap = JSON.parse(plain) as unknown;
+  } catch {
+    throw new Error(`vault store corrupt: ${path} (bad payload)`);
+  }
+  if (
+    typeof snap !== "object" ||
+    snap === null ||
+    Array.isArray(snap) ||
+    !Array.isArray((snap as { records?: unknown }).records)
+  ) {
+    throw new Error(`vault store corrupt: ${path} (bad payload)`);
+  }
+  return snap as {
+    readonly records: readonly VaultRecord[];
+    readonly revision: number;
+  };
+}
+
+/** Pre-encryption plaintext shape. Loading it is refused — migrate first. */
+function isLegacyPlaintext(parsed: unknown): boolean {
+  return (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    !Array.isArray(parsed) &&
+    Array.isArray((parsed as { records?: unknown }).records) &&
+    (parsed as { version?: unknown }).version !== VAULT_ENVELOPE_VERSION
+  );
+}
+
+function legacyError(path: string): Error {
+  return new Error(
+    `vault: legacy plaintext store at ${path} — refusing to load; run one-time migration: ptf vault-migrate --dir <store> (then destroy old backups holding plaintext)`
+  );
+}
+
 function withNextVaultRevision(
   dir: string,
-  vault: VaultStore
-): { readonly records: readonly VaultRecord[]; readonly revision: number } {
+  vault: VaultStore,
+  opts: { readonly dek: Uint8Array; readonly sealDek?: Uint8Array }
+): VaultEnvelopeFile {
+  checkDek(opts.dek);
+  const sealDek = opts.sealDek ?? opts.dek;
+  checkDek(sealDek);
   const path = join(dir, "personal-state.json");
   if (!existsSync(path)) {
     if (vault.loadedRevision() !== 0 || vault.hasKnownLineage()) {
@@ -469,18 +715,15 @@ function withNextVaultRevision(
     }
     const stamped = { ...vault.snapshot(), revision: 0 };
     vault.adoptRevision(0);
-    return stamped;
+    return sealSnapshot(stamped, sealDek);
   }
-  const parsed = parseVaultFile(path) as Record<string, unknown>;
-  const current: unknown = parsed["revision"];
-  const currentRev =
-    current === undefined
-      ? 0
-      : typeof current === "number" && Number.isInteger(current) && current >= 0
-        ? current
-        : (() => {
-            throw new Error(`vault store corrupt: ${path} (bad revision)`);
-          })();
+  const parsed = parseVaultFile(path);
+  if (isLegacyPlaintext(parsed)) throw legacyError(path);
+  const current = openSnapshot(parsed, opts.dek, path);
+  const currentRev = current.revision;
+  if (!Number.isInteger(currentRev) || currentRev < 0) {
+    throw new Error(`vault store corrupt: ${path} (bad revision)`);
+  }
   if (currentRev !== vault.loadedRevision()) {
     throw new Error(
       `vault store changed under us (file revision ${currentRev}, loaded ${vault.loadedRevision()}) — reload and retry, never overwrite`
@@ -493,26 +736,128 @@ function withNextVaultRevision(
   }
   const stamped = { ...vault.snapshot(), revision: currentRev + 1 };
   vault.adoptRevision(currentRev + 1);
-  return stamped;
+  return sealSnapshot(stamped, sealDek);
 }
 
-export function saveVault(dir: string, vault: VaultStore): void {
+export function saveVault(
+  dir: string,
+  vault: VaultStore,
+  opts: { readonly dek: Uint8Array }
+): void {
   atomicWrite(
     join(dir, "personal-state.json"),
-    JSON.stringify(withNextVaultRevision(dir, vault))
+    JSON.stringify(withNextVaultRevision(dir, vault, opts))
   );
 }
 
 export function loadVault(
   dir: string,
-  opts: { readonly nowSec?: () => number } = {}
+  opts: {
+    readonly nowSec?: () => number;
+    readonly dek?: Uint8Array;
+    readonly keys?: Record<string, Uint8Array>;
+  } = {}
 ): VaultStore {
-  const vault = VaultStore.restore(
-    parseVaultFile(join(dir, "personal-state.json")),
-    opts
-  );
+  const path = join(dir, "personal-state.json");
+  const parsed = parseVaultFile(path);
+  if (isLegacyPlaintext(parsed)) throw legacyError(path);
+  let dek: Uint8Array;
+  if (opts.keys !== undefined) {
+    const kid: unknown = (parsed as { kidHex?: unknown }).kidHex;
+    dek = resolveVaultDek(opts.keys, typeof kid === "string" ? kid : null);
+  } else if (opts.dek !== undefined) {
+    dek = opts.dek;
+  } else {
+    throw new Error(
+      `vault: DEK required — unlock the keystore holding ${VAULT_DEK_ALIAS}`
+    );
+  }
+  const snap = openSnapshot(parsed, dek, path);
+  const vault = VaultStore.restore(snap, opts);
   checkFreshness(dir, "vault", vault.loadedRevision());
   return vault;
+}
+
+/**
+ * One-time migration from the pre-encryption plaintext format. Validates
+ * through the same gates as live input, seals under the given DEK, and
+ * audits the migration (ids/count/revision only). Refuses already-encrypted
+ * stores. Callers must destroy old backups holding plaintext afterwards —
+ * migration cannot reach into backup media.
+ */
+export function migrateVault(
+  dir: string,
+  opts: {
+    readonly dek: Uint8Array;
+    readonly nowSec?: () => number;
+    readonly audit?: FileAuditLog;
+  }
+): { readonly records: number; readonly revision: number } {
+  checkDek(opts.dek);
+  const path = join(dir, "personal-state.json");
+  const parsed = parseVaultFile(path);
+  if (!isLegacyPlaintext(parsed)) {
+    throw new Error("vault: already encrypted, nothing to migrate");
+  }
+  // Validated through the same gates as live input, then sealed directly:
+  // the normal save path refuses to overwrite legacy files (even for
+  // migration), so the one-time migration writes the envelope itself at the
+  // legacy revision, preserving the CAS lineage.
+  const restored = VaultStore.restore(parsed, opts);
+  const snap = {
+    ...restored.snapshot(),
+    revision: restored.loadedRevision(),
+  };
+  // Refuse to migrate over newer encrypted history (e.g. a concurrent
+  // writer sealed ciphertext after this legacy copy was taken).
+  checkFreshness(dir, "vault", snap.revision);
+  atomicWrite(path, JSON.stringify(sealSnapshot(snap, opts.dek)));
+  const vault = VaultStore.restore(snap, opts);
+  if (opts.audit !== undefined) {
+    opts.audit.append({
+      actor: "operator",
+      action: "vault.migrated",
+      detail: `records=${snap.records.length} rev=${vault.loadedRevision()}`,
+      vaultRev: vault.loadedRevision(),
+    });
+  }
+  return { records: snap.records.length, revision: vault.loadedRevision() };
+}
+
+/**
+ * DEK rotation without re-entering record values: verifies the current DEK
+ * against the file, then re-seals the snapshot under the new DEK via CAS.
+ * Crash protocol (see `ptf vault-rekey`): the caller must stage `newDek`
+ * under {@link VAULT_DEK_NEXT_ALIAS} and persist the keystore BEFORE
+ * calling, then promote it to {@link VAULT_DEK_ALIAS} after success. Every
+ * crash prefix then keeps a DEK matching the envelope kid — calling this
+ * bare (persist-after) bricks on a reseal-then-crash window.
+ */
+export function rotateVaultDek(
+  dir: string,
+  vault: VaultStore,
+  opts: {
+    readonly dek: Uint8Array;
+    readonly newDek: Uint8Array;
+    readonly audit?: FileAuditLog;
+  }
+): void {
+  checkDek(opts.dek);
+  checkDek(opts.newDek);
+  atomicWrite(
+    join(dir, "personal-state.json"),
+    JSON.stringify(
+      withNextVaultRevision(dir, vault, { dek: opts.dek, sealDek: opts.newDek })
+    )
+  );
+  if (opts.audit !== undefined) {
+    opts.audit.append({
+      actor: "operator",
+      action: "vault.rekeyed",
+      detail: `rev=${vault.loadedRevision()}`,
+      vaultRev: vault.loadedRevision(),
+    });
+  }
 }
 
 /**
@@ -523,7 +868,11 @@ export function putRecord(
   dir: string,
   vault: VaultStore,
   input: VaultRecordInput,
-  opts: { readonly at?: number; readonly audit?: FileAuditLog } = {}
+  opts: {
+    readonly at?: number;
+    readonly audit?: FileAuditLog;
+    readonly dek: Uint8Array;
+  }
 ): VaultRecord {
   const rec = vault.putRecord(input, opts.at);
   if (opts.audit !== undefined) {
@@ -534,7 +883,7 @@ export function putRecord(
       vaultRev: vault.loadedRevision(),
     });
   }
-  saveVault(dir, vault);
+  saveVault(dir, vault, { dek: opts.dek });
   if (opts.audit !== undefined) {
     opts.audit.append({
       actor: rec.owner,

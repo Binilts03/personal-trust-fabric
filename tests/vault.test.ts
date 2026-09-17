@@ -9,12 +9,18 @@ import {
   FileAuditLog,
   VaultStore,
   claimsSubset,
+  createVaultDek,
+  ensureVaultDek,
   generateEd25519Keypair,
   loadVault,
+  migrateVault,
   putRecord,
   readForPurpose,
+  rotateVaultDek,
   saveVault,
   useCredential,
+  VAULT_DEK_ALIAS,
+  VAULT_DEK_NEXT_ALIAS,
 } from "../src/index.js";
 
 const NOW = 1_700_000_000;
@@ -23,6 +29,9 @@ const A = "did:test:agent";
 const OTHER = "did:test:other-agent";
 const VERIFIER = "did:test:verifier";
 const SECRET = "PAN-SECRET-4111-never-leaves-host";
+// One DEK across test stores (the DEK is not dir-bound; each test seals its
+// own tmp dir with it).
+const DEK = createVaultDek();
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), "ptf-vault-"));
@@ -77,8 +86,8 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       allowedAgents: [A],
       expiresAt: null,
     });
-    saveVault(dir, vault);
-    const reloaded = loadVault(dir);
+    saveVault(dir, vault, { dek: DEK });
+    const reloaded = loadVault(dir, { dek: DEK });
     const pres = readForPurpose(reloaded, {
       ingress: ingressFor(A),
       purpose: "support",
@@ -171,7 +180,7 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       allowedAgents: [A],
       expiresAt: null,
     });
-    saveVault(dir, vault);
+    saveVault(dir, vault, { dek: DEK });
     // Read path drops secrets: requesting only pan fails closed.
     assert.throws(
       () =>
@@ -234,9 +243,9 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       allowedAgents: [A],
       expiresAt: null,
     });
-    saveVault(dir, seed);
-    const a = loadVault(dir);
-    const b = loadVault(dir);
+    saveVault(dir, seed, { dek: DEK });
+    const a = loadVault(dir, { dek: DEK });
+    const b = loadVault(dir, { dek: DEK });
     a.putRecord({
       id: "r2",
       owner: P,
@@ -248,7 +257,7 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       allowedAgents: [A],
       expiresAt: null,
     });
-    saveVault(dir, a);
+    saveVault(dir, a, { dek: DEK });
     b.putRecord({
       id: "r3",
       owner: P,
@@ -260,12 +269,12 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       allowedAgents: [A],
       expiresAt: null,
     });
-    assert.throws(() => saveVault(dir, b), /changed under us/);
+    assert.throws(() => saveVault(dir, b, { dek: DEK }), /changed under us/);
     assert.throws(
-      () => saveVault(dir, new VaultStore(() => NOW)),
+      () => saveVault(dir, new VaultStore(() => NOW), { dek: DEK }),
       /never loaded|changed under us/
     );
-    const h = loadVault(dir);
+    const h = loadVault(dir, { dek: DEK });
     rmSync(join(dir, "personal-state.json"));
     h.putRecord({
       id: "r4",
@@ -278,7 +287,7 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       allowedAgents: [A],
       expiresAt: null,
     });
-    assert.throws(() => saveVault(dir, h), /store missing/);
+    assert.throws(() => saveVault(dir, h, { dek: DEK }), /store missing/);
   });
 
   it("audits puts/reads with ids only — values never enter the log", () => {
@@ -302,10 +311,10 @@ describe("durable Personal State vault (P0 slice 1)", () => {
         allowedAgents: [A],
         expiresAt: null,
       },
-      { audit }
+      { audit, dek: DEK }
     );
     assert.equal(rec.id, "r-email");
-    const loaded = loadVault(dir);
+    const loaded = loadVault(dir, { dek: DEK });
     const pres = readForPurpose(loaded, {
       ingress: ingressFor(A),
       purpose: "support",
@@ -325,6 +334,122 @@ describe("durable Personal State vault (P0 slice 1)", () => {
     assert.ok(!blob.includes(SECRET));
     // Corrupt files fail closed.
     writeFileSync(join(dir, "personal-state.json"), "{nope");
-    assert.throws(() => loadVault(dir));
+    assert.throws(() => loadVault(dir, { dek: DEK }));
+  });
+
+  it("encrypts values at rest (AES-256-GCM under a keystore DEK)", () => {
+    const dir = tmp();
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r-email",
+      owner: P,
+      type: "email",
+      value: "owner@example.com",
+      sensitivity: "general",
+      source: "user",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    saveVault(dir, vault, { dek: DEK });
+    const blob = readFileSync(join(dir, "personal-state.json"), "utf8");
+    const parsed = JSON.parse(blob) as Record<string, unknown>;
+    assert.equal(parsed["version"], 2);
+    assert.ok(typeof parsed["ctHex"] === "string");
+    assert.ok(!blob.includes("owner@example.com"), "ciphertext only");
+    assert.ok(!blob.includes("r-email"), "ids authenticated, not visible");
+    // Wrong DEK fails closed without revealing anything.
+    assert.throws(
+      () => loadVault(dir, { dek: createVaultDek() }),
+      /decryption failed/
+    );
+    // Missing DEK fails closed.
+    assert.throws(() => loadVault(dir), /DEK required/);
+    // Tampered ciphertext fails closed.
+    const tampered = {
+      ...(parsed as Record<string, unknown>),
+      ctHex: `00${(parsed["ctHex"] as string).slice(2)}`,
+    };
+    writeFileSync(join(dir, "personal-state.json"), JSON.stringify(tampered));
+    assert.throws(() => loadVault(dir, { dek: DEK }), /decryption failed/);
+  });
+
+  it("refuses legacy plaintext and migrates explicitly", () => {
+    const dir = tmp();
+    writeFileSync(
+      join(dir, "personal-state.json"),
+      JSON.stringify({
+        records: [
+          {
+            id: "r-email",
+            owner: P,
+            type: "email",
+            value: "owner@example.com",
+            sensitivity: "general",
+            source: "user",
+            allowedPurposes: ["support"],
+            allowedAgents: [A],
+            expiresAt: null,
+            version: 1,
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+        ],
+        revision: 0,
+      })
+    );
+    assert.throws(() => loadVault(dir, { dek: DEK }), /legacy plaintext/);
+    assert.throws(
+      () => saveVault(dir, new VaultStore(() => NOW), { dek: DEK }),
+      /legacy plaintext/
+    );
+    // Explicit one-time migration seals the same records under the DEK.
+    const migrated = migrateVault(dir, { dek: DEK });
+    assert.equal(migrated.records, 1);
+    const after = loadVault(dir, { dek: DEK });
+    assert.equal(after.loadedRevision(), 0);
+    // DEK custody helper generates once, then reuses.
+    const fresh = ensureVaultDek({});
+    assert.equal(fresh.created, true);
+    assert.equal(ensureVaultDek(fresh.keys).created, false);
+    // Rotation re-seals under a new DEK; the old DEK stops working.
+    const newDek = createVaultDek();
+    rotateVaultDek(dir, after, { dek: DEK, newDek });
+    assert.throws(() => loadVault(dir, { dek: DEK }), /decryption failed/);
+    const rotated = loadVault(dir, { dek: newDek });
+    assert.equal(rotated.loadedRevision(), 1);
+  });
+
+  it("rotation crash windows stay recoverable via kid resolution", () => {
+    const dir = tmp();
+    const dekA = createVaultDek();
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r1",
+      owner: P,
+      type: "email",
+      value: "a@example.com",
+      sensitivity: "general",
+      source: "user",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    saveVault(dir, vault, { dek: dekA });
+    const keysA = { [VAULT_DEK_ALIAS]: dekA };
+    // Crash after staging next, before reseal: current still opens.
+    const dekB = createVaultDek();
+    const staged = { ...keysA, [VAULT_DEK_NEXT_ALIAS]: dekB };
+    assert.equal(loadVault(dir, { keys: staged }).loadedRevision(), 0);
+    // Reseal under B while the keystore still carries both: opens via next.
+    const loaded = loadVault(dir, { dek: dekA });
+    rotateVaultDek(dir, loaded, { dek: dekA, newDek: dekB });
+    assert.equal(loadVault(dir, { keys: staged }).loadedRevision(), 1);
+    assert.throws(() => loadVault(dir, { dek: dekA }), /decryption failed/);
+    // Promote: current-only keystore opens.
+    assert.equal(
+      loadVault(dir, { keys: { [VAULT_DEK_ALIAS]: dekB } }).loadedRevision(),
+      1
+    );
   });
 });
