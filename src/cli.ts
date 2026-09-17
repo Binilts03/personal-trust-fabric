@@ -27,6 +27,7 @@ import {
   loadVault,
   openKeystore,
   parseDecision,
+  parseSensitivity,
   paymentBounds,
   privateKeyFromPkcs8,
   publicKeyFromPrivate,
@@ -133,8 +134,8 @@ export function helpText(): string {
     "         --any-agent is an explicit wildcard (audited, deliberate) — prefer --agent / --actor-set",
     "  pay --principal P --agent A --recipient R --amount N --currency C --resource R [--purpose T] [--yes]",
     "  disclose --holder H --verifier V --claims a,b --credential JSON [--allowed a,b] [--yes]",
-    "  vault-put --id ID --owner O --type T --sensitivity general|sensitive|secret --source S --purposes p1,p2 --agents a1,a2 (--value V | --value-file PATH) [--expires-at EPOCH]",
-    "         --value-file preferred (0600 file): --value leaks into shell history/process list; values never print or audit",
+    "  vault-put --id ID --owner O --type T --sensitivity general|sensitive|secret --source S --purposes p1,p2 --agents a1,a2 --value-file PATH [--expires-at EPOCH]",
+    "         value from a 0600 file only (never argv: argv leaks into shell history/process list); one trailing newline stripped; values never print or audit",
     "  vault-read --holder H --agent A --purpose P --claims a,b --verifier V [--nonce N]",
     "         prints disclosed claim NAMES only (ids-only audit); secrets never leave via read (use in-host useCredential)",
     "  audit [--verify]                       verify hash chain (needs no passphrase)",
@@ -270,7 +271,6 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "source",
     "purposes",
     "agents",
-    "value",
     "value-file",
     "expires-at",
   ]),
@@ -864,14 +864,7 @@ export async function run(
     const id = str(flags, "id");
     const owner = str(flags, "owner");
     const type = str(flags, "type");
-    const sensitivityRaw = str(flags, "sensitivity");
-    if (
-      sensitivityRaw !== "general" &&
-      sensitivityRaw !== "sensitive" &&
-      sensitivityRaw !== "secret"
-    ) {
-      throw new Error("usage: --sensitivity must be general|sensitive|secret");
-    }
+    const sensitivity = parseSensitivity(str(flags, "sensitivity"));
     const source = str(flags, "source");
     const purposes = str(flags, "purposes").split(",");
     if (purposes.some((x) => x.length === 0)) {
@@ -881,33 +874,21 @@ export async function run(
     if (agents.some((x) => x.length === 0)) {
       throw new Error("usage: --agents must be a non-empty comma list");
     }
-    const valueRaw = opt(flags, "value");
+    // Value from a file only — never argv (argv leaks into shell history and
+    // the process list). One trailing newline stripped (0600 file
+    // convention); anything else is significant. The value never prints or
+    // audits either way.
     const valueFileRaw = opt(flags, "value-file");
-    if (
-      (valueRaw === undefined) === (valueFileRaw === undefined) ||
-      (valueRaw !== undefined &&
-        valueRaw.length === 0 &&
-        valueFileRaw === undefined)
-    ) {
-      throw new Error("usage: exactly one of --value V | --value-file PATH");
+    if (valueFileRaw === undefined || valueFileRaw.length === 0) {
+      throw new Error("usage: --value-file PATH is required");
     }
-    let value: unknown;
-    if (valueFileRaw !== undefined) {
-      if (valueFileRaw.length === 0) {
-        throw new Error("usage: --value-file must be non-empty");
-      }
-      let raw: string;
-      try {
-        raw = readFileSync(valueFileRaw, "utf8");
-      } catch {
-        throw new Error(`vault-put: cannot read --value-file ${valueFileRaw}`);
-      }
-      // Strip a single trailing newline (0600 file convention) — the secret
-      // itself never prints or audits either way.
-      value = raw.replace(/\r?\n$/, "");
-    } else {
-      value = valueRaw as string;
+    let raw: string;
+    try {
+      raw = readFileSync(valueFileRaw, "utf8");
+    } catch {
+      throw new Error(`vault-put: cannot read --value-file ${valueFileRaw}`);
     }
+    const value: unknown = raw.replace(/\r?\n$/, "");
     const expiresRaw = opt(flags, "expires-at");
     let expiresAt: number | null = null;
     if (expiresRaw !== undefined) {
@@ -941,7 +922,7 @@ export async function run(
         owner,
         type,
         value,
-        sensitivity: sensitivityRaw,
+        sensitivity,
         source,
         allowedPurposes: purposes,
         allowedAgents: agents,

@@ -28,6 +28,7 @@ import {
 import { readFileSync } from "node:fs";
 import { requestData, requestExecution } from "./profiles/data.js";
 import type {
+  ActorSelector,
   AuthorityOperation,
   AuthorityRequest,
   PaymentExecutor,
@@ -143,6 +144,30 @@ function resolveKeyWithLocalFallback(
   };
 }
 
+/**
+ * Grant visibility for one fixed ingress: the principal must match and the
+ * actor selector must cover the agent. The explicit `{ kind: "any" }`
+ * wildcard is audit-visible by design, so it stays listed. Revoked grants
+ * are excluded — listing them would advertise dead authority.
+ */
+function grantVisible(
+  g: { readonly principal: string; readonly actor: ActorSelector },
+  id: string,
+  ingress: VerifiedIdentity,
+  revoked: (revokedId: string) => boolean
+): boolean {
+  if (g.principal !== ingress.principal) return false;
+  if (revoked(id)) return false;
+  switch (g.actor.kind) {
+    case "exact":
+      return g.actor.id === ingress.id;
+    case "set":
+      return g.actor.ids.includes(ingress.id);
+    case "any":
+      return true;
+  }
+}
+
 export function createPtfServer(opts: PtfServerOptions): McpServer {
   const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
   if (opts.principal.length === 0) fail("server principal is required");
@@ -216,6 +241,23 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     }
   };
 
+  // Single writer for the shared proposals map: every propose tool
+  // (ptf_propose, ptf_request_data, ptf_request_action) records here, and
+  // ptf_redeem consumes any /pay proposal regardless of which tool created
+  // it. "pending" = authority would allow; still needs live re-check at
+  // redeem (standing grant) or human approval (CLI). Never "approved".
+  const recordProposal = (
+    digest: string,
+    demand: Proposal["demand"],
+    allow: boolean
+  ): void => {
+    proposals.set(digest, {
+      demand,
+      status: allow ? "pending" : "denied",
+      until: now() + 600,
+    });
+  };
+
   server.registerTool(
     "ptf_propose",
     {
@@ -257,13 +299,9 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       if (decision.allow) {
         // "pending" = authority would allow; still needs live re-check at
         // redeem (standing grant) or human approval (CLI). Never "approved".
-        proposals.set(digest, {
-          demand,
-          status: "pending",
-          until: now() + 600,
-        });
+        recordProposal(digest, demand, true);
       } else {
-        proposals.set(digest, { demand, status: "denied", until: now() + 600 });
+        recordProposal(digest, demand, false);
       }
       return {
         content: [
@@ -328,7 +366,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_redeem",
     {
       description:
-        "Redeem a pending proposal. Without a proof this checks live authority (dry-run) and returns its id to sign (challenge); with a recipient proof it authorizes the capability first, then spends live authority, executes, and returns a receipt. Payment demands only. Fails closed on anything stale.",
+        "Redeem a pending proposal. Without a proof this checks live authority (dry-run) and returns its id to sign (challenge); with a recipient proof it authorizes the capability first, then spends live authority, executes, and returns a receipt. Payment demands only. Accepts any /pay proposal in the shared map regardless of which propose tool created it. Fails closed on anything stale.",
       inputSchema: z.object({
         termsDigest: z.string().min(16),
         recipientKeyHex: z.string().min(64).optional(),
@@ -582,17 +620,9 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         );
       }
       if (out.decision.allow) {
-        proposals.set(out.digest, {
-          demand: out.demand,
-          status: "pending",
-          until: now() + 600,
-        });
+        recordProposal(out.digest, out.demand, true);
       } else {
-        proposals.set(out.digest, {
-          demand: out.demand,
-          status: "denied",
-          until: now() + 600,
-        });
+        recordProposal(out.digest, out.demand, false);
       }
       return {
         content: [
@@ -639,11 +669,22 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     async (args) => {
       const { auth } = load();
       pruneProposals();
+      // Caller-supplied context passes through untouched; the top-level
+      // convenience fields below only fill ABSENT keys so explicit caller
+      // handles are never clobbered.
       const context: Record<string, unknown> = { ...(args.context ?? {}) };
-      if (args.recipient !== undefined) context["recipient"] = args.recipient;
-      if (args.amount !== undefined) context["amount"] = args.amount;
-      if (args.currency !== undefined) context["currency"] = args.currency;
-      if (args.claims !== undefined) context["claims"] = [...args.claims];
+      if (args.recipient !== undefined && context["recipient"] === undefined) {
+        context["recipient"] = args.recipient;
+      }
+      if (args.amount !== undefined && context["amount"] === undefined) {
+        context["amount"] = args.amount;
+      }
+      if (args.currency !== undefined && context["currency"] === undefined) {
+        context["currency"] = args.currency;
+      }
+      if (args.claims !== undefined && context["claims"] === undefined) {
+        context["claims"] = [...args.claims];
+      }
       let out: ReturnType<typeof requestExecution>;
       try {
         out = requestExecution(
@@ -664,17 +705,9 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         );
       }
       if (out.decision.allow) {
-        proposals.set(out.digest, {
-          demand: out.demand,
-          status: "pending",
-          until: now() + 600,
-        });
+        recordProposal(out.digest, out.demand, true);
       } else {
-        proposals.set(out.digest, {
-          demand: out.demand,
-          status: "denied",
-          until: now() + 600,
-        });
+        recordProposal(out.digest, out.demand, false);
       }
       return {
         content: [
@@ -740,20 +773,26 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_list_capabilities",
     {
       description:
-        "List grant projections readable by this agent (read-only, no keys or capability envelopes).",
+        "List grant projections visible to this fixed agent identity (read-only, no keys or capability envelopes). Grants for other principals, other agents, or revoked grants are excluded.",
       inputSchema: z.object({}),
     },
     async () => {
       const { auth } = load();
-      const grants = auth.snapshot().grants.map((g) => ({
-        id: g.id,
-        principal: g.principal,
-        actor: g.actor,
-        action: g.action.name,
-        ...(g.purpose !== undefined ? { purpose: g.purpose } : {}),
-        ...(g.resource !== undefined ? { resource: g.resource } : {}),
-        bounds: g.bounds.length,
-      }));
+      const snap = auth.snapshot();
+      const revokedIds = new Set(snap.revoked.map(([id]) => id));
+      const grants = snap.grants
+        .filter((g) =>
+          grantVisible(g, g.id, ingress, (id) => revokedIds.has(id))
+        )
+        .map((g) => ({
+          id: g.id,
+          principal: g.principal,
+          actor: g.actor,
+          action: g.action.name,
+          ...(g.purpose !== undefined ? { purpose: g.purpose } : {}),
+          ...(g.resource !== undefined ? { resource: g.resource } : {}),
+          bounds: g.bounds.length,
+        }));
       return {
         content: [
           {

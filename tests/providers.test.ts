@@ -198,6 +198,49 @@ describe("protected provider seam (P0 slice 3)", () => {
     );
   });
 
+  it("missing amount/currency fails closed instead of fabricating receipt terms", async () => {
+    const fakes = makeFakeProviders({ nowSec: () => NOW });
+    const digest = "ab".repeat(32);
+    const base = {
+      capabilityId: "cid-explicit",
+      termsDigest: digest,
+      action: "/pay" as const,
+      recipient: M,
+      resource: "res:1",
+      purpose: "p",
+    };
+    const redemption = { ok: true as const, chainId: "cid-explicit" };
+    await assert.rejects(
+      () =>
+        executeViaProvider(
+          fakes.payment,
+          { ...base, context: {} },
+          redemption,
+          NOW
+        ),
+      /context\.amount/
+    );
+    await assert.rejects(
+      () =>
+        executeViaProvider(
+          fakes.payment,
+          { ...base, context: { amount: 0 } },
+          redemption,
+          NOW
+        ),
+      /context\.currency/
+    );
+    // Explicit zero passes — stated, never invented.
+    const receipt = await executeViaProvider(
+      fakes.payment,
+      { ...base, context: { amount: 0, currency: "INR" } },
+      redemption,
+      NOW
+    );
+    assert.equal(receipt.amount, 0);
+    assert.equal(receipt.currency, "INR");
+  });
+
   it("providerAsExecutor keeps executeAndReceipt call sites untouched and receipts secret-free", async () => {
     const { principal, merchant, keys } = parties();
     const caps = new Capabilities({

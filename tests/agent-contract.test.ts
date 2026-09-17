@@ -12,6 +12,7 @@ import {
   digestForOperation,
   generateEd25519Keypair,
   leafCidHex,
+  loadAuthority,
   paymentBounds,
   requestData,
   requestExecution,
@@ -359,6 +360,46 @@ describe("general agent contract (P0 slice 2)", () => {
       { nowSec: NOW }
     );
     assert.equal(still.decision.allow, true);
+  });
+
+  it("list_capabilities shows only this identity's live grants", async () => {
+    const dir = setupDir();
+    const auth = loadAuthority(dir, { nowSec: () => NOW });
+    auth.addGrant({
+      id: "g-foreign",
+      principal: OTHER,
+      actor: { kind: "exact", id: A },
+      action: { name: "/pay" },
+      bounds: paymentBounds({ amountMax: 50, currency: "INR" }),
+      exp: NOW + 3600,
+    });
+    auth.addGrant({
+      id: "g-wrong-actor",
+      principal: P,
+      actor: { kind: "exact", id: OTHER },
+      action: { name: "/pay" },
+      bounds: paymentBounds({ amountMax: 50, currency: "INR" }),
+      exp: NOW + 3600,
+    });
+    auth.addGrant({
+      id: "g-doomed",
+      principal: P,
+      actor: { kind: "exact", id: A },
+      action: { name: "/pay" },
+      bounds: paymentBounds({ amountMax: 50, currency: "INR" }),
+      exp: NOW + 3600,
+    });
+    auth.revoke("g-doomed");
+    saveAuthority(dir, auth);
+    const server = createPtfServer({ dir, env: {}, principal: P, actor: A });
+    const caps = (await callTool(server, "ptf_list_capabilities", {})) as {
+      capabilities?: { id: string }[];
+    };
+    const ids = (caps.capabilities ?? []).map((c) => c.id);
+    assert.ok(ids.includes("g-pay"), "own grant listed");
+    assert.ok(!ids.includes("g-foreign"), "foreign principal excluded");
+    assert.ok(!ids.includes("g-wrong-actor"), "other agent excluded");
+    assert.ok(!ids.includes("g-doomed"), "revoked grant excluded");
   });
 
   it("MCP abuse: wrong actor denies, unknown digest is unknown, restart forgets", async () => {

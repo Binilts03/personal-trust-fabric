@@ -3,10 +3,12 @@ import { join } from "node:path";
 import type { KeyObject } from "node:crypto";
 import { Authority } from "../core/authority.js";
 import type { VerifiedIdentity } from "../core/authority.js";
+import { canonicalize } from "../core/canonical.js";
 import { assembleCapsule } from "../core/persona.js";
 import { Disclose } from "../core/disclose.js";
 import type { Presentation } from "../core/disclose.js";
-import { atomicWrite, checkStoreFreshness, FileAuditLog } from "./files.js";
+import { isNonEmptyString } from "../adapters/guards.js";
+import { atomicWrite, checkFreshness, FileAuditLog } from "./files.js";
 
 /**
  * Durable Personal State vault (P0 slice 1).
@@ -66,10 +68,6 @@ export interface VaultSnapshot {
   readonly revision: number;
 }
 
-function isNonEmptyString(v: unknown): v is string {
-  return typeof v === "string" && v.length > 0;
-}
-
 function checkStringArray(
   v: unknown,
   what: string
@@ -93,6 +91,14 @@ function checkExpiresAt(v: unknown): asserts v is number | null {
   }
 }
 
+/** Shared sensitivity validator (also used by the CLI so both reject alike). */
+export function parseSensitivity(v: unknown): VaultSensitivity {
+  if (v !== "general" && v !== "sensitive" && v !== "secret") {
+    throw new Error("vault: sensitivity must be general|sensitive|secret");
+  }
+  return v;
+}
+
 function checkInput(input: VaultRecordInput): void {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw new Error("vault: record must be an object");
@@ -100,13 +106,7 @@ function checkInput(input: VaultRecordInput): void {
   if (!isNonEmptyString(input.id)) throw new Error("vault: id required");
   if (!isNonEmptyString(input.owner)) throw new Error("vault: owner required");
   if (!isNonEmptyString(input.type)) throw new Error("vault: type required");
-  if (
-    input.sensitivity !== "general" &&
-    input.sensitivity !== "sensitive" &&
-    input.sensitivity !== "secret"
-  ) {
-    throw new Error("vault: sensitivity must be general|sensitive|secret");
-  }
+  parseSensitivity(input.sensitivity);
   if (!isNonEmptyString(input.source))
     throw new Error("vault: source required");
   checkStringArray(input.allowedPurposes, "allowedPurposes");
@@ -119,8 +119,13 @@ function isExpired(rec: VaultRecord, nowSec: number): boolean {
   return rec.expiresAt !== null && nowSec > rec.expiresAt;
 }
 
-function auditSafe(detail: string): string {
-  return detail;
+/** Canonical rendering for leak comparison; null when unrenderable. */
+function tryCanonical(v: unknown): string | null {
+  try {
+    return canonicalize(v);
+  } catch {
+    return null;
+  }
 }
 
 export class VaultStore {
@@ -166,7 +171,181 @@ export class VaultStore {
     };
   }
 
-  getRecord(id: string): VaultRecord | null {
+  /**
+   * Purpose-scoped disclosure (evaluate-first). The ONLY read path besides
+   * {@link VaultStore.useSecret}: validates `Authority.evaluate(/disclose)`
+   * before touching records, drops `secret` records entirely, and returns a
+   * holder-signed presentation over `requested ∩ allowed` claim names.
+   */
+  disclose(req: VaultReadRequest): Presentation {
+    if (!isNonEmptyString(req.purpose))
+      throw new Error("vault: purpose required");
+    if (!Array.isArray(req.requested) || req.requested.length === 0) {
+      throw new Error("vault: requested must be non-empty");
+    }
+    for (const c of req.requested) {
+      if (!isNonEmptyString(c))
+        throw new Error("vault: requested must be non-empty strings");
+    }
+    if (!isNonEmptyString(req.verifier))
+      throw new Error("vault: verifier required");
+    if (!isNonEmptyString(req.nonce)) throw new Error("vault: nonce required");
+    if (req.holder.id !== req.ingress.principal) {
+      throw new Error("vault: holder must equal the ingress principal");
+    }
+    const operation = {
+      action: { name: "/disclose" as const },
+      resource: { type: "vault", id: "personal-state" },
+      context: { claims: [...req.requested], verifier: req.verifier },
+      purpose: req.purpose,
+    };
+    const decision = req.authority.evaluate(operation, req.ingress, {
+      nowSec: req.nowSec,
+    });
+    if (!decision.allow) {
+      throw new Error(`vault: authority denied: ${decision.reason}`);
+    }
+    const allowed = new Set<string>();
+    const attributes: Record<string, unknown> = {};
+    for (const rec of this.listRecords()) {
+      if (rec.owner !== req.ingress.principal) continue;
+      if (isExpired(rec, req.nowSec)) continue;
+      if (!rec.allowedPurposes.includes(req.purpose)) continue;
+      if (!rec.allowedAgents.includes(req.ingress.id)) continue;
+      if (rec.sensitivity === "secret") continue;
+      if (!(req.requested as readonly string[]).includes(rec.type)) continue;
+      if (allowed.has(rec.type)) continue;
+      allowed.add(rec.type);
+      attributes[rec.type] = rec.value;
+    }
+    if (allowed.size === 0) {
+      throw new Error("vault: no records satisfy purpose/agent/expiry policy");
+    }
+    const names = [...allowed].sort();
+    const capsule = assembleCapsule({ attributes }, req.purpose, names);
+    const pres = Disclose.present(
+      {
+        issuer: "vault:personal-state",
+        subject: req.ingress.principal,
+        claims: { ...capsule.claims },
+        cnf: req.holder.id,
+      },
+      { verifier: req.verifier, nonce: req.nonce, requested: names },
+      { recipient: req.verifier, allowed: names },
+      { id: req.holder.id, privateKey: req.holder.privateKey },
+      req.nowSec
+    );
+    if (pres.sig.length !== 64)
+      throw new Error("vault: bearer presentation forbidden");
+    if (req.audit !== undefined) {
+      req.audit.append({
+        actor: req.ingress.id,
+        action: "vault.read",
+        detail: `purpose=${req.purpose} verifier=${req.verifier} claims=${names.join(",")} rev=${this.loadedRevision()}`,
+        vaultRev: this.loadedRevision(),
+      });
+    }
+    return pres;
+  }
+
+  /**
+   * Sole in-host path for `secret` records. Validates Authority for `/use`,
+   * hands the value to the in-host callback only, and returns the callback's
+   * receipt — the value never reaches the caller, receipts, logs, or audit.
+   */
+  async useSecret(opts: SecretUseOptions): Promise<{
+    readonly recordId: string;
+    readonly type: string;
+    readonly purpose: string;
+    readonly receipt: string;
+    readonly names?: readonly string[];
+  }> {
+    if (!isNonEmptyString(opts.recordId))
+      throw new Error("vault: recordId required");
+    if (!isNonEmptyString(opts.purpose))
+      throw new Error("vault: purpose required");
+    const rec = this.getRecord(opts.recordId);
+    if (rec === null) throw new Error("vault: unknown record");
+    if (rec.owner !== opts.ingress.principal)
+      throw new Error("vault: owner mismatch");
+    if (isExpired(rec, opts.nowSec)) throw new Error("vault: record expired");
+    if (!rec.allowedPurposes.includes(opts.purpose))
+      throw new Error("vault: purpose denied");
+    if (!rec.allowedAgents.includes(opts.ingress.id))
+      throw new Error("vault: agent denied");
+    const operation = {
+      action: { name: "/use" as const },
+      resource: { type: "vault-record", id: rec.id },
+      context: { claim: rec.type },
+      purpose: opts.purpose,
+    };
+    const decision = opts.authority.evaluate(operation, opts.ingress, {
+      nowSec: opts.nowSec,
+    });
+    if (!decision.allow) {
+      throw new Error(`vault: authority denied: ${decision.reason}`);
+    }
+    const instr: SecretInstruction = {
+      recordId: rec.id,
+      type: rec.type,
+      purpose: opts.purpose,
+      owner: rec.owner,
+      value: rec.value,
+    };
+    const result = await opts.use(instr);
+    if (
+      typeof result !== "object" ||
+      result === null ||
+      Array.isArray(result)
+    ) {
+      throw new Error("vault: use must resolve a receipt object");
+    }
+    if (!isNonEmptyString((result as SecretUseResult).receipt)) {
+      throw new Error("vault: use must resolve { receipt }");
+    }
+    const receipt = (result as SecretUseResult).receipt;
+    // Fail-closed leak guard: the receipt must not echo the secret value.
+    // Strings compare verbatim; other values compare in canonical form when
+    // distinctive (>= 16 chars). Short scalars (numbers, flags) cannot be
+    // told apart from legitimate receipt fields and stay uncovered —
+    // keep them out of string-typed receipt fields (see limits.md vault row).
+    const rendered =
+      typeof rec.value === "string" ? rec.value : tryCanonical(rec.value);
+    const distinctive =
+      rendered !== null &&
+      (typeof rec.value === "string"
+        ? rendered.length > 0
+        : rendered.length >= 16);
+    if (distinctive && receipt.includes(rendered as string)) {
+      throw new Error("vault: callback leaked secret into receipt");
+    }
+    if (opts.audit !== undefined) {
+      opts.audit.append({
+        actor: opts.ingress.id,
+        action: "vault.use",
+        detail: `id=${rec.id} type=${rec.type} purpose=${opts.purpose} rev=${this.loadedRevision()}`,
+        vaultRev: this.loadedRevision(),
+      });
+    }
+    const names = (result as SecretUseResult).names;
+    return {
+      recordId: rec.id,
+      type: rec.type,
+      purpose: opts.purpose,
+      receipt,
+      ...(names !== undefined ? { names: [...names] } : {}),
+    };
+  }
+
+  /**
+   * @internal Host-only raw access. The embedding host already possesses the
+   * vault file, so this cannot be a security boundary — but it must never
+   * become an agent-facing read path. Agents reach records only through
+   * {@link VaultStore.disclose} (evaluate-first) and
+   * {@link VaultStore.useSecret} (receipt-only), enforced at the MCP/CLI
+   * seam. Private so library consumers cannot depend on it by accident.
+   */
+  private getRecord(id: string): VaultRecord | null {
     const r = this.records.get(id);
     if (r === undefined) return null;
     return {
@@ -176,7 +355,8 @@ export class VaultStore {
     };
   }
 
-  listRecords(): VaultRecord[] {
+  /** @internal See {@link VaultStore.getRecord}. */
+  private listRecords(): VaultRecord[] {
     return [...this.records.values()].map((r) => ({
       ...r,
       allowedPurposes: [...r.allowedPurposes],
@@ -331,7 +511,7 @@ export function loadVault(
     parseVaultFile(join(dir, "personal-state.json")),
     opts
   );
-  checkStoreFreshness(dir, "vault", vault.loadedRevision());
+  checkFreshness(dir, "vault", vault.loadedRevision());
   return vault;
 }
 
@@ -350,9 +530,7 @@ export function putRecord(
     opts.audit.append({
       actor: rec.owner,
       action: "vault.put",
-      detail: auditSafe(
-        `id=${rec.id} type=${rec.type} sensitivity=${rec.sensitivity} rev=${vault.loadedRevision()}`
-      ),
+      detail: `id=${rec.id} type=${rec.type} sensitivity=${rec.sensitivity} rev=${vault.loadedRevision()}`,
       vaultRev: vault.loadedRevision(),
     });
   }
@@ -361,7 +539,7 @@ export function putRecord(
     opts.audit.append({
       actor: rec.owner,
       action: "vault.put.persisted",
-      detail: auditSafe(`id=${rec.id} rev=${vault.loadedRevision()}`),
+      detail: `id=${rec.id} rev=${vault.loadedRevision()}`,
       vaultRev: vault.loadedRevision(),
     });
   }
@@ -382,86 +560,14 @@ export interface VaultReadRequest {
 }
 
 /**
- * Purpose-scoped read. FIRST evaluates Authority for `/disclose` (fail-closed
- * when no covering grant/approval), then filters owner/purpose/agent/expiry
- * and drops `secret` records entirely. Surviving `requested ∩ allowed` claims
- * are assembled via `assembleCapsule` and presented holder-signed via
- * `Disclose.present` (bearer forbidden: empty/short sigs throw).
+ * Purpose-scoped read (module entry; delegates to {@link VaultStore.disclose},
+ * the only read path besides {@link VaultStore.useSecret}).
  */
 export function readForPurpose(
   vault: VaultStore,
   req: VaultReadRequest
 ): Presentation {
-  if (!isNonEmptyString(req.purpose))
-    throw new Error("vault: purpose required");
-  if (!Array.isArray(req.requested) || req.requested.length === 0) {
-    throw new Error("vault: requested must be non-empty");
-  }
-  for (const c of req.requested) {
-    if (!isNonEmptyString(c))
-      throw new Error("vault: requested must be non-empty strings");
-  }
-  if (!isNonEmptyString(req.verifier))
-    throw new Error("vault: verifier required");
-  if (!isNonEmptyString(req.nonce)) throw new Error("vault: nonce required");
-  if (req.holder.id !== req.ingress.principal) {
-    throw new Error("vault: holder must equal the ingress principal");
-  }
-  const operation = {
-    action: { name: "/disclose" as const },
-    resource: { type: "vault", id: "personal-state" },
-    context: { claims: [...req.requested], verifier: req.verifier },
-    purpose: req.purpose,
-  };
-  const decision = req.authority.evaluate(operation, req.ingress, {
-    nowSec: req.nowSec,
-  });
-  if (!decision.allow) {
-    throw new Error(`vault: authority denied: ${decision.reason}`);
-  }
-  const allowed = new Set<string>();
-  const attributes: Record<string, unknown> = {};
-  for (const rec of vault.listRecords()) {
-    if (rec.owner !== req.ingress.principal) continue;
-    if (isExpired(rec, req.nowSec)) continue;
-    if (!rec.allowedPurposes.includes(req.purpose)) continue;
-    if (!rec.allowedAgents.includes(req.ingress.id)) continue;
-    if (rec.sensitivity === "secret") continue;
-    if (!(req.requested as readonly string[]).includes(rec.type)) continue;
-    if (allowed.has(rec.type)) continue;
-    allowed.add(rec.type);
-    attributes[rec.type] = rec.value;
-  }
-  if (allowed.size === 0) {
-    throw new Error("vault: no records satisfy purpose/agent/expiry policy");
-  }
-  const names = [...allowed].sort();
-  const capsule = assembleCapsule({ attributes }, req.purpose, names);
-  const pres = Disclose.present(
-    {
-      issuer: "vault:personal-state",
-      subject: req.ingress.principal,
-      claims: { ...capsule.claims },
-      cnf: req.holder.id,
-    },
-    { verifier: req.verifier, nonce: req.nonce, requested: names },
-    { recipient: req.verifier, allowed: names },
-    { id: req.holder.id, privateKey: req.holder.privateKey },
-    req.nowSec
-  );
-  if (pres.sig.length !== 64)
-    throw new Error("vault: bearer presentation forbidden");
-  if (req.audit !== undefined) {
-    req.audit.append({
-      actor: req.ingress.id,
-      action: "vault.read",
-      detail: auditSafe(
-        `purpose=${req.purpose} verifier=${req.verifier} claims=${names.join(",")} rev=${vault.loadedRevision()}`
-      ),
-      vaultRev: vault.loadedRevision(),
-    });
-  }
-  return pres;
+  return vault.disclose(req);
 }
 
 export interface SecretInstruction {
@@ -478,23 +584,23 @@ export interface SecretUseResult {
   readonly names?: readonly string[];
 }
 
+export interface SecretUseOptions {
+  readonly ingress: VerifiedIdentity;
+  readonly recordId: string;
+  readonly purpose: string;
+  readonly authority: Authority;
+  readonly nowSec: number;
+  readonly use: (instr: SecretInstruction) => Promise<SecretUseResult>;
+  readonly audit?: FileAuditLog;
+}
+
 /**
- * Sole in-host path for `secret` records. Validates Authority for `/use`,
- * loads the value in-host, invokes the callback with the sanitized
- * instruction, and returns only the callback's receipt/names — the value
- * never reaches the caller, receipts, logs, or audit.
+ * Sole in-host path for `secret` records (module entry; delegates to
+ * {@link VaultStore.useSecret}). Returns only the callback's receipt/names.
  */
 export async function useCredential(
   vault: VaultStore,
-  opts: {
-    readonly ingress: VerifiedIdentity;
-    readonly recordId: string;
-    readonly purpose: string;
-    readonly authority: Authority;
-    readonly nowSec: number;
-    readonly use: (instr: SecretInstruction) => Promise<SecretUseResult>;
-    readonly audit?: FileAuditLog;
-  }
+  opts: SecretUseOptions
 ): Promise<{
   readonly recordId: string;
   readonly type: string;
@@ -502,70 +608,5 @@ export async function useCredential(
   readonly receipt: string;
   readonly names?: readonly string[];
 }> {
-  if (!isNonEmptyString(opts.recordId))
-    throw new Error("vault: recordId required");
-  if (!isNonEmptyString(opts.purpose))
-    throw new Error("vault: purpose required");
-  const rec = vault.getRecord(opts.recordId);
-  if (rec === null) throw new Error("vault: unknown record");
-  if (rec.owner !== opts.ingress.principal)
-    throw new Error("vault: owner mismatch");
-  if (isExpired(rec, opts.nowSec)) throw new Error("vault: record expired");
-  if (!rec.allowedPurposes.includes(opts.purpose))
-    throw new Error("vault: purpose denied");
-  if (!rec.allowedAgents.includes(opts.ingress.id))
-    throw new Error("vault: agent denied");
-  const operation = {
-    action: { name: "/use" as const },
-    resource: { type: "vault-record", id: rec.id },
-    context: { claim: rec.type },
-    purpose: opts.purpose,
-  };
-  const decision = opts.authority.evaluate(operation, opts.ingress, {
-    nowSec: opts.nowSec,
-  });
-  if (!decision.allow) {
-    throw new Error(`vault: authority denied: ${decision.reason}`);
-  }
-  const instr: SecretInstruction = {
-    recordId: rec.id,
-    type: rec.type,
-    purpose: opts.purpose,
-    owner: rec.owner,
-    value: rec.value,
-  };
-  const result = await opts.use(instr);
-  if (typeof result !== "object" || result === null || Array.isArray(result)) {
-    throw new Error("vault: use must resolve a receipt object");
-  }
-  if (!isNonEmptyString((result as SecretUseResult).receipt)) {
-    throw new Error("vault: use must resolve { receipt }");
-  }
-  const receipt = (result as SecretUseResult).receipt;
-  // Fail-closed leak guard for string secrets: the receipt must not echo the value.
-  if (
-    typeof rec.value === "string" &&
-    rec.value.length > 0 &&
-    receipt.includes(rec.value)
-  ) {
-    throw new Error("vault: callback leaked secret into receipt");
-  }
-  if (opts.audit !== undefined) {
-    opts.audit.append({
-      actor: opts.ingress.id,
-      action: "vault.use",
-      detail: auditSafe(
-        `id=${rec.id} type=${rec.type} purpose=${opts.purpose} rev=${vault.loadedRevision()}`
-      ),
-      vaultRev: vault.loadedRevision(),
-    });
-  }
-  const names = (result as SecretUseResult).names;
-  return {
-    recordId: rec.id,
-    type: rec.type,
-    purpose: opts.purpose,
-    receipt,
-    ...(names !== undefined ? { names: [...names] } : {}),
-  };
+  return vault.useSecret(opts);
 }

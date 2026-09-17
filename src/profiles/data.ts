@@ -6,6 +6,7 @@ import type {
   VerifiedIdentity,
 } from "../core/authority.js";
 import { renderProposal } from "../core/approve.js";
+import { isNonEmptyString } from "../adapters/guards.js";
 
 /**
  * General agent contract (P0 slice 2).
@@ -44,10 +45,6 @@ export interface AgentProposal {
   readonly digest: string;
   readonly decision: AuthorityDecision;
   readonly proposal: string;
-}
-
-function isNonEmptyString(v: unknown): v is string {
-  return typeof v === "string" && v.length > 0;
 }
 
 function checkActionName(name: unknown): asserts name is `/${string}` {
