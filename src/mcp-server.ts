@@ -15,10 +15,12 @@ import {
   leafCidHex,
   loadAuthority,
   loadRegistry,
+  loadVault,
   openKeystore,
   privateKeyFromPkcs8,
   publicKeyFromPrivate,
   rawPublicKey,
+  readForPurpose,
   readPassphrase,
   renderProposal,
   saveAuthority,
@@ -590,7 +592,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_request_data",
     {
       description:
-        "Propose a disclosure (dry-run). Evaluates /disclose authority without spending it and returns exact terms for human approval.",
+        "Propose a disclosure (dry-run). Evaluates /disclose authority without spending it and returns exact terms for human approval. Present an allowed proposal via ptf_present_data.",
       inputSchema: z.object({
         purpose: z.string().min(1),
         resource: z.string().min(1),
@@ -640,6 +642,128 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
                     reason: out.decision.reason,
                     proposal: out.proposal,
                   },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "ptf_present_data",
+    {
+      description:
+        "Present a pending /disclose proposal as a holder-signed presentation (read-only: a read, no uses consumed). Fails closed unless the proposal is pending and unexpired. Nonce-uniqueness + freshness enforcement is verifier duty (Disclose.verify maxAgeSec default 300). /disclose only; pay via ptf_redeem.",
+      inputSchema: z.object({
+        termsDigest: z.string().min(16),
+        nonce: z.string().min(16),
+      }),
+    },
+    async (args) => {
+      if (
+        typeof args.termsDigest !== "string" ||
+        args.termsDigest.length < 16
+      ) {
+        fail("termsDigest must be at least 16 chars");
+      }
+      if (typeof args.nonce !== "string" || args.nonce.length < 16) {
+        fail("nonce must be at least 16 chars");
+      }
+      pruneProposals();
+      const proposal = proposals.get(args.termsDigest);
+      if (proposal === undefined) fail("unknown proposal: propose first");
+      if (now() > proposal.until) {
+        proposals.delete(args.termsDigest);
+        fail("proposal expired: propose again");
+      }
+      if (proposal.status !== "pending") {
+        fail("already presented/denied: propose again for a fresh nonce");
+      }
+      if (proposal.demand.action.name !== "/disclose") {
+        fail("present supports /disclose proposals only; pay via ptf_redeem");
+      }
+      const { auth, keys } = load();
+      const demand = { ...proposal.demand, termsDigest: args.termsDigest };
+      // Defense in depth: proposals are bound at propose time to this fixed
+      // ingress, but re-assert before touching vault or keys.
+      if (
+        demand.principal !== ingress.principal ||
+        demand.actor !== ingress.id
+      ) {
+        fail("proposal identity mismatch: propose again");
+      }
+      const holderSeed = keys[demand.principal];
+      if (holderSeed === undefined) {
+        fail(`server holds no key for principal ${demand.principal}`);
+      }
+      const claimsRaw: unknown = demand.context["claims"];
+      const verifierRaw: unknown = demand.context["verifier"];
+      if (
+        !Array.isArray(claimsRaw) ||
+        claimsRaw.length === 0 ||
+        !claimsRaw.every(
+          (c): c is string => typeof c === "string" && c.length > 0
+        )
+      ) {
+        fail("pending demand is malformed (claims/verifier required)");
+      }
+      if (typeof verifierRaw !== "string" || verifierRaw.length === 0) {
+        fail("pending demand is malformed (claims/verifier required)");
+      }
+      if (typeof demand.purpose !== "string" || demand.purpose.length === 0) {
+        fail("pending demand is malformed (purpose required)");
+      }
+      // Reload vault fresh, resolving the DEK by envelope kid (rotation
+      // windows included). Legacy plaintext files surface their
+      // migrate-first error as-is (never silently read).
+      const vault = loadVault(opts.dir, {
+        nowSec: now,
+        keys,
+      });
+      const holderPriv = privateKeyFromPkcs8(holderSeed as Uint8Array);
+      let pres: ReturnType<typeof readForPurpose>;
+      try {
+        pres = readForPurpose(vault, {
+          ingress,
+          purpose: demand.purpose as string,
+          requested: claimsRaw as string[],
+          verifier: verifierRaw as string,
+          nonce: args.nonce,
+          nowSec: now(),
+          authority: auth,
+          holder: { id: demand.principal, privateKey: holderPriv },
+        });
+      } catch (err) {
+        proposal.status = "denied";
+        throw err instanceof Error ? err : new Error(String(err));
+      }
+      const disclosed = pres.disclosures.map((d) => d.name);
+      proposal.status = "executed";
+      proposal.receipt = { disclosed: [...disclosed] };
+      const presentation = {
+        issuer: pres.issuer,
+        subject: pres.subject,
+        holder: pres.holder,
+        verifier: pres.verifier,
+        nonce: pres.nonce,
+        iat: pres.iat,
+        ...(pres.credExp !== undefined ? { credExp: pres.credExp } : {}),
+        disclosures: pres.disclosures.map((d) => ({ ...d })),
+        sigHex: Buffer.from(pres.sig).toString("hex"),
+      };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                presented: true,
+                termsDigest: args.termsDigest,
+                disclosed,
+                presentation,
+              },
               null,
               2
             ),

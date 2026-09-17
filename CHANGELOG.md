@@ -8,17 +8,37 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Encrypted Personal State vault (ADR-0016): `personal-state.json` is now an
+  AES-256-GCM envelope (v2) under a keystore-held DEK (`ptf/vault-dek`).
+  Legacy plaintext files are refused at load and save; one-time
+  `ptf vault-migrate` seals them (destroy old plaintext backups by hand).
+  `ptf vault-rekey` rotates the DEK; `ptf rekey` still rotates the
+  passphrase. `audit --verify` needs the passphrase when a vault file
+  exists. Backups hold ciphertext + DEK together — protect backup media.
+- MCP disclosure delivery: new `ptf_present_data` (holder-signed
+  presentation for a pending `/disclose` proposal; fresh 16+ nonce,
+  single-present, verifier enforces nonce/freshness). `ptf_request_data`
+  proposes, `ptf_present_data` delivers — the agent loop is now end to end.
+- Secret-use orchestrator `executeWithCredential` (adapters/providers):
+  `useCredential` + `executeViaProvider` in one receipt-bound step; built
+  requests are scanned for distinctive secret renderings before submission,
+  and receipts are leak-checked (short-scalar residual documented in
+  `docs/audit/limits.md`).
 - Durable Personal State vault (`src/store/vault.ts`, exported from
   `src/index.ts`): purpose/agent/expiry/sensitivity-scoped records in
-  `ptf-store/personal-state.json` (plain JSON, revision CAS); authority-first
-  reads (`readForPurpose` over `/disclose`) plus use-only secret path
-  (`useCredential`, receipt-only); audit carries ids only.
+  `ptf-store/personal-state.json` (encrypted envelope, revision CAS);
+  authority-first reads (`readForPurpose` over `/disclose`) plus use-only
+  secret path (`useCredential`, receipt-only, verbatim + canonical leak
+  guard); raw record access is host-only `private`; audit carries ids only.
 - General agent contract (`src/profiles/data.ts`): `requestData`
   (`/disclose` dry-run) and `requestExecution` (any `/-path` except
   `/disclose*`, dry-run, never consumes uses or mints authority).
-- MCP tools `ptf_request_data`, `ptf_request_action`, `ptf_get_receipt`,
-  `ptf_list_capabilities` (read-only), `ptf_revoke` (request-only, mutates
-  nothing). `ptf_redeem` stays `/pay`-only. No approve tool (unchanged).
+- MCP tools `ptf_request_data`, `ptf_present_data`, `ptf_request_action`,
+  `ptf_get_receipt`,
+  `ptf_list_capabilities` (fixed-identity only: foreign-principal,
+  other-agent, and revoked grants excluded), `ptf_revoke` (request-only,
+  mutates nothing). `ptf_redeem` stays `/pay`-only and accepts any `/pay`
+  proposal in the shared map. No approve tool (unchanged).
 - Protected provider seam (`src/adapters/providers.ts`): per-kind fakes
   (`makeFakeProviders`, move nothing) plus `providerAsExecutor` /
   `executeViaProvider` with `chainId === capabilityId` and `termsDigest`

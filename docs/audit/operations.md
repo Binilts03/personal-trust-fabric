@@ -127,7 +127,12 @@ independent anchoring (out of scope, ADR-0006).
 
 Back up the whole `ptf-store/` directory (authority.json, registry.json,
 personal-state.json once the vault is used, keystore, audit.jsonl) as one
-unit, plus an anchor checkpoint:
+unit, plus an anchor checkpoint. Backup honesty: `personal-state.json` is
+ciphertext, but the keystore holding its DEK ships in the same unit — anyone
+holding a backup can decrypt the vault. Encrypt backup media at rest,
+restrict who may hold it, and rotate (`ptf vault-rekey` + `ptf rekey`) if a
+backup is ever exposed. For DEK/media separation, replace the file keystore
+with the `KeyProvider` host seam (HSM/KMS duty, see `limits.md`).
 
 ```sh
 cp -a ptf-store "backups/ptf-store-$(date -u +%F)"

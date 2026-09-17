@@ -6,6 +6,10 @@ import type {
   PaymentInstruction,
   Receipt,
 } from "../core/execute.js";
+import type { Authority, VerifiedIdentity } from "../core/authority.js";
+import type { FileAuditLog } from "../store/files.js";
+import type { SecretInstruction, VaultStore } from "../store/vault.js";
+import { useCredential } from "../store/vault.js";
 
 /**
  * Protected provider seam (P0 slice 3).
@@ -252,4 +256,104 @@ export async function executeViaProvider(
     transaction: sub.externalRef,
     at,
   };
+}
+
+/** Canonical rendering for leak comparison; null when unrenderable. */
+function tryCanonicalInstruction(v: unknown): string | null {
+  try {
+    return canonicalize(v);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Orchestrator: use a `secret` vault record inside a provider call without
+ * ever exposing the value (P0 agent data-delivery loop).
+ *
+ * Built ON TOP of the existing `useCredential` + `executeViaProvider`:
+ * the secret value is visible only to the in-host `use` callback, which
+ * builds a handles-only request, binds it to the redemption, executes,
+ * and returns `{ receipt: receipt.transaction }` as the use-result
+ * (leak-checked by `useCredential`). The captured `Receipt` is returned.
+ *
+ * `buildRequest` receives the full `SecretInstruction` (including `value`)
+ * but MUST NEVER place the secret value in `context` — handles + refs
+ * only (e.g. last-4, token refs, ids). This is enforced, not just
+ * documented: the built request is scanned for the rendered secret before
+ * submission (verbatim strings, canonical form when distinctive). Note the
+ * trust boundary honestly: `buildRequest` runs in-host with the secret in
+ * scope, exactly like a `useCredential` callback — review it like provider
+ * code, with logging/egress controls. Receipts stay secret-free by
+ * construction (`executeViaProvider` projects only amount/currency/etc),
+ * and `useCredential` fails closed if the receipt echoes the secret.
+ */
+export async function executeWithCredential(
+  vault: VaultStore,
+  opts: {
+    readonly ingress: VerifiedIdentity;
+    readonly recordId: string;
+    readonly purpose: string;
+    readonly authority: Authority;
+    readonly nowSec: number;
+    readonly provider: ProtectedProvider;
+    readonly redemption: { readonly ok: true; readonly chainId: string };
+    readonly buildRequest: (
+      instr: SecretInstruction
+    ) => Omit<ProviderRequest, "capabilityId">;
+    readonly audit?: FileAuditLog;
+    readonly at?: number;
+  }
+): Promise<Receipt> {
+  let captured: Receipt | undefined;
+  const at = opts.at ?? opts.nowSec;
+  await useCredential(vault, {
+    ingress: opts.ingress,
+    recordId: opts.recordId,
+    purpose: opts.purpose,
+    authority: opts.authority,
+    nowSec: opts.nowSec,
+    ...(opts.audit !== undefined ? { audit: opts.audit } : {}),
+    use: async (instr) => {
+      const partial = opts.buildRequest(instr);
+      // Enforcement for the handles-only rule above: distinctive secret
+      // renderings (verbatim strings, canonical form >= 16 chars) must not
+      // appear anywhere in the built request — including provider call logs,
+      // which retain `context`. Short scalars stay uncovered (same residual
+      // as the receipt leak guard; see limits.md vault row).
+      const rendered =
+        typeof instr.value === "string"
+          ? instr.value
+          : tryCanonicalInstruction(instr.value);
+      const distinctive =
+        rendered !== null &&
+        (typeof instr.value === "string"
+          ? rendered.length > 0
+          : rendered.length >= 16);
+      if (distinctive) {
+        const encoded = canonicalize({ ...partial });
+        if (encoded.includes(rendered as string)) {
+          throw new Error(
+            "provider: buildRequest leaked secret into provider request"
+          );
+        }
+      }
+      const req: ProviderRequest = {
+        ...partial,
+        capabilityId: opts.redemption.chainId,
+      };
+      const receipt = await executeViaProvider(
+        opts.provider,
+        req,
+        opts.redemption,
+        at
+      );
+      captured = receipt;
+      return { receipt: receipt.transaction };
+    },
+  });
+  if (captured === undefined) {
+    throw new Error("provider: orchestrator produced no receipt");
+  }
+  return captured;
 }

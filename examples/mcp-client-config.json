@@ -19,9 +19,10 @@
     "ptf_check": "Check a proposal's status by termsDigest (pending = authority would allow, awaiting live redeem; denied/executed are terminal; unknown after restart).",
     "ptf_redeem": "Redeem a pending /pay proposal. Without a proof: live-authority dry-run returning cidHex to sign. With recipientKeyHex + recipientSigHex: authorizes the capability first, then spends live authority, executes, and returns a receipt.",
     "ptf_request_data": "Propose a disclosure (dry-run). Evaluates /disclose authority without spending it; returns exact terms + termsDigest for human approval.",
+    "ptf_present_data": "Present a pending /disclose proposal as a holder-signed presentation (termsDigest + fresh 16+ char nonce). Single-present per proposal; verifier must enforce nonce uniqueness + freshness.",
     "ptf_request_action": "Propose any /-path action (dry-run, disclose tier excluded — use ptf_request_data for /disclose). Redeem stays /pay-only via ptf_redeem.",
     "ptf_get_receipt": "Look up a proposal/receipt by termsDigest. In-memory only: unknown after restart (ADR-0014).",
-    "ptf_list_capabilities": "List grant projections readable by this agent (read-only: id/principal/actor/action/purpose/resource/bounds-count — no keys or capability envelopes).",
+    "ptf_list_capabilities": "List grant projections for the fixed server identity only (read-only: id/principal/actor/action/purpose/resource/bounds-count — foreign-principal, other-agent, and revoked grants excluded; no keys or capability envelopes).",
     "ptf_revoke": "Request revocation for human approval (request-only: never revokes directly from agent ingress — returns the `ptf revoke --grant <id>` command for a human)."
   }
 }

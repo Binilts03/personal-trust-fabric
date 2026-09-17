@@ -106,9 +106,10 @@ receipt machinery (ADR-0009) — never emitted across systems.
   never authority out.
 - `src/store/`, `src/cli.ts`, `src/mcp-server.ts` — durable JSON stores
   (`store/files.ts` authority/registry, `store/vault.ts` `personal-state.json`
-  with revision CAS), `ptf` operator CLI, MCP stdio server
-  (`ptf_propose/check/redeem` + `ptf_request_data/request_action/get_receipt/
-list_capabilities/revoke`).
+  AES-256-GCM envelope under a keystore DEK, revision CAS + freshness
+  binding), `ptf` operator CLI, MCP stdio server
+  (`ptf_propose/check/redeem` + `ptf_request_data/present_data/request_action/
+get_receipt/list_capabilities/revoke`).
 - `examples/` — `payment-disclosure.mjs` (library end-to-end),
   `mcp-client-config.json` (Claude Desktop wiring).
 - `tests/` — `node:test` suites at the public seam; `tests/eval/` holds
@@ -139,7 +140,7 @@ instead of last-write-wins. Proposals are in-memory (lost on restart,
 fail-closed). Vault (Personal State) persists to
 `ptf-store/personal-state.json` with revision CAS + audit freshness binding
 (stale vault fails `audit --verify`); operator commands `vault-put`
-(`--value-file` preferred, never prints/audits values) and `vault-read`
+(`--value-file` only, never prints/audits values) and `vault-read`
 (prints disclosed names only), plus library `VaultStore.putRecord` /
 `readForPurpose` / `useCredential` from `src/index.ts` and subpath
 `personal-trust-fabric/vault`. Back up `ptf-store/` for high-value use — as
@@ -172,10 +173,14 @@ that fixed identity.
 Tools: `ptf_propose` (dry-run, returns terms + digest, status `pending`),
 `ptf_check` (status by digest), `ptf_redeem` (challenge `cidHex`, then proof
 → receipt; `/pay` demands only) plus the general contract:
-`ptf_request_data` (`/disclose` dry-run), `ptf_request_action` (any `/-path`
+`ptf_request_data` (`/disclose` dry-run → present via `ptf_present_data`),
+`ptf_present_data` (holder-signed presentation for a pending `/disclose`
+proposal; nonce-bound, single-present, verifier must enforce nonce/freshness),
+`ptf_request_action` (any `/-path`
 dry-run except `/disclose*`), `ptf_get_receipt` (status/receipt by digest,
 in-memory only — `unknown` after restart), `ptf_list_capabilities`
-(read-only grant projections, no keys or capability envelopes),
+(read-only grant projections for this fixed identity only, no keys or
+capability envelopes),
 `ptf_revoke` (request-only — returns `requested:true` + the
 `ptf revoke --grant <id>` command, mutates nothing). Propose/redeem/request
 schemas carry demand fields (amount, currency,
