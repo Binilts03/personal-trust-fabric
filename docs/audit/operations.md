@@ -82,7 +82,18 @@ picks it up. Exercised without restarts in `tests/pdp-fronting.test.ts`.
   = process alive (supervisor-tracked) + `ptf audit --verify` green on its
   store + no `unknown`-proposal storms in stderr. In-memory proposals are
   lost on restart by design (fail-closed → propose again); receipts survive
-  in `audit.jsonl`.
+  in `audit.jsonl`. The general-contract tools (`ptf_request_data`,
+  `ptf_request_action`, `ptf_get_receipt`, `ptf_list_capabilities`,
+  `ptf_revoke`) share the same in-memory proposal map and the same
+  no-approve invariant.
+- Vault (`personal-state.json`): revision CAS + `vaultRev` freshness binding
+  like authority/registry. `audit --verify` covers the chain plus
+  authority/registry/vault freshness (loads the vault when present);
+  `loadVault`/`saveVault` fail closed on corrupt/missing/CAS mismatch
+  (`changed under us` / `never loaded` / `store missing` / `predates audit
+history`). A consistently-old full-directory restore passes `--verify`
+  and is caught only by recomputing the anchor checkpoint over the restored
+  `audit.jsonl` and comparing root/count (restore step 3).
 - PDP bin (`ptf-pdp-server`): `GET /healthz` is liveness — 200
   `{ ok: true, version }` without touching the store, no auth, nothing
   logged. `GET /readyz` is readiness — 200 `{ ready: true }` when the
@@ -115,7 +126,8 @@ independent anchoring (out of scope, ADR-0006).
 ## Backup / restore runbook (freshness-checked)
 
 Back up the whole `ptf-store/` directory (authority.json, registry.json,
-keystore, audit.jsonl) as one unit, plus an anchor checkpoint:
+personal-state.json once the vault is used, keystore, audit.jsonl) as one
+unit, plus an anchor checkpoint:
 
 ```sh
 cp -a ptf-store "backups/ptf-store-$(date -u +%F)"
@@ -135,12 +147,14 @@ line count next to the backup; the mechanized form is
 
 1. Stop writers (single-writer topology, ticket 02).
 2. Copy the backup over a fresh directory — never merge files across
-   backups (mixed vintages trip the freshness check on purpose).
+   backups (mixed vintages trip the freshness check on purpose). The unit
+   includes `personal-state.json` when present; same no-merge rule applies.
 3. `ptf --dir <restored> audit --verify` — must print `audit chain: valid`
    with exit 0. A stale `authority.json`/`registry.json` against newer
    `audit.jsonl` fails closed here ( `predates audit history — suspected
 partial rollback`); a full-directory rollback to consistently-old
-   files passes this check and is caught by recomputing the checkpoint
+   files (including the vault, which carries no per-entry freshness
+   binding) passes this check and is caught by recomputing the checkpoint
    over the restored `audit.jsonl` (same one-liner as backup) and
    comparing root/count against the recorded `anchor.json`.
 4. Point the MCP/PDP processes at the restored dir; `/readyz` must go 200.

@@ -1,5 +1,19 @@
 # Architecture brief (v0.1 + prod slice)
 
+PTF is a personal authority and protected-data layer for agentic commerce:
+a secure vault, authority engine, selective-disclosure broker, and protected
+execution layer that lets agents complete tasks without possessing the user's
+secrets. PTF is the source of truth for a person's authority and protected
+agent access — not for external facts (balances, availability, settlement),
+which stay authoritative in provider systems (ADR-0005 evidence, never
+authority).
+
+Three flows: (1) data disclosure — agent requests claims, PTF returns only
+approved minimal values; (2) protected execution — agent requests payment/use,
+PTF consumes authority + uses the instrument internally, agent gets a receipt;
+(3) human approval — agent proposes exact terms, person approves/denies,
+terms digest-bound.
+
 ## Authority flow
 
 ```
@@ -51,12 +65,24 @@ no lateral delegation.
   params pinned, strict hex, passphrase from env/file/TTY-prompt only
   (`readPassphrase`), rotation via `resealKeystore`/`ptf rekey`,
   best-effort `zeroize` (JS erasure limits documented).
+- `store/vault`: durable Personal State (`personal-state.json`, revision CAS):
+  purpose/agent/expiry/sensitivity-scoped records; `readForPurpose` validates
+  `Authority.evaluate(/disclose)` first, then filters (secret never returned);
+  `useCredential` is the sole use-only path for secrets (receipt-only return).
+- `profiles/data`: general agent contract (`requestData` for `/disclose`,
+  `requestExecution` for actions) — thin over `evaluate` + derived digest +
+  `renderProposal`; never mints authority.
+- `adapters/providers`: protected provider seam (payment/travel/retail/email/
+  identity fakes + `providerAsExecutor`/`executeViaProvider`); PTF owns policy,
+  consent, secret-handling, receipts — rails stay host duty.
 - `cli.ts`: wiring over tested modules (manual argv, stdin/stdout, `--help`
   / `--version`, unknown-flag rejection, `init` no-overwrite).
 - `mcp-server.ts`: official SDK stdio; `propose` (dry-run, status `pending`),
   `check` (TTL), `redeem` (dry-run → challenge → authorize-first → consume
-  authority → save authority before audit). No approve tool by design.
-  In-memory proposals/challenges (lost on restart, fail-closed).
+  authority → save authority before audit; `/pay`-only) plus the general
+  contract (`request_data`/`request_action` dry-runs, `get_receipt` by digest,
+  `list_capabilities` read-only, `revoke` request-only). No approve tool by
+  design. In-memory proposals/challenges (lost on restart, fail-closed).
 
 ## Invariants (test-enforced)
 

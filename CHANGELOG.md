@@ -6,6 +6,27 @@ release day. This project adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Durable Personal State vault (`src/store/vault.ts`, exported from
+  `src/index.ts`): purpose/agent/expiry/sensitivity-scoped records in
+  `ptf-store/personal-state.json` (plain JSON, revision CAS); authority-first
+  reads (`readForPurpose` over `/disclose`) plus use-only secret path
+  (`useCredential`, receipt-only); audit carries ids only.
+- General agent contract (`src/profiles/data.ts`): `requestData`
+  (`/disclose` dry-run) and `requestExecution` (any `/-path` except
+  `/disclose*`, dry-run, never consumes uses or mints authority).
+- MCP tools `ptf_request_data`, `ptf_request_action`, `ptf_get_receipt`,
+  `ptf_list_capabilities` (read-only), `ptf_revoke` (request-only, mutates
+  nothing). `ptf_redeem` stays `/pay`-only. No approve tool (unchanged).
+- Protected provider seam (`src/adapters/providers.ts`): per-kind fakes
+  (`makeFakeProviders`, move nothing) plus `providerAsExecutor` /
+  `executeViaProvider` with `chainId === capabilityId` and `termsDigest`
+  binding; rail results stay evidence via the `x402`/`ap2` verifiers.
+
+Backward-compatible, additive only: no breaking API changes to the existing
+CLI/MCP surface or `src/api.ts`.
+
 ## [0.1.0-rc.1] - 2026-09-14
 
 First release candidate: user-owned trust and delegated-authority layer

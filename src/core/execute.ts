@@ -98,6 +98,7 @@ export interface AuditEvent {
    */
   readonly authorityRev?: number;
   readonly registryRev?: number;
+  readonly vaultRev?: number;
 }
 
 export interface AuditEntry extends Required<
@@ -108,6 +109,7 @@ export interface AuditEntry extends Required<
   readonly detail?: string;
   readonly authorityRev?: number;
   readonly registryRev?: number;
+  readonly vaultRev?: number;
   readonly seq: number;
   readonly prevHash: string;
   readonly hash: string;
@@ -151,7 +153,7 @@ export class Audit {
   }
 
   append(event: AuditEvent): AuditEntry {
-    for (const field of ["authorityRev", "registryRev"] as const) {
+    for (const field of ["authorityRev", "registryRev", "vaultRev"] as const) {
       const v: unknown = event[field];
       if (
         v !== undefined &&
@@ -183,6 +185,7 @@ export class Audit {
       ...(event.registryRev !== undefined
         ? { registryRev: event.registryRev }
         : {}),
+      ...(event.vaultRev !== undefined ? { vaultRev: event.vaultRev } : {}),
     };
     const entry: AuditEntry = {
       ...body,
@@ -215,7 +218,11 @@ export class Audit {
       (raw["registryRev"] !== undefined &&
         (typeof raw["registryRev"] !== "number" ||
           !Number.isInteger(raw["registryRev"] as number) ||
-          (raw["registryRev"] as number) < 0))
+          (raw["registryRev"] as number) < 0)) ||
+      (raw["vaultRev"] !== undefined &&
+        (typeof raw["vaultRev"] !== "number" ||
+          !Number.isInteger(raw["vaultRev"] as number) ||
+          (raw["vaultRev"] as number) < 0))
     ) {
       throw new Error("audit: malformed entry");
     }

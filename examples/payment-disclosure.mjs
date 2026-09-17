@@ -5,12 +5,14 @@ import {
   Capabilities,
   Disclose,
   FakePaymentExecutor,
+  digestForOperation,
   executeAndReceipt,
   generateEd25519Keypair,
   leafCidHex,
+  paymentBounds,
   signBytes,
-  termsDigestOf,
 } from "../dist/src/index.js";
+import { recipientBounds } from "../dist/src/profiles/payment.js";
 
 const NOW = Math.floor(Date.now() / 1000);
 const principal = generateEd25519Keypair();
@@ -26,37 +28,44 @@ const keys = new Map([
   [ids.m, merchant.publicKeyRaw],
 ]);
 
-// --- Payment: grant → approve → issue → prove → receipt ---
+// --- Payment: grant → evaluate (ingress-bound) → issue → prove → receipt ---
 const auth = new Authority({ nowSec: () => NOW });
 auth.addGrant({
   id: "groceries",
   principal: ids.p,
-  agent: ids.a,
-  cmd: "/pay",
-  amountMax: 2000,
-  currency: "INR",
+  actor: { kind: "exact", id: ids.a },
+  action: { name: "/pay" },
+  bounds: [
+    ...paymentBounds({ amountMax: 2000, currency: "INR" }),
+    ...recipientBounds([ids.m]),
+  ],
   exp: NOW + 3600,
 });
-const digest = termsDigestOf({
-  invoice: "inv-1",
-  amount: 1790,
-  currency: "INR",
+// Identity-free operation: no principal/actor/digest — the engine binds all
+// three from the verified ingress (ADR-0013).
+const operation = {
+  action: { name: "/pay" },
+  resource: { type: "invoice", id: "invoice:inv-1" },
+  context: { amount: 1790, currency: "INR", recipient: ids.m },
+  purpose: "groceries",
+};
+const ingress = {
+  id: ids.a,
+  principal: ids.p,
+  source: "local-registration",
+  proofRef: "example",
+};
+const decision = auth.evaluate(operation, ingress, {
+  consume: true,
+  nowSec: NOW,
 });
-const decision = auth.evaluate(
-  {
-    principal: ids.p,
-    agent: ids.a,
-    cmd: "/pay",
-    purpose: "groceries",
-    resource: "invoice:inv-1",
-    recipient: ids.m,
-    amount: 1790,
-    currency: "INR",
-    termsDigest: digest,
-  },
-  { consume: true, nowSec: NOW }
-);
 if (!decision.allow) throw new Error(`payment denied: ${decision.reason}`);
+// Capability binding derives from the same bound operation — never raw digests.
+const digest = digestForOperation({
+  ...operation,
+  principal: ids.p,
+  actor: ids.a,
+});
 const caps = new Capabilities({
   resolveKey: (id) => keys.get(id) ?? null,
   nowSec: () => NOW,
