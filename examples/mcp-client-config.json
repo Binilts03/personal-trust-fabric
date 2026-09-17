@@ -1,5 +1,5 @@
 {
-  "$comment": "Claude Desktop / MCP Inspector config for the PTF server. Copy into claude_desktop_config.json under mcpServers, then restart the client. PTF_STORE_DIR must point at an initialized store (ptf init); PTF_PASSPHRASE must be set in env, never in this file.",
+  "$comment": "Claude Desktop / MCP Inspector config for the PTF server. Copy into claude_desktop_config.json under mcpServers, then restart the client. PTF_STORE_DIR must point at an initialized store (ptf init); PTF_PASSPHRASE must be set in env, never in this file. PTF_MCP_PRINCIPAL + PTF_MCP_ACTOR pin the fixed server identity (ADR-0013): every tool binds that ingress, schemas carry no identity fields.",
   "mcpServers": {
     "personal-trust-fabric": {
       "command": "node",
@@ -7,8 +7,21 @@
       "cwd": "/path/to/personal-trust-fabric",
       "env": {
         "PTF_STORE_DIR": "./ptf-store",
-        "PTF_PASSPHRASE": "change-me-via-env-only"
+        "PTF_PASSPHRASE": "change-me-via-env-only",
+        "PTF_MCP_PRINCIPAL": "you",
+        "PTF_MCP_ACTOR": "shopper"
       }
     }
+  },
+  "tools": {
+    "$comment": "All tools are dry-run or receipt-bound; there is deliberately NO approve tool (humans approve in the CLI, or standing grants cover the demand). Proposals are in-memory with TTLs (lost on restart, fail-closed).",
+    "ptf_propose": "Propose a bounded payment or disclosure. Evaluates authority without spending it; returns exact terms + termsDigest (pending) or a deny reason.",
+    "ptf_check": "Check a proposal's status by termsDigest (pending = authority would allow, awaiting live redeem; denied/executed are terminal; unknown after restart).",
+    "ptf_redeem": "Redeem a pending /pay proposal. Without a proof: live-authority dry-run returning cidHex to sign. With recipientKeyHex + recipientSigHex: authorizes the capability first, then spends live authority, executes, and returns a receipt.",
+    "ptf_request_data": "Propose a disclosure (dry-run). Evaluates /disclose authority without spending it; returns exact terms + termsDigest for human approval.",
+    "ptf_request_action": "Propose any /-path action (dry-run, disclose tier excluded — use ptf_request_data for /disclose). Redeem stays /pay-only via ptf_redeem.",
+    "ptf_get_receipt": "Look up a proposal/receipt by termsDigest. In-memory only: unknown after restart (ADR-0014).",
+    "ptf_list_capabilities": "List grant projections readable by this agent (read-only: id/principal/actor/action/purpose/resource/bounds-count — no keys or capability envelopes).",
+    "ptf_revoke": "Request revocation for human approval (request-only: never revokes directly from agent ingress — returns the `ptf revoke --grant <id>` command for a human)."
   }
 }

@@ -105,6 +105,47 @@ tested at the boundary.
   Production: implemented — strict helper for new paths, lenient retained
   only where verified bytes are compared (proof: `tests/jws.test.ts`).
 
+## Vault / agent contract / providers (P0 slices 1–3)
+
+- Vault (`src/store/vault.ts`): plain JSON `personal-state.json` with
+  revision CAS mirroring `store/files.ts` (stale/missing/never-loaded saves
+  fail closed — `changed under us` / `store missing` / `never loaded`;
+  corrupt loads throw). No DEK/keystore envelope on this file. Audit is
+  ids-only — `vault.put`/`vault.put.persisted`/`vault.read`/`vault.use`
+  carry id/type/revision, never values (proof: `tests/vault.test.ts`).
+  `readForPurpose` evaluates `Authority.evaluate(/disclose)` first, then
+  owner/purpose/agent/expiry filtering, and drops `secret` records entirely.
+  `useCredential` is the sole in-host path for `secret` (receipt-only return;
+  a receipt echoing a string secret fails closed instead of minting).
+  Vault carries `vaultRev` freshness binding like authority/registry:
+  `loadVault` fails closed when the file predates audit history and
+  `audit --verify` loads the vault when present; a full-directory rollback
+  to consistently-old files is still undetectable without an external
+  anchor: recompute the `store/anchor.ts` checkpoint on
+  restore (runbook duty, `operations.md`). Nonce is required on every vault
+  read, but replay storage is host-owned (`Disclose.verify usedNonces` set;
+  without it, replay inside the freshness window is possible — same duty as
+  the OpenID4VP row).
+- Agent contract (`src/profiles/data.ts` + MCP tools): `requestData`
+  (`/disclose` only) and `requestExecution` (any `/-path` except
+  `/disclose*`) are dry-run `Authority.evaluate` without consume — they never
+  add grants/approvals, never consume uses, never revoke, never expose keys
+  or envelopes. `ptf_redeem` stays `/pay`-only (other actions propose only;
+  present disclosures via the CLI). `ptf_revoke` is request-only — returns
+  `requested:true` + `ptf revoke --grant <id>` and leaves authority untouched
+  (proof: `tests/agent-contract.test.ts`).
+- Providers (`src/adapters/providers.ts`): `FakeProvider` /
+  `makeFakeProviders` (payment/travel/retail/email/identity) move nothing —
+  canned `fake-<kind>-` refs plus a call log for assertions. Real rails are
+  host duty (`ProtectedProvider.submit` / `PaymentExecutor`).
+  `providerAsExecutor` / `executeViaProvider` require redemption binding
+  (`chainId === capabilityId`) plus `termsDigest` verify before any receipt;
+  receipts reuse fixed `Receipt` fields with only amount/currency projected
+  from context, so free-text context handles never leak (proof:
+  `tests/providers.test.ts`). Rail results are evidence, never authority
+  (ADR-0005): hosts must run the `x402` (`checkSettlement`) / `ap2`
+  (`verifyMandatePair`) verifiers on provider output before trusting it.
+
 ## Crypto / platform
 
 - `atomicWrite` fsyncs best-effort; Windows rename is not atomic-replace.

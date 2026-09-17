@@ -23,6 +23,18 @@
       "types": "./dist/src/profiles/payment.d.ts",
       "import": "./dist/src/profiles/payment.js"
     },
+    "./profiles/data": {
+      "types": "./dist/src/profiles/data.d.ts",
+      "import": "./dist/src/profiles/data.js"
+    },
+    "./providers": {
+      "types": "./dist/src/adapters/providers.d.ts",
+      "import": "./dist/src/adapters/providers.js"
+    },
+    "./vault": {
+      "types": "./dist/src/store/vault.d.ts",
+      "import": "./dist/src/store/vault.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {

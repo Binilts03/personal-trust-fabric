@@ -90,7 +90,9 @@ receipt machinery (ADR-0009) — never emitted across systems.
 
 - `src/api.ts` — curated public entry (explicit named re-exports: Authority
   engine, approval presenter, persona, receipts, registry). `src/profiles/` —
-  domain profiles (payment conventions + helpers, no policy language).
+  domain profiles (payment conventions + helpers, no policy language) plus
+  `profiles/data.ts` general agent contract (`requestData`/`requestExecution`,
+  dry-run only, never mints authority).
   Capability envelope, canonical/crypto machinery, and stores stay internal
   (ADR-0011).
 - `src/core/` — zero-dependency authority plane: capabilities, policy authority,
@@ -98,10 +100,15 @@ receipt machinery (ADR-0009) — never emitted across systems.
   Never imports `adapters` (test-enforced).
 - `src/adapters/` — thin translators: standards edge (AuthZEN PDP, OAuth-agent
   attenuation, SD-JWT/KB-JWT, audit interop) plus evidence parsers (x402 v2,
-  AP2, OpenID4VP, MCP/WebMCP, A2A) and shared URL/JWS helpers. Evidence in,
+  AP2, OpenID4VP, MCP/WebMCP, A2A) and shared URL/JWS helpers, plus
+  `adapters/providers.ts` protected provider seam (payment/travel/retail/email/
+  identity fakes, `providerAsExecutor`/`executeViaProvider`). Evidence in,
   never authority out.
-- `src/store/`, `src/cli.ts`, `src/mcp-server.ts` — durable JSON stores,
-  `ptf` operator CLI, MCP stdio server (`ptf_propose/check/redeem`).
+- `src/store/`, `src/cli.ts`, `src/mcp-server.ts` — durable JSON stores
+  (`store/files.ts` authority/registry, `store/vault.ts` `personal-state.json`
+  with revision CAS), `ptf` operator CLI, MCP stdio server
+  (`ptf_propose/check/redeem` + `ptf_request_data/request_action/get_receipt/
+list_capabilities/revoke`).
 - `examples/` — `payment-disclosure.mjs` (library end-to-end),
   `mcp-client-config.json` (Claude Desktop wiring).
 - `tests/` — `node:test` suites at the public seam; `tests/eval/` holds
@@ -129,7 +136,15 @@ node dist/src/cli.js --help
 Supported topology: one CLI/MCP writer per store, with optimistic revision
 control as the backstop — a stale writer fails closed ("changed under us")
 instead of last-write-wins. Proposals are in-memory (lost on restart,
-fail-closed). Back up `ptf-store/` for high-value use.
+fail-closed). Vault (Personal State) persists to
+`ptf-store/personal-state.json` with revision CAS + audit freshness binding
+(stale vault fails `audit --verify`); operator commands `vault-put`
+(`--value-file` preferred, never prints/audits values) and `vault-read`
+(prints disclosed names only), plus library `VaultStore.putRecord` /
+`readForPurpose` / `useCredential` from `src/index.ts` and subpath
+`personal-trust-fabric/vault`. Back up `ptf-store/` for high-value use — as
+one unit including `personal-state.json` (plus an anchor checkpoint; see
+`docs/audit/operations.md`).
 
 ## Agent quickstart (MCP stdio)
 
@@ -156,10 +171,17 @@ that fixed identity.
 
 Tools: `ptf_propose` (dry-run, returns terms + digest, status `pending`),
 `ptf_check` (status by digest), `ptf_redeem` (challenge `cidHex`, then proof
-→ receipt). Propose/redeem schemas carry demand fields (amount, currency,
+→ receipt; `/pay` demands only) plus the general contract:
+`ptf_request_data` (`/disclose` dry-run), `ptf_request_action` (any `/-path`
+dry-run except `/disclose*`), `ptf_get_receipt` (status/receipt by digest,
+in-memory only — `unknown` after restart), `ptf_list_capabilities`
+(read-only grant projections, no keys or capability envelopes),
+`ptf_revoke` (request-only — returns `requested:true` + the
+`ptf revoke --grant <id>` command, mutates nothing). Propose/redeem/request
+schemas carry demand fields (amount, currency,
 recipient, resource, purpose) with NO principal/agent fields — the fixed
 startup identity applies. No approve tool: humans approve in the CLI; the server only
-spends standing grants. See `examples/mcp-client-config.json`.
+spends standing grants, and the contract tools never consume uses. See `examples/mcp-client-config.json`.
 
 ## Security model in one paragraph
 

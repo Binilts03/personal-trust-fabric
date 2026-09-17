@@ -176,10 +176,15 @@ export function loadRegistry(
  */
 function checkFreshness(
   dir: string,
-  what: "authority" | "registry",
+  what: "authority" | "registry" | "vault",
   fileRev: number
 ): void {
-  const field = what === "authority" ? "authorityRev" : "registryRev";
+  const field =
+    what === "authority"
+      ? "authorityRev"
+      : what === "registry"
+        ? "registryRev"
+        : "vaultRev";
   const path = join(dir, "audit.jsonl");
   if (!existsSync(path)) return;
   let maxRef: number | null = null;
@@ -200,9 +205,17 @@ function checkFreshness(
   }
   if (maxRef !== null && fileRev < maxRef) {
     throw new Error(
-      `${what} store at revision ${fileRev} predates audit history (references revision ${maxRef}) — suspected partial rollback; restore authority.json, registry.json, and audit.jsonl from the same backup`
+      `${what} store at revision ${fileRev} predates audit history (references revision ${maxRef}) — suspected partial rollback; restore authority.json, registry.json, personal-state.json, and audit.jsonl from the same backup`
     );
   }
+}
+
+export function checkStoreFreshness(
+  dir: string,
+  what: "authority" | "registry" | "vault",
+  fileRev: number
+): void {
+  checkFreshness(dir, what, fileRev);
 }
 
 /** Append-only audit log file. Entries are canonical JSON, one per line. */

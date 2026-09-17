@@ -26,6 +26,7 @@ import {
   digestForOperation,
 } from "./index.js";
 import { readFileSync } from "node:fs";
+import { requestData, requestExecution } from "./profiles/data.js";
 import type {
   AuthorityOperation,
   AuthorityRequest,
@@ -538,6 +539,262 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       >;
       return {
         content: [{ type: "text", text: JSON.stringify(receipt, null, 2) }],
+      };
+    }
+  );
+
+  // General agent contract (P0 slice 2). All five tools keep the
+  // no-approve invariant: they dry-run `Authority.evaluate` + render and
+  // never add grants/approvals, never consume uses, never revoke, and never
+  // expose keys or SealedCapability envelopes.
+
+  server.registerTool(
+    "ptf_request_data",
+    {
+      description:
+        "Propose a disclosure (dry-run). Evaluates /disclose authority without spending it and returns exact terms for human approval.",
+      inputSchema: z.object({
+        purpose: z.string().min(1),
+        resource: z.string().min(1),
+        verifier: z.string().min(1),
+        claims: z.array(z.string().min(1)).min(1),
+      }),
+    },
+    async (args) => {
+      const { auth } = load();
+      pruneProposals();
+      let out: ReturnType<typeof requestData>;
+      try {
+        out = requestData(
+          auth,
+          ingress,
+          {
+            purpose: args.purpose,
+            resourceId: args.resource,
+            claims: args.claims,
+            verifier: args.verifier,
+          },
+          { nowSec: now() }
+        );
+      } catch (err) {
+        throw new Error(
+          `request_data rejected: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      if (out.decision.allow) {
+        proposals.set(out.digest, {
+          demand: out.demand,
+          status: "pending",
+          until: now() + 600,
+        });
+      } else {
+        proposals.set(out.digest, {
+          demand: out.demand,
+          status: "denied",
+          until: now() + 600,
+        });
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              out.decision.allow
+                ? {
+                    allowed: true,
+                    termsDigest: out.digest,
+                    proposal: out.proposal,
+                  }
+                : {
+                    allowed: false,
+                    reason: out.decision.reason,
+                    proposal: out.proposal,
+                  },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "ptf_request_action",
+    {
+      description:
+        "Propose any /-path action (dry-run, disclose tier excluded). Redeem stays /pay-only via ptf_redeem.",
+      inputSchema: z.object({
+        cmd: z.string().min(2).regex(/^\//),
+        purpose: z.string().min(1).optional(),
+        resource: z.string().min(1),
+        resourceType: z.string().min(1).optional(),
+        context: z.record(z.string(), z.unknown()).optional(),
+        recipient: z.string().min(1).optional(),
+        amount: z.number().int().positive().optional(),
+        currency: z.string().min(1).optional(),
+        claims: z.array(z.string().min(1)).optional(),
+      }),
+    },
+    async (args) => {
+      const { auth } = load();
+      pruneProposals();
+      const context: Record<string, unknown> = { ...(args.context ?? {}) };
+      if (args.recipient !== undefined) context["recipient"] = args.recipient;
+      if (args.amount !== undefined) context["amount"] = args.amount;
+      if (args.currency !== undefined) context["currency"] = args.currency;
+      if (args.claims !== undefined) context["claims"] = [...args.claims];
+      let out: ReturnType<typeof requestExecution>;
+      try {
+        out = requestExecution(
+          auth,
+          ingress,
+          {
+            action: args.cmd as `/${string}`,
+            ...(args.purpose !== undefined ? { purpose: args.purpose } : {}),
+            resourceType: args.resourceType ?? "ptf-resource",
+            resourceId: args.resource,
+            context,
+          },
+          { nowSec: now() }
+        );
+      } catch (err) {
+        throw new Error(
+          `request_action rejected: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      if (out.decision.allow) {
+        proposals.set(out.digest, {
+          demand: out.demand,
+          status: "pending",
+          until: now() + 600,
+        });
+      } else {
+        proposals.set(out.digest, {
+          demand: out.demand,
+          status: "denied",
+          until: now() + 600,
+        });
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              out.decision.allow
+                ? {
+                    allowed: true,
+                    termsDigest: out.digest,
+                    proposal: out.proposal,
+                  }
+                : {
+                    allowed: false,
+                    reason: out.decision.reason,
+                    proposal: out.proposal,
+                  },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "ptf_get_receipt",
+    {
+      description:
+        "Look up a proposal/receipt by terms digest. In-memory only: unknown after restart (ADR-0014).",
+      inputSchema: z.object({ termsDigest: z.string().min(16) }),
+    },
+    async (args) => {
+      pruneProposals();
+      const found = proposals.get(args.termsDigest);
+      if (found === undefined || now() > found.until) {
+        if (found !== undefined) proposals.delete(args.termsDigest);
+        return {
+          content: [
+            { type: "text", text: JSON.stringify({ status: "unknown" }) },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              found.status === "executed"
+                ? { status: found.status, receipt: found.receipt }
+                : { status: found.status },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "ptf_list_capabilities",
+    {
+      description:
+        "List grant projections readable by this agent (read-only, no keys or capability envelopes).",
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const { auth } = load();
+      const grants = auth.snapshot().grants.map((g) => ({
+        id: g.id,
+        principal: g.principal,
+        actor: g.actor,
+        action: g.action.name,
+        ...(g.purpose !== undefined ? { purpose: g.purpose } : {}),
+        ...(g.resource !== undefined ? { resource: g.resource } : {}),
+        bounds: g.bounds.length,
+      }));
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ capabilities: grants }, null, 2),
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "ptf_revoke",
+    {
+      description:
+        "Request revocation for human approval (never revokes directly from agent ingress).",
+      inputSchema: z.object({
+        id: z.string().min(1),
+        reason: z.string().min(1).optional(),
+      }),
+    },
+    async (args) => {
+      const { auth } = load();
+      const exists = auth.snapshot().grants.some((g) => g.id === args.id);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                requested: true,
+                id: args.id,
+                knownGrant: exists,
+                next: `human must run: ptf revoke --grant ${args.id}`,
+                note: "agent revoke is request-only; no authority mutated",
+              },
+              null,
+              2
+            ),
+          },
+        ],
       };
     }
   );

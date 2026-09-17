@@ -15,6 +15,7 @@ import {
   FakePaymentExecutor,
   FileAuditLog,
   RecipientRegistry,
+  VaultStore,
   atomicWrite,
   claimsSubset,
   digestForOperation,
@@ -23,12 +24,15 @@ import {
   leafCidHex,
   loadAuthority,
   loadRegistry,
+  loadVault,
   openKeystore,
   parseDecision,
   paymentBounds,
   privateKeyFromPkcs8,
   publicKeyFromPrivate,
+  putRecord as putVaultRecord,
   rawPublicKey,
+  readForPurpose,
   readPassphrase,
   renderProposal,
   resealKeystore,
@@ -96,6 +100,8 @@ const COMMANDS = [
   "grant",
   "pay",
   "disclose",
+  "vault-put",
+  "vault-read",
   "audit",
   "revoke",
   "help",
@@ -127,11 +133,15 @@ export function helpText(): string {
     "         --any-agent is an explicit wildcard (audited, deliberate) — prefer --agent / --actor-set",
     "  pay --principal P --agent A --recipient R --amount N --currency C --resource R [--purpose T] [--yes]",
     "  disclose --holder H --verifier V --claims a,b --credential JSON [--allowed a,b] [--yes]",
+    "  vault-put --id ID --owner O --type T --sensitivity general|sensitive|secret --source S --purposes p1,p2 --agents a1,a2 (--value V | --value-file PATH) [--expires-at EPOCH]",
+    "         --value-file preferred (0600 file): --value leaks into shell history/process list; values never print or audit",
+    "  vault-read --holder H --agent A --purpose P --claims a,b --verifier V [--nonce N]",
+    "         prints disclosed claim NAMES only (ids-only audit); secrets never leave via read (use in-host useCredential)",
     "  audit [--verify]                       verify hash chain (needs no passphrase)",
     "  revoke (--grant ID | --recipient ALIAS)",
     "  help                                   print this help",
     "",
-    "env: PTF_PASSPHRASE (required for keygen/pay/disclose only; never passed as a flag)",
+    "env: PTF_PASSPHRASE (required for keygen/pay/disclose/vault-read only; never passed as a flag)",
     "     alternatives: PTF_PASSPHRASE_FILE (0600 file, preferred over env), or an interactive TTY prompt",
     "examples:",
     "  PTF_PASSPHRASE=hunter2 ptf --dir ./ptf-store init",
@@ -175,7 +185,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = tokens;
   if (command === undefined) {
     throw new Error(
-      "usage: ptf [--dir D] <init|keygen|recipient|grant|pay|disclose|audit|revoke> ..."
+      "usage: ptf [--dir D] <init|keygen|recipient|grant|pay|disclose|vault-put|vault-read|audit|revoke> ..."
     );
   }
   if (!(COMMANDS as readonly string[]).includes(command)) {
@@ -251,6 +261,26 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "credential",
     "allowed",
     "yes",
+  ]),
+  "vault-put": new Set([
+    "id",
+    "owner",
+    "type",
+    "sensitivity",
+    "source",
+    "purposes",
+    "agents",
+    "value",
+    "value-file",
+    "expires-at",
+  ]),
+  "vault-read": new Set([
+    "holder",
+    "agent",
+    "purpose",
+    "claims",
+    "verifier",
+    "nonce",
   ]),
   audit: new Set(["verify"]),
   revoke: new Set(["grant", "recipient"]),
@@ -474,7 +504,7 @@ export async function run(
     dir,
     env,
     now,
-    command === "pay" || command === "disclose",
+    command === "pay" || command === "disclose" || command === "vault-read",
     prompt
   );
 
@@ -830,11 +860,168 @@ export async function run(
     return 0;
   }
 
+  if (command === "vault-put") {
+    const id = str(flags, "id");
+    const owner = str(flags, "owner");
+    const type = str(flags, "type");
+    const sensitivityRaw = str(flags, "sensitivity");
+    if (
+      sensitivityRaw !== "general" &&
+      sensitivityRaw !== "sensitive" &&
+      sensitivityRaw !== "secret"
+    ) {
+      throw new Error("usage: --sensitivity must be general|sensitive|secret");
+    }
+    const source = str(flags, "source");
+    const purposes = str(flags, "purposes").split(",");
+    if (purposes.some((x) => x.length === 0)) {
+      throw new Error("usage: --purposes must be a non-empty comma list");
+    }
+    const agents = str(flags, "agents").split(",");
+    if (agents.some((x) => x.length === 0)) {
+      throw new Error("usage: --agents must be a non-empty comma list");
+    }
+    const valueRaw = opt(flags, "value");
+    const valueFileRaw = opt(flags, "value-file");
+    if (
+      (valueRaw === undefined) === (valueFileRaw === undefined) ||
+      (valueRaw !== undefined &&
+        valueRaw.length === 0 &&
+        valueFileRaw === undefined)
+    ) {
+      throw new Error("usage: exactly one of --value V | --value-file PATH");
+    }
+    let value: unknown;
+    if (valueFileRaw !== undefined) {
+      if (valueFileRaw.length === 0) {
+        throw new Error("usage: --value-file must be non-empty");
+      }
+      let raw: string;
+      try {
+        raw = readFileSync(valueFileRaw, "utf8");
+      } catch {
+        throw new Error(`vault-put: cannot read --value-file ${valueFileRaw}`);
+      }
+      // Strip a single trailing newline (0600 file convention) — the secret
+      // itself never prints or audits either way.
+      value = raw.replace(/\r?\n$/, "");
+    } else {
+      value = valueRaw as string;
+    }
+    const expiresRaw = opt(flags, "expires-at");
+    let expiresAt: number | null = null;
+    if (expiresRaw !== undefined) {
+      const n = Number(expiresRaw);
+      if (!Number.isInteger(n) || n < 0) {
+        throw new Error("usage: --expires-at must be a non-negative epoch int");
+      }
+      expiresAt = n;
+    }
+    // Load-or-create: a missing personal-state.json starts a fresh vault at
+    // revision 0 (saveVault CAS); a corrupt file fails closed via loadVault.
+    let vault: VaultStore;
+    try {
+      vault = loadVault(dir, { nowSec: now });
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        /store missing/.test(err.message) &&
+        !existsSync(join(dir, "personal-state.json"))
+      ) {
+        vault = new VaultStore(now);
+      } else {
+        throw err;
+      }
+    }
+    const rec = putVaultRecord(
+      dir,
+      vault as VaultStore,
+      {
+        id,
+        owner,
+        type,
+        value,
+        sensitivity: sensitivityRaw,
+        source,
+        allowedPurposes: purposes,
+        allowedAgents: agents,
+        ...(expiresAt !== null ? { expiresAt } : {}),
+      },
+      { at: now(), audit: ctx.audit }
+    );
+    // ids-only: the value never prints, never audits (putVaultRecord detail
+    // carries id/type/sensitivity/revision only).
+    io.print(`vault-put ${rec.id} (${rec.sensitivity})`);
+    return 0;
+  }
+
+  if (command === "vault-read") {
+    const holder = str(flags, "holder");
+    const agent = str(flags, "agent");
+    const purpose = str(flags, "purpose");
+    const requested = str(flags, "claims").split(",");
+    if (requested.some((x) => x.length === 0)) {
+      throw new Error("usage: --claims must be a non-empty comma list");
+    }
+    const verifier = str(flags, "verifier");
+    const nonce = opt(flags, "nonce") ?? `n-${now()}`;
+    if (nonce.length === 0) throw new Error("usage: --nonce must be non-empty");
+    const holderSeed = ctx.keys[holder];
+    if (holderSeed === undefined) {
+      throw new Error(`no key for holder ${holder}`);
+    }
+    let vault: VaultStore;
+    try {
+      vault = loadVault(dir, { nowSec: now });
+    } catch {
+      throw new Error(`no vault yet at ${dir} (run: vault-put first)`);
+    }
+    try {
+      const pres = readForPurpose(vault, {
+        ingress: {
+          id: agent,
+          principal: holder,
+          source: "local-registration",
+          proofRef: "cli-operator",
+        },
+        purpose,
+        requested,
+        verifier,
+        nonce,
+        nowSec: now(),
+        authority: ctx.auth,
+        holder: { id: holder, privateKey: toPrivateKey(holderSeed) },
+        audit: ctx.audit,
+      });
+      // NAMES only — values never print (secret records never even reach here:
+      // readForPurpose drops `secret` before presenting).
+      io.print(JSON.stringify(pres.disclosures.map((d) => d.name)));
+      return 0;
+    } catch (err) {
+      io.print(`denied: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+  }
+
   if (command === "audit") {
     if (flags["verify"] === true) {
       const valid = ctx.audit.verifyChain();
-      io.print(valid ? "audit chain: valid" : "audit chain: BROKEN");
-      return valid ? 0 : 1;
+      if (!valid) {
+        io.print("audit chain: BROKEN");
+        return 1;
+      }
+      if (existsSync(join(dir, "personal-state.json"))) {
+        try {
+          loadVault(dir, { nowSec: now });
+        } catch (err) {
+          io.print(
+            `vault freshness failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+          return 1;
+        }
+      }
+      io.print("audit chain: valid");
+      return 0;
     }
     io.print("(use --verify to check the chain; entries live in audit.jsonl)");
     return 0;
