@@ -1,5 +1,6 @@
 import { canonicalize } from "../core/canonical.js";
 import { randomHex } from "../core/crypto.js";
+import { isNonEmptyString } from "./guards.js";
 import type {
   PaymentExecutor,
   PaymentInstruction,
@@ -55,10 +56,6 @@ export interface ProtectedProvider {
     sub: ProviderSubmission,
     expected: { readonly capabilityId: string; readonly termsDigest: string }
   ): { readonly ok: true } | { readonly ok: false; readonly reason: string };
-}
-
-function isNonEmptyString(v: unknown): v is string {
-  return typeof v === "string" && v.length > 0;
 }
 
 function checkRequest(req: ProviderRequest): void {
@@ -199,9 +196,12 @@ export function providerAsExecutor(
  * Generic provider execution with receipt. Requires proof of redemption
  * bound to the request (`chainId === capabilityId`) and pins `termsDigest`
  * through `verify` — a verify failure throws before any receipt exists.
- * Receipt reuses `Receipt` with `transaction=externalRef`; only
- * amount/currency are projected from context (when present) so arbitrary
- * context handles never leak into the receipt.
+ * `provider.verify` is provider-attested: independent rail settlement checks
+ * (`checkSettlement`, `verifyMandatePair`) remain host duty before trusting
+ * `externalRef` for value movement (ADR-0005). Receipt reuses `Receipt` with
+ * `transaction=externalRef`; amount/currency must ride explicitly in context
+ * (0 and explicit values allowed) so the receipt never invents terms the
+ * demand did not carry.
  */
 export async function executeViaProvider(
   provider: ProtectedProvider,
@@ -225,16 +225,22 @@ export async function executeViaProvider(
   const currencyRaw: unknown = (req.context as Record<string, unknown>)[
     "currency"
   ];
-  const amount =
-    typeof amountRaw === "number" &&
-    Number.isFinite(amountRaw) &&
-    amountRaw >= 0
-      ? amountRaw
-      : 0;
-  const currency =
-    typeof currencyRaw === "string" && currencyRaw.length > 0
-      ? currencyRaw
-      : "NONE";
+  if (
+    typeof amountRaw !== "number" ||
+    !Number.isFinite(amountRaw) ||
+    amountRaw < 0
+  ) {
+    throw new Error(
+      "provider: receipt needs context.amount as a non-negative finite number (pass explicitly; 0 allowed)"
+    );
+  }
+  if (typeof currencyRaw !== "string" || currencyRaw.length === 0) {
+    throw new Error(
+      "provider: receipt needs context.currency as a non-empty string (pass explicitly)"
+    );
+  }
+  const amount: number = amountRaw;
+  const currency: string = currencyRaw;
   return {
     receiptId: `rcpt-${randomHex(8)}`,
     capabilityId: req.capabilityId,

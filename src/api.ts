@@ -11,7 +11,9 @@
  *   machinery, never wire (ADR-0009);
  * - canonical/crypto machinery (`core/canonical.js`, `core/crypto.js`:
  *   canonicalize, sha256Hex, termsDigestOf, key functions) — bind operations
- *   with `digestForOperation`, not raw digests (never the `Fake*` executors);
+ *   with `digestForOperation`, not raw digests (never the `Fake*` executors —
+ *   except the provider fakes below, which ship as the host reference
+ *   implementation: canned refs, call logs, move nothing);
  * - disclosure engine (`core/disclose.js`), policy predicates
  *   (`core/policy.js`), remaining host stores (`store/files.js`,
  *   `store/keystore.js`, `store/challenges.js`, `store/anchor.js`) and
@@ -85,7 +87,9 @@ export type {
   VaultReadRequest,
   SecretInstruction,
   SecretUseResult,
+  SecretUseOptions,
 } from "./store/vault.js";
+export { parseSensitivity } from "./store/vault.js";
 
 export { requestData, requestExecution } from "./profiles/data.js";
 export type {

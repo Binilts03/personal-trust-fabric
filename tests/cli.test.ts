@@ -52,6 +52,53 @@ describe("operator CLI argument parsing (prod-03)", () => {
     );
   });
 
+  it("vault-put takes --value-file only (never --value)", () => {
+    const parsed = parseArgs([
+      "vault-put",
+      "--id",
+      "r1",
+      "--owner",
+      "you",
+      "--type",
+      "email",
+      "--sensitivity",
+      "general",
+      "--source",
+      "user",
+      "--purposes",
+      "support",
+      "--agents",
+      "shopper",
+      "--value-file",
+      "./email.txt",
+    ]);
+    assert.equal(parsed.command, "vault-put");
+    assert.equal(parsed.flags["value-file"], "./email.txt");
+    assert.throws(
+      () =>
+        parseArgs([
+          "vault-put",
+          "--id",
+          "r1",
+          "--owner",
+          "you",
+          "--type",
+          "email",
+          "--sensitivity",
+          "general",
+          "--source",
+          "user",
+          "--purposes",
+          "support",
+          "--agents",
+          "shopper",
+          "--value",
+          "sekret",
+        ]),
+      /unknown flag/
+    );
+  });
+
   it("operator-quickstart README commands all pass parseArgs (ticket 17)", () => {
     const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const readme = readFileSync(join(root, "README.md"), "utf8");

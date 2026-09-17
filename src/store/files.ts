@@ -174,7 +174,7 @@ export function loadRegistry(
  * runbook). Linear scan per load: operator-scale by design; high-throughput
  * PDP hosts pin snapshots (ticket 10).
  */
-function checkFreshness(
+export function checkFreshness(
   dir: string,
   what: "authority" | "registry" | "vault",
   fileRev: number
@@ -208,14 +208,6 @@ function checkFreshness(
       `${what} store at revision ${fileRev} predates audit history (references revision ${maxRef}) — suspected partial rollback; restore authority.json, registry.json, personal-state.json, and audit.jsonl from the same backup`
     );
   }
-}
-
-export function checkStoreFreshness(
-  dir: string,
-  what: "authority" | "registry" | "vault",
-  fileRev: number
-): void {
-  checkFreshness(dir, what, fileRev);
 }
 
 /** Append-only audit log file. Entries are canonical JSON, one per line. */

@@ -116,7 +116,12 @@ tested at the boundary.
   `readForPurpose` evaluates `Authority.evaluate(/disclose)` first, then
   owner/purpose/agent/expiry filtering, and drops `secret` records entirely.
   `useCredential` is the sole in-host path for `secret` (receipt-only return;
-  a receipt echoing a string secret fails closed instead of minting).
+  a receipt echoing a distinctive secret fails closed instead of minting;
+  short scalars such as PINs cannot be told apart from legitimate receipt
+  fields and stay uncovered — keep them out of string-typed receipts).
+  Raw record access (`VaultStore` internals) is host-only by construction —
+  the embedding host already possesses the vault file; the enforced boundary
+  is MCP/CLI, which expose only evaluate-first reads and receipt-only use.
   Vault carries `vaultRev` freshness binding like authority/registry:
   `loadVault` fails closed when the file predates audit history and
   `audit --verify` loads the vault when present; a full-directory rollback
@@ -130,8 +135,13 @@ tested at the boundary.
   (`/disclose` only) and `requestExecution` (any `/-path` except
   `/disclose*`) are dry-run `Authority.evaluate` without consume — they never
   add grants/approvals, never consume uses, never revoke, never expose keys
-  or envelopes. `ptf_redeem` stays `/pay`-only (other actions propose only;
-  present disclosures via the CLI). `ptf_revoke` is request-only — returns
+  or envelopes. `ptf_list_capabilities` shows only grants matching the fixed
+  server identity (principal + covering actor selector); revoked and
+  foreign-principal grants are excluded. `ptf_redeem` stays `/pay`-only
+  (other actions propose only; present disclosures via the CLI) and accepts
+  any `/pay` proposal in the shared map regardless of originating propose
+  tool. Redeem-only flows anchor authority/registry revisions; vault-anchored
+  entries come from vault operations. `ptf_revoke` is request-only — returns
   `requested:true` + `ptf revoke --grant <id>` and leaves authority untouched
   (proof: `tests/agent-contract.test.ts`).
 - Providers (`src/adapters/providers.ts`): `FakeProvider` /
@@ -140,11 +150,14 @@ tested at the boundary.
   host duty (`ProtectedProvider.submit` / `PaymentExecutor`).
   `providerAsExecutor` / `executeViaProvider` require redemption binding
   (`chainId === capabilityId`) plus `termsDigest` verify before any receipt;
-  receipts reuse fixed `Receipt` fields with only amount/currency projected
-  from context, so free-text context handles never leak (proof:
-  `tests/providers.test.ts`). Rail results are evidence, never authority
-  (ADR-0005): hosts must run the `x402` (`checkSettlement`) / `ap2`
-  (`verifyMandatePair`) verifiers on provider output before trusting it.
+  `provider.verify` is provider-attested, so independent rail settlement
+  checks stay host duty (see ADR-0005 line below). Receipts reuse fixed
+  `Receipt` fields with amount/currency taken explicitly from context
+  (missing values fail closed — never fabricated), so free-text context
+  handles never leak (proof: `tests/providers.test.ts`). Rail results are
+  evidence, never authority (ADR-0005): hosts must run the `x402`
+  (`checkSettlement`) / `ap2` (`verifyMandatePair`) verifiers on provider
+  output before trusting it for value movement.
 
 ## Crypto / platform
 

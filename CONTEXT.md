@@ -48,6 +48,14 @@ _Avoid_: Profile dump, full context
 What the agent actually receives: Persona Capsule plus pending proposals and receipts. Never raw credentials or keys.
 _Avoid_: Agent context
 
+**Vault**:
+The durable Personal State store (`personal-state.json`, revision CAS): purpose/agent/expiry/sensitivity-scoped records. Reads are evaluate-first (`readForPurpose`); secrets are use-only (`useCredential`, receipt-only). There is no generic read.
+_Avoid_: Database (implies open queries), profile store
+
+**Protected Provider**:
+A host-owned rail adapter behind the provider seam: submits capability-bound requests and returns external refs as evidence. PTF owns policy, consent, secret-handling, and receipts — never the rail itself.
+_Avoid_: Payment rail (implies PTF moves value), PSP integration
+
 ### Execution
 
 **Protected Execution**:
