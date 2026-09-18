@@ -44,11 +44,13 @@ import {
   signBytes,
   VAULT_DEK_ALIAS,
   VAULT_DEK_NEXT_ALIAS,
+  backupStore,
   createVaultDek,
   ensureVaultDek,
   migrateVault,
   readVaultKid,
   resolveVaultDek,
+  restoreStore,
 } from "./index.js";
 import type {
   ActorSelector,
@@ -115,6 +117,8 @@ const COMMANDS = [
   "vault-rekey",
   "audit",
   "revoke",
+  "backup",
+  "restore",
   "help",
   "version",
 ] as const;
@@ -151,6 +155,8 @@ export function helpText(): string {
     "  vault-migrate                          one-time migration of a legacy plaintext vault to AEAD (then destroy old plaintext backups)",
     "  vault-rekey                            rotate the vault DEK (re-seals vault data; keystore passphrase unchanged)",
     "  audit [--verify]                       verify hash chain (needs no passphrase)",
+    "  backup --to DIR                        copy the store as one unit + anchor.json (refuses non-empty dest; stop writers first)",
+    "  restore --from DIR                     copy a backup over fresh --dir, never merges; verifies chain + freshness + anchor",
     "  revoke (--grant ID | --recipient ALIAS)",
     "  help                                   print this help",
     "",
@@ -198,7 +204,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = tokens;
   if (command === undefined) {
     throw new Error(
-      "usage: ptf [--dir D] <init|keygen|recipient|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|revoke> ..."
+      "usage: ptf [--dir D] <init|keygen|recipient|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|revoke> ..."
     );
   }
   if (!(COMMANDS as readonly string[]).includes(command)) {
@@ -297,6 +303,8 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
   "vault-migrate": new Set([]),
   "vault-rekey": new Set([]),
   audit: new Set(["verify"]),
+  backup: new Set(["to"]),
+  restore: new Set(["from"]),
   revoke: new Set(["grant", "recipient"]),
   help: new Set(),
   version: new Set(),
@@ -444,6 +452,60 @@ export async function run(
     saveRegistry(dir, new RecipientRegistry(now));
     FileAuditLog.open(join(dir, "audit.jsonl"), now);
     io.print(`initialized store at ${dir}`);
+    return 0;
+  }
+
+  if (command === "backup") {
+    const to = str(flags, "to");
+    io.print(
+      "stop writers first: a backup is a point-in-time copy (single-writer topology)"
+    );
+    const ppFile = env["PTF_PASSPHRASE_FILE"];
+    const summary = backupStore(dir, to, {
+      nowSec: now,
+      ...(typeof ppFile === "string" && ppFile.length > 0
+        ? { passphraseFile: ppFile }
+        : {}),
+    });
+    io.print(
+      `backup: ${summary.files.length} files + ${summary.proposals} proposals → ${summary.destDir}`
+    );
+    io.print(
+      `anchor: root=${summary.anchor.root === "" ? "(empty log)" : summary.anchor.root} count=${summary.anchor.count}`
+    );
+    return 0;
+  }
+
+  if (command === "restore") {
+    const from = str(flags, "from");
+    // Key material comes from the BACKUP's keystore (when present) so the
+    // restored vault can be verified before the target is trusted.
+    let keys: Record<string, Uint8Array> = {};
+    if (existsSync(join(from, "keystore.json"))) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(
+          readFileSync(join(from, "keystore.json"), "utf8")
+        ) as unknown;
+      } catch {
+        throw new Error(`keystore corrupt: ${join(from, "keystore.json")}`);
+      }
+      keys = openKeystore(
+        parsed as Parameters<typeof openKeystore>[0],
+        passphraseFrom(env, prompt)
+      ) as Record<string, Uint8Array>;
+    }
+    const summary = restoreStore(from, dir, {
+      nowSec: now,
+      ...(Object.keys(keys).length > 0 ? { keys } : {}),
+    });
+    io.print(`restore: ${summary.files.length} files → ${summary.destDir}`);
+    io.print(
+      summary.anchorChecked
+        ? "anchor: MATCH (restored log equals the backup checkpoint)"
+        : "anchor: no anchor.json in backup (point-in-time only — record one next time)"
+    );
+    io.print(`next: ptf --dir ${dir} audit --verify`);
     return 0;
   }
 

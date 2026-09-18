@@ -131,13 +131,15 @@ node dist/src/cli.js --dir ./ptf-store recipient --alias shop --key <hex-from-ke
 node dist/src/cli.js --dir ./ptf-store grant --id g1 --principal you --cmd /pay --agent shopper --amount-max 2000 --currency INR --recipient shop
 node dist/src/cli.js --dir ./ptf-store pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes
 node dist/src/cli.js --dir ./ptf-store audit --verify
+node dist/src/cli.js --dir ./ptf-store backup --to ./backups/ptf-store
 node dist/src/cli.js --help
 ```
 
 Supported topology: one CLI/MCP writer per store, with optimistic revision
 control as the backstop — a stale writer fails closed ("changed under us")
-instead of last-write-wins. Proposals are in-memory (lost on restart,
-fail-closed). Vault (Personal State) persists to
+instead of last-write-wins. Proposals persist per termsDigest file
+(ADR-0017: restart preserves pending/denied/executed; challenges stay
+in-memory). Vault (Personal State) persists to
 `ptf-store/personal-state.json` with revision CAS + audit freshness binding
 (stale vault fails `audit --verify`); operator commands `vault-put`
 (`--value-file` only, never prints/audits values) and `vault-read`

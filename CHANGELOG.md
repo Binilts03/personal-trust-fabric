@@ -8,6 +8,14 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- `ptf backup` / `ptf restore` (`src/store/backup.ts`): the operations
+  runbook enforced in code — backup copies the store as one unit
+  (authority, registry, vault, keystore, audit, proposals) plus an
+  `anchor.json` checkpoint, refusing non-empty destinations, destinations
+  inside the store, and passphrase files living inside the store; restore
+  copies over a fresh directory only (never merges) and verifies chain,
+  store loads, and anchor match. Missing anchors restore point-in-time
+  with a warning.
 - Encrypted Personal State vault (ADR-0016): `personal-state.json` is now an
   AES-256-GCM envelope (v2) under a keystore-held DEK (`ptf/vault-dek`).
   Legacy plaintext files are refused at load and save; one-time
@@ -45,8 +53,8 @@ release day. This project adheres to Semantic Versioning.
   binding; rail results stay evidence via the `x402`/`ap2` verifiers.
 - Durable proposals (ADR-0017, amends ADR-0014): one file per termsDigest
   under `proposals/` (O_EXCL create, TTL GC, last-writer-wins transitions
-  under single-writer topology) — restart
-  preserves pending/denied/executed; the digest is the idempotency key
+  under single-writer topology) — restart preserves pending/denied/executed;
+  the digest is the idempotency key
   (re-propose returns stored; executed immutable; denied re-opens on fresh
   allow). Recipient challenges stay in-memory (live key material).
 

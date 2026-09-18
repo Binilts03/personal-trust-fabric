@@ -127,6 +127,19 @@ independent anchoring (out of scope, ADR-0006).
 
 ## Backup / restore runbook (freshness-checked)
 
+Use the commands — they enforce the runbook (one unit, never merge,
+anchor always written and compared):
+
+```sh
+ptf --dir ptf-store backup --to "backups/ptf-store-$(date -u +%F)"
+# stop writers first: a backup is a point-in-time copy (single-writer topology).
+# Refuses non-empty destinations and a passphrase file living inside the store.
+ptf --dir ptf-restored restore --from "backups/ptf-store-$(date -u +%F)"
+# Copies over a fresh directory (refuses non-empty — never mixes vintages),
+# then verifies: chain valid, stores load (mixed vintages fail closed),
+# anchor recomputed and compared. Follow with step 3 below.
+```
+
 Back up the whole `ptf-store/` directory (authority.json, registry.json,
 personal-state.json once the vault is used, keystore, audit.jsonl) as one
 unit, plus an anchor checkpoint. Backup honesty: `personal-state.json` is
