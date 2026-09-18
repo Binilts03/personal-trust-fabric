@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
@@ -11,6 +11,7 @@ import {
   FakePaymentExecutor,
   FileAuditLog,
   RecipientRegistry,
+  canonicalize,
   executeAndReceipt,
   leafCidHex,
   loadAuthority,
@@ -29,6 +30,12 @@ import {
 } from "./index.js";
 import { readFileSync } from "node:fs";
 import { requestData, requestExecution } from "./profiles/data.js";
+import {
+  createProposal,
+  gcChallenges,
+  loadProposal,
+  transitionProposal,
+} from "./store/challenges.js";
 import type {
   ActorSelector,
   AuthorityOperation,
@@ -55,10 +62,16 @@ import type {
  * under us — reload and retry") instead of last-write-wins, so concurrent
  * redeems cannot double-spend single-use authority: the loser errors
  * visibly before any receipt. Callers retry on a fresh handle (each tool
- * call here already reloads). Proposals + pending challenges stay in
- * memory with TTLs and are lost on restart (fail-closed: check → unknown,
- * redeem → propose again). Receipts survive restarts in audit.jsonl;
- * proposal status does not.
+ * call here already reloads).
+ *
+ * DURABILITY (ADR-0017): proposals persist as one file per termsDigest
+ * under <storeDir>/proposals (O_EXCL create, CAS transitions, TTL GC) and
+ * survive restarts; the digest is the idempotency key (re-proposing live
+ * terms returns the stored record; executed is immutable). Pending
+ * recipient challenges stay in memory with short TTLs and are lost on
+ * restart (fail-closed: redeem phase 1 again) — challenges carry live
+ * capabilities that must never touch disk. Receipts additionally survive
+ * in audit.jsonl.
  *
  * IDENTITY (ADR-0013): the server speaks for ONE fixed identity — principal
  * + actor are pinned at instantiation (`PtfServerOptions`, from
@@ -182,7 +195,6 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     source: "local-registration",
     proofRef: `stdio:${opts.dir}`,
   };
-  const proposals = new Map<string, Proposal>();
 
   const load = (): {
     auth: Authority;
@@ -237,27 +249,172 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     }
   };
 
-  const pruneProposals = (): void => {
-    for (const [digest, p] of proposals) {
-      if (now() > p.until) proposals.delete(digest);
+  // Durable proposals (ADR-0017): one file per termsDigest under
+  // <storeDir>/proposals via store/challenges.ts (O_EXCL create, TTL GC).
+  // Transitions are last-writer-wins under the single-writer topology — the
+  // spend backstop is the authority revision CAS + single-use capabilities,
+  // not the proposal file. The digest is the idempotency key: re-proposing
+  // live terms returns the stored record instead of minting a duplicate.
+  // Rules: executed is immutable history (idempotent reread); pending stays
+  // in flight while live; denied re-opens to pending when live authority now
+  // allows. Pending recipient challenges stay in-memory with short TTLs and
+  // are lost on restart (fail-closed: redeem phase 1 again) — challenges
+  // carry live capabilities that must never touch disk.
+  type StoredProposal = {
+    readonly demand: Proposal["demand"];
+    readonly status: "pending" | "denied" | "executed";
+    readonly receipt?: Record<string, unknown>;
+    readonly until: number;
+  };
+
+  const PROPOSAL_TTL_SEC = 600;
+  const PROPOSAL_DENY_TTL_SEC = 120;
+  /** Anti-fill bound: distinct-digest proposes inside the TTL window. */
+  const PROPOSAL_FILE_CAP = 1000;
+
+  /** Digest-gated proposal path (same allowlist as challenges.pathOf). */
+  const proposalFile = (digest: string): string => {
+    if (!/^[0-9a-f]{16,128}$/.test(digest)) fail("malformed termsDigest");
+    return join(opts.dir, "proposals", `${digest}.json`);
+  };
+
+  /** TTL hygiene on reads: expired records vanish even without new proposes. */
+  const gcProposals = (): void => {
+    try {
+      gcChallenges(opts.dir, now());
+    } catch {
+      // Hygiene only — failures surface at use time, never here.
     }
   };
 
-  // Single writer for the shared proposals map: every propose tool
-  // (ptf_propose, ptf_request_data, ptf_request_action) records here, and
-  // ptf_redeem consumes any /pay proposal regardless of which tool created
-  // it. "pending" = authority would allow; still needs live re-check at
-  // redeem (standing grant) or human approval (CLI). Never "approved".
+  const countProposals = (): number => {
+    try {
+      return readdirSync(join(opts.dir, "proposals")).filter((n) =>
+        n.endsWith(".json")
+      ).length;
+    } catch {
+      return 0;
+    }
+  };
+
+  const readStored = (digest: string): StoredProposal | null => {
+    gcProposals();
+    let rec: {
+      readonly demand: unknown;
+      readonly state: string;
+      readonly receipt?: unknown;
+      readonly updatedAt: number;
+      readonly ttlSec: number;
+    };
+    try {
+      rec = loadProposal(opts.dir, digest, now());
+    } catch {
+      return null; // unknown, expired, or unreadable → absent (propose again)
+    }
+    return {
+      demand: rec.demand as Proposal["demand"],
+      status: rec.state as StoredProposal["status"],
+      ...(rec.receipt !== undefined &&
+      typeof rec.receipt === "object" &&
+      rec.receipt !== null
+        ? { receipt: rec.receipt as Record<string, unknown> }
+        : {}),
+      until: rec.updatedAt + rec.ttlSec,
+    };
+  };
+
+  /** Like readStored but distinguishes expired/corrupt from unknown. */
+  const requireStored = (digest: string): StoredProposal => {
+    try {
+      loadProposal(opts.dir, digest, now());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/malformed digest/.test(msg)) fail("malformed termsDigest");
+      if (/expired/.test(msg)) fail("proposal expired: propose again");
+      // Missing file → unknown. Present-but-unreadable → corrupt: fail
+      // closed instead of silently treating tamper as absent.
+      if (existsSync(proposalFile(digest))) {
+        fail(`proposal store corrupt: ${digest}`);
+      }
+      fail("unknown proposal: propose first");
+    }
+    const found = readStored(digest);
+    if (found === null) fail("unknown proposal: propose first");
+    return found;
+  };
+
+  /** Best-effort mark-denied: leaves terminal/expired records untouched. */
+  const markDenied = (digest: string): void => {
+    try {
+      transitionProposal(opts.dir, digest, "denied", undefined, now());
+    } catch {
+      // Already terminal, expired, or unreadable — leave it.
+    }
+  };
+
   const recordProposal = (
     digest: string,
     demand: Proposal["demand"],
     allow: boolean
-  ): void => {
-    proposals.set(digest, {
-      demand,
-      status: allow ? "pending" : "denied",
-      until: now() + 600,
-    });
+  ): StoredProposal => {
+    let demandJson: unknown;
+    try {
+      demandJson = JSON.parse(JSON.stringify(demand)) as unknown;
+    } catch {
+      fail("proposal demand not persistable: propose again");
+    }
+    // The engine already canonicalized these terms when deriving the digest;
+    // the persisted copy must carry identical meaning (JSON mangles what
+    // canonicalize rejects — Map/Set/BigInt/undefined can never reach here,
+    // but verify rather than assume).
+    if (canonicalize(demandJson) !== canonicalize(demand)) {
+      fail("proposal demand not persistable: propose again");
+    }
+    gcProposals();
+    const existing = readStored(digest);
+    if (existing !== null && existing.status === "executed") {
+      return existing; // immutable history → idempotent reread
+    }
+    if (existing !== null && existing.status === "pending") {
+      if (allow) return existing; // still in flight
+      markDenied(digest);
+      const denied = readStored(digest);
+      if (denied === null) fail("proposal expired: propose again");
+      return denied;
+    }
+    if (existing !== null && existing.status === "denied" && allow) {
+      // Authority changed since the denial: reopen as a fresh proposal.
+      // ENOENT means a concurrent reopen won — fall through and return the
+      // winner's record instead of erroring spuriously.
+      try {
+        unlinkSync(proposalFile(digest));
+      } catch {
+        // Concurrent reopen won (or FS error, which createProposal surfaces).
+      }
+    }
+    if (existing !== null && existing.status === "denied" && !allow) {
+      return existing;
+    }
+    if (countProposals() >= PROPOSAL_FILE_CAP) {
+      gcProposals();
+      if (countProposals() >= PROPOSAL_FILE_CAP) {
+        fail("proposal store full: wait for TTL expiry and propose again");
+      }
+    }
+    createProposal(
+      opts.dir,
+      digest,
+      demandJson,
+      allow ? PROPOSAL_TTL_SEC : PROPOSAL_DENY_TTL_SEC,
+      now()
+    );
+    if (!allow) markDenied(digest);
+    const stored = readStored(digest);
+    if (stored === null) fail("proposal expired: propose again");
+    if (allow && stored.status !== "pending" && stored.status !== "executed") {
+      fail("proposal store conflict: propose again");
+    }
+    return stored;
   };
 
   server.registerTool(
@@ -269,7 +426,6 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     },
     async (args) => {
       const { auth } = load();
-      pruneProposals();
       prunePending();
       // Binding is derived server-side from the normalized operation +
       // the fixed verified ingress: untrusted callers supply neither
@@ -330,17 +486,8 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       inputSchema: z.object({ termsDigest: z.string().min(16) }),
     },
     async (args) => {
-      pruneProposals();
-      const found = proposals.get(args.termsDigest);
-      if (found === undefined) {
-        return {
-          content: [
-            { type: "text", text: JSON.stringify({ status: "unknown" }) },
-          ],
-        };
-      }
-      if (now() > found.until) {
-        proposals.delete(args.termsDigest);
+      const found = readStored(args.termsDigest);
+      if (found === null) {
         return {
           content: [
             { type: "text", text: JSON.stringify({ status: "unknown" }) },
@@ -368,7 +515,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_redeem",
     {
       description:
-        "Redeem a pending proposal. Without a proof this checks live authority (dry-run) and returns its id to sign (challenge); with a recipient proof it authorizes the capability first, then spends live authority, executes, and returns a receipt. Payment demands only. Accepts any /pay proposal in the shared map regardless of which propose tool created it. Fails closed on anything stale.",
+        "Redeem a pending proposal. Without a proof this checks live authority (dry-run) and returns its id to sign (challenge); with a recipient proof it authorizes the capability first, then spends live authority, executes, and returns a receipt. Payment demands only. Accepts any /pay proposal in the shared store regardless of which propose tool created it; re-redeeming executed terms returns the stored receipt without re-executing. Fails closed on anything stale.",
       inputSchema: z.object({
         termsDigest: z.string().min(16),
         recipientKeyHex: z.string().min(64).optional(),
@@ -376,13 +523,22 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       }),
     },
     async (args) => {
-      pruneProposals();
       prunePending();
-      const proposal = proposals.get(args.termsDigest);
-      if (proposal === undefined) fail("unknown proposal: propose first");
-      if (now() > proposal.until) {
-        proposals.delete(args.termsDigest);
-        fail("proposal expired: propose again");
+      const proposal = requireStored(args.termsDigest);
+      if (proposal.status === "executed") {
+        // Idempotent re-redeem: the same terms already executed — return the
+        // stored receipt instead of moving anything twice.
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(proposal.receipt ?? {}, null, 2),
+            },
+          ],
+        };
+      }
+      if (proposal.status === "denied") {
+        fail("proposal denied: propose again");
       }
       const { auth, reg, audit, keys } = load();
       const demand = { ...proposal.demand, termsDigest: args.termsDigest };
@@ -450,7 +606,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         // authority would allow it. Still no consumption here.
         const preview = auth.evaluate(op, ingress, { nowSec: now() });
         if (!preview.allow) {
-          proposal.status = "denied";
+          markDenied(args.termsDigest);
           fail(`authority denied at challenge time: ${preview.reason}`);
         }
         const cap = caps.issue(
@@ -503,7 +659,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         proofKey = new Uint8Array(Buffer.from(args.recipientKeyHex, "hex"));
         proofSig = new Uint8Array(Buffer.from(args.recipientSigHex, "hex"));
       } catch {
-        proposal.status = "denied";
+        markDenied(args.termsDigest);
         fail("recipient proof must be hex");
       }
       if (proofKey.length !== 32) fail("recipient key must be 32 bytes");
@@ -529,7 +685,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         }
       );
       if (!redeemed.ok) {
-        proposal.status = "denied";
+        markDenied(args.termsDigest);
         fail(`redeem failed: ${redeemed.reason}`);
       }
       // Only now spend standing authority.
@@ -538,7 +694,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         nowSec: now(),
       });
       if (!decision.allow) {
-        proposal.status = "denied";
+        markDenied(args.termsDigest);
         fail(`authority denied at redeem time: ${decision.reason}`);
       }
       // Persist the consumption BEFORE executing (ticket 05): a crash or a
@@ -572,11 +728,13 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         authorityRev: auth.loadedRevision(),
         registryRev: reg.loadedRevision(),
       });
-      proposal.status = "executed";
-      proposal.receipt = JSON.parse(JSON.stringify(receipt)) as Record<
-        string,
-        unknown
-      >;
+      transitionProposal(
+        opts.dir,
+        args.termsDigest,
+        "executed",
+        JSON.parse(JSON.stringify(receipt)) as Record<string, unknown>,
+        now()
+      );
       return {
         content: [{ type: "text", text: JSON.stringify(receipt, null, 2) }],
       };
@@ -602,7 +760,6 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     },
     async (args) => {
       const { auth } = load();
-      pruneProposals();
       let out: ReturnType<typeof requestData>;
       try {
         out = requestData(
@@ -671,13 +828,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       if (typeof args.nonce !== "string" || args.nonce.length < 16) {
         fail("nonce must be at least 16 chars");
       }
-      pruneProposals();
-      const proposal = proposals.get(args.termsDigest);
-      if (proposal === undefined) fail("unknown proposal: propose first");
-      if (now() > proposal.until) {
-        proposals.delete(args.termsDigest);
-        fail("proposal expired: propose again");
-      }
+      const proposal = requireStored(args.termsDigest);
       if (proposal.status !== "pending") {
         fail("already presented/denied: propose again for a fresh nonce");
       }
@@ -736,12 +887,17 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           holder: { id: demand.principal, privateKey: holderPriv },
         });
       } catch (err) {
-        proposal.status = "denied";
+        markDenied(args.termsDigest);
         throw err instanceof Error ? err : new Error(String(err));
       }
       const disclosed = pres.disclosures.map((d) => d.name);
-      proposal.status = "executed";
-      proposal.receipt = { disclosed: [...disclosed] };
+      transitionProposal(
+        opts.dir,
+        args.termsDigest,
+        "executed",
+        { disclosed: [...disclosed] },
+        now()
+      );
       const presentation = {
         issuer: pres.issuer,
         subject: pres.subject,
@@ -792,7 +948,6 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     },
     async (args) => {
       const { auth } = load();
-      pruneProposals();
       // Caller-supplied context passes through untouched; the top-level
       // convenience fields below only fill ABSENT keys so explicit caller
       // handles are never clobbered.
@@ -862,14 +1017,12 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_get_receipt",
     {
       description:
-        "Look up a proposal/receipt by terms digest. In-memory only: unknown after restart (ADR-0014).",
+        "Look up a proposal/receipt by terms digest. Durable across restarts (ADR-0017); unknown when absent or expired.",
       inputSchema: z.object({ termsDigest: z.string().min(16) }),
     },
     async (args) => {
-      pruneProposals();
-      const found = proposals.get(args.termsDigest);
-      if (found === undefined || now() > found.until) {
-        if (found !== undefined) proposals.delete(args.termsDigest);
+      const found = readStored(args.termsDigest);
+      if (found === null) {
         return {
           content: [
             { type: "text", text: JSON.stringify({ status: "unknown" }) },

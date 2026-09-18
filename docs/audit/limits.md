@@ -8,13 +8,19 @@ tested at the boundary.
 - `FakePaymentExecutor` moves no money. Real PSP wiring is out of scope.
 - Single-writer discipline with enforced CAS: authority/registry files carry
   a `revision` bumped atomically with the data; a stale handle's save fails
-  closed ("changed under us — reload and retry") instead of last-write-wins,
-  so concurrent redeems cannot double-spend. Fresh instances may only create
+  closed ("changed under us — reload and retry") instead of last-write-wins.
+  The CAS stops concurrent redeems from double-spending while uses remain
+  to burn through (bounded grants / one-time approvals); under
+  unlimited-use grants both racers can execute — single-writer topology,
+  bounded grants, and single-use redeem capabilities are the mitigations,
+  in that order (see the agent-contract row). Fresh instances may only create
   a missing store, never overwrite one they never loaded. One server per
   store is still the supported topology; the CAS is the backstop, and audit
   forks (concurrent appends) fail loudly at next chain verify, never silently.
-- In-memory MCP proposals/challenges: lost on restart (fail-closed →
-  `unknown`, propose again). Receipts survive in `audit.jsonl`.
+- Durable MCP proposals (ADR-0017): one file per termsDigest under
+  `proposals/` (O_EXCL create, TTL GC) — restart preserves
+  pending/denied/executed; recipient challenges stay in-memory (lost on
+  restart, fail-closed → redeem phase 1 again).
 - Audit is tamper-evident (hash chain, opt HMAC), not independently anchored.
   Third-party verifiability needs external anchoring (ADR-0006).
 - Rotation is a hard cutover: re-issue under the new key before revoking the
@@ -157,9 +163,21 @@ tested at the boundary.
   or envelopes. `ptf_list_capabilities` shows only grants matching the fixed
   server identity (principal + covering actor selector); revoked and
   foreign-principal grants are excluded. `ptf_redeem` stays `/pay`-only
-  (other actions propose only; present disclosures via the CLI) and accepts
-  any `/pay` proposal in the shared map regardless of originating propose
-  tool. Redeem-only flows anchor authority/registry revisions; vault-anchored
+  (other actions propose only) and accepts
+  any `/pay` proposal in the shared store regardless of originating propose
+  tool; disclosures deliver via `ptf_present_data`. Proposals are durable files now (ADR-0017, one per termsDigest =
+  idempotency key; executed immutable, denied re-opens on fresh allow);
+  recipient challenges stay in-memory (lost on restart — redeem phase 1
+  again; they carry live key material by design). Pending lives 600s,
+  denied 120s; reads GC expired records; distinct-digest proposes are
+  capped at 1000 files (fail-closed beyond — anti-fill bound, not a quota).
+  Replaying executed history returns the stored receipt without
+  re-evaluating — same exposure as reading `audit.jsonl`, by design, not a
+  resurrection path (pending demands always re-evaluate live). Concurrent
+  same-digest redeems under unlimited-use grants can both execute before
+  either transition lands; mitigations in order: single-writer topology,
+  maxUses-bounded grants / one-time approvals, single-use redeem
+  capabilities. Redeem-only flows anchor authority/registry revisions; vault-anchored
   entries come from vault operations. `ptf_revoke` is request-only — returns
   `requested:true` + `ptf revoke --grant <id>` and leaves authority untouched
   (proof: `tests/agent-contract.test.ts`).

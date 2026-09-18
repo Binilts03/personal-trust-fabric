@@ -1,5 +1,9 @@
 # ADR-0014: Proposal durability: in-memory fail-closed (supersedes 0008)
 
+> AMENDED by ADR-0017 (2026-09-18): proposals are now durable (one file per
+> termsDigest via `store/challenges.ts`); only recipient challenges stay
+> in-memory. The fail-closed principle below stands.
+
 **Date**: 2026-09-13
 **Status**: accepted
 **Deciders**: PTF maintainer + ticket 17

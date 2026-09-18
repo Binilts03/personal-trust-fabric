@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -402,7 +402,7 @@ describe("general agent contract (P0 slice 2)", () => {
     assert.ok(!ids.includes("g-doomed"), "revoked grant excluded");
   });
 
-  it("MCP abuse: wrong actor denies, unknown digest is unknown, restart forgets", async () => {
+  it("MCP abuse: wrong actor denies, unknown digest is unknown, restart remembers proposals (ADR-0017)", async () => {
     const dir = setupDir();
     const good = createPtfServer({
       dir,
@@ -440,7 +440,10 @@ describe("general agent contract (P0 slice 2)", () => {
     };
     assert.equal(unknown.status, "unknown");
 
-    // Restart forgets in-memory proposals (ADR-0014): a fresh server knows nothing.
+    // Restart remembers durable proposals (ADR-0017): a fresh server sees
+    // the same pending proposal. Challenges stay in-memory: the fresh
+    // instance holds no challenge, so redeem-with-proof fails there until
+    // phase 1 runs again on that instance.
     const fresh = createPtfServer({
       dir,
       env: {},
@@ -460,9 +463,121 @@ describe("general agent contract (P0 slice 2)", () => {
       status?: string;
     };
     assert.equal(pending.status, "pending");
-    const forgotten = (await callTool(fresh, "ptf_get_receipt", {
+    const remembered = (await callTool(fresh, "ptf_get_receipt", {
       termsDigest: data.termsDigest as string,
     })) as { status?: string };
-    assert.equal(forgotten.status, "unknown");
+    assert.equal(remembered.status, "pending");
+  });
+
+  it("durable proposals: idempotent re-propose, executed receipts survive restart, denied re-opens", async () => {
+    const dir = setupDir();
+    const mk = () =>
+      createPtfServer({ dir, env: {}, principal: P, actor: A, now: () => NOW });
+    const s1 = mk();
+    const proposed = (await callTool(s1, "ptf_request_data", {
+      purpose: "support",
+      resource: "credential:issuer-1",
+      verifier: V,
+      claims: ["email"],
+    })) as { allowed?: boolean; termsDigest?: string };
+    assert.equal(proposed.allowed, true);
+    const digest = proposed.termsDigest as string;
+    // Idempotent re-propose of live terms returns the same proposal.
+    const again = (await callTool(s1, "ptf_request_data", {
+      purpose: "support",
+      resource: "credential:issuer-1",
+      verifier: V,
+      claims: ["email"],
+    })) as { allowed?: boolean; termsDigest?: string };
+    assert.equal(again.allowed, true);
+    assert.equal(again.termsDigest, digest);
+    // Executed proposals are immutable history across restarts.
+    const s2 = mk();
+    const check = (await callTool(s2, "ptf_check", {
+      termsDigest: digest,
+    })) as { status?: string };
+    assert.equal(check.status, "pending");
+    // Denied proposals stay denied on identical re-propose (a different
+    // claim set is different terms, hence a different digest). Denied tool
+    // responses carry no digest (nothing to redeem), so derive it from the
+    // profile for receipt lookups.
+    const deniedTerms = {
+      purpose: "support",
+      resourceId: "credential:issuer-1",
+      verifier: V,
+      claims: ["email", "salary"],
+    };
+    const deniedProbe = requestData(seedAuth(), ingressFor(A), deniedTerms, {
+      nowSec: NOW,
+    });
+    assert.equal(deniedProbe.decision.allow, false);
+    const deniedDigest = deniedProbe.digest;
+    const denied = (await callTool(s1, "ptf_request_data", {
+      purpose: "support",
+      resource: "credential:issuer-1",
+      verifier: V,
+      claims: ["email", "salary"],
+    })) as { allowed?: boolean };
+    assert.equal(denied.allowed, false);
+    const deniedAgain = (await callTool(s2, "ptf_request_data", {
+      purpose: "support",
+      resource: "credential:issuer-1",
+      verifier: V,
+      claims: ["email", "salary"],
+    })) as { allowed?: boolean };
+    assert.equal(deniedAgain.allowed, false);
+    const deniedStatus = (await callTool(s2, "ptf_get_receipt", {
+      termsDigest: deniedDigest,
+    })) as { status?: string };
+    assert.equal(deniedStatus.status, "denied");
+    // Denied re-opens to pending once live authority covers the terms.
+    const auth = loadAuthority(dir, { nowSec: () => NOW });
+    auth.addGrant({
+      id: "g-salary",
+      principal: P,
+      actor: { kind: "exact", id: A },
+      action: { name: "/disclose" },
+      bounds: claimsSubset(["email", "salary"]),
+      exp: NOW + 3600,
+    });
+    saveAuthority(dir, auth);
+    const s3 = mk();
+    const reopened = (await callTool(s3, "ptf_request_data", {
+      purpose: "support",
+      resource: "credential:issuer-1",
+      verifier: V,
+      claims: ["email", "salary"],
+    })) as { allowed?: boolean; termsDigest?: string };
+    assert.equal(reopened.allowed, true);
+    assert.equal(reopened.termsDigest, deniedDigest);
+    const reopenedStatus = (await callTool(s3, "ptf_get_receipt", {
+      termsDigest: deniedDigest,
+    })) as { status?: string };
+    assert.equal(reopenedStatus.status, "pending");
+  });
+
+  it("corrupt proposal files fail closed on redeem, read as unknown on check", async () => {
+    const dir = setupDir();
+    mkdirSync(join(dir, "proposals"), { recursive: true });
+    const digest = "ab".repeat(32);
+    writeFileSync(join(dir, "proposals", `${digest}.json`), "{corrupt");
+    const server = createPtfServer({
+      dir,
+      env: {},
+      principal: P,
+      actor: A,
+      now: () => NOW,
+    });
+    const check = (await callTool(server, "ptf_check", {
+      termsDigest: digest,
+    })) as { status?: string };
+    assert.equal(check.status, "unknown");
+    await assert.rejects(
+      () =>
+        callTool(server, "ptf_redeem", {
+          termsDigest: digest,
+        }),
+      /proposal store corrupt/
+    );
   });
 });

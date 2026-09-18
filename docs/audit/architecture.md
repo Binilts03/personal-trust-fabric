@@ -78,11 +78,14 @@ no lateral delegation.
 - `cli.ts`: wiring over tested modules (manual argv, stdin/stdout, `--help`
   / `--version`, unknown-flag rejection, `init` no-overwrite).
 - `mcp-server.ts`: official SDK stdio; `propose` (dry-run, status `pending`),
-  `check` (TTL), `redeem` (dry-run → challenge → authorize-first → consume
+  `check` (digest), `redeem` (dry-run → challenge → authorize-first → consume
   authority → save authority before audit; `/pay`-only) plus the general
-  contract (`request_data`/`request_action` dry-runs, `get_receipt` by digest,
+  contract (`request_data`/`request_action` dry-runs, `present_data`
+  holder-signed delivery, `get_receipt` by digest,
   `list_capabilities` read-only, `revoke` request-only). No approve tool by
-  design. In-memory proposals/challenges (lost on restart, fail-closed).
+  design. Proposals durable per termsDigest file (ADR-0017, idempotent,
+  immutable executed); recipient challenges in-memory (lost on restart,
+  fail-closed).
 
 ## Invariants (test-enforced)
 

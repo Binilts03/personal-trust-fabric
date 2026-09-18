@@ -80,12 +80,14 @@ picks it up. Exercised without restarts in `tests/pdp-fronting.test.ts`.
   restore drill.
 - MCP stdio server (`ptf-mcp-server`): there is no socket to probe. Healthy
   = process alive (supervisor-tracked) + `ptf audit --verify` green on its
-  store + no `unknown`-proposal storms in stderr. In-memory proposals are
-  lost on restart by design (fail-closed → propose again); receipts survive
-  in `audit.jsonl`. The general-contract tools (`ptf_request_data`,
+  store + no `unknown`-proposal storms in stderr. Proposals are durable
+  files (ADR-0017) shared by all tools under the same no-approve invariant;
+  recipient challenges stay in-memory (lost on restart — redeem phase 1
+  again). Receipts additionally survive in `audit.jsonl`. The
+  general-contract tools (`ptf_request_data`,
   `ptf_request_action`, `ptf_get_receipt`, `ptf_list_capabilities`,
-  `ptf_revoke`) share the same in-memory proposal map and the same
-  no-approve invariant.
+  `ptf_revoke`, `ptf_present_data`) share the same durable proposal store
+  and the same no-approve invariant.
 - Vault (`personal-state.json`): revision CAS + `vaultRev` freshness binding
   like authority/registry. `audit --verify` covers the chain plus
   authority/registry/vault freshness (loads the vault when present);
@@ -154,6 +156,9 @@ line count next to the backup; the mechanized form is
 2. Copy the backup over a fresh directory — never merge files across
    backups (mixed vintages trip the freshness check on purpose). The unit
    includes `personal-state.json` when present; same no-merge rule applies.
+   `proposals/` joins the backup unit when present (durable proposals,
+   ADR-0017); restored proposals re-evaluate live authority at use time, so
+   stale demands fail closed rather than resurrect.
 3. `ptf --dir <restored> audit --verify` — must print `audit chain: valid`
    with exit 0. A stale `authority.json`/`registry.json` against newer
    `audit.jsonl` fails closed here ( `predates audit history — suspected
