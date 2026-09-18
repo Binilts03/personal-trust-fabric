@@ -6,7 +6,21 @@ release day. This project adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+> Release state (honest): the `v0.1.0` tag (2026-09-12) predates
+> `v0.1.0-rc.1` (2026-09-14); `main` is ahead of both and unpublished
+> (npm returns 404). Everything below ships on `main` only. The next
+> version cut reconciles tags + changelog after peer review.
+
 ### Added
+
+- Production operations (#13, #14, previously unlisted): shippable runtime
+  tarball (narrowed file set), container image (non-root, read-only),
+  PDP per-key scopes with hot-reload rotation and the single-replica rule,
+  health signals, install hygiene.
+- Review hardening (#16): `VaultStore` raw reads private behind gated
+  `disclose`/`useSecret`; `ptf_list_capabilities` filtered by fixed
+  identity; `vault-put` file-only; explicit receipt terms; shared
+  validators; `CONTEXT.md` Vault/Provider glossary.
 
 - `ptf backup` / `ptf restore` (`src/store/backup.ts`): the operations
   runbook enforced in code — backup copies the store as one unit

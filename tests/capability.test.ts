@@ -222,7 +222,7 @@ describe("capability runtime (ticket 01)", () => {
   });
 
   it("revoking a parent cascades to attenuated children", () => {
-    const { caps, principal, agent, merchant } = setup();
+    const { caps, principal, agent } = setup();
     const terms = termsDigestOf(payTerms());
     const root = issueRoot(caps, principal, 1_700_003_600, terms);
     const child = caps.issue(

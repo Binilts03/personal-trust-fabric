@@ -57,10 +57,20 @@ no lateral delegation.
   `ingest` validating shape+seq+prevHash+hash (forgeries throw at load).
 - `core/identity`: alias → live key + history; rotation is a hard cutover
   (re-issue before revoking old); revocation retires the alias.
+- `core/persona`: `PersonalState` → task-scoped `PersonaCapsule` allow-list
+  projection + `AgentView` (capsule + proposals + receipts, never raw state).
+- `core/signing`: `SigningExecutor` parity with payment execution — bound
+  redemption, receipt without key material.
 - `adapters/*`: fail-closed parsers + verifiers (see `limits.md` for subsets).
 - `store/files`: `atomicWrite` (tmp+random+0600+fsync-best-effort+rename),
   optimistic revision CAS (stale-handle saves fail closed, fresh instances
   may only create), corrupt→throw, audit chain verified on open.
+- `store/backup`: `backupStore`/`restoreStore` — one-unit copies plus
+  `anchor.json` checkpoints; never merges; passphrase-in-store refused.
+- `store/challenges`: durable proposals, one file per termsDigest (O_EXCL
+  create, TTL GC; ADR-0017).
+- `store/anchor`: Merkle-root checkpoints + O(log n) inclusion proofs over
+  the audit log (local anchor file, no witness network).
 - `store/keystore`: scrypt N=16384/r=8/p=1 + AES-256-GCM single blob,
   params pinned, strict hex, passphrase from env/file/TTY-prompt only
   (`readPassphrase`), rotation via `resealKeystore`/`ptf rekey`,
@@ -72,6 +82,8 @@ no lateral delegation.
 - `profiles/data`: general agent contract (`requestData` for `/disclose`,
   `requestExecution` for actions) — thin over `evaluate` + derived digest +
   `renderProposal`; never mints authority.
+- `profiles/payment`: payment conventions + helpers (`paymentBounds`,
+  `recipientBounds`), no policy language, no I/O.
 - `adapters/providers`: protected provider seam (payment/travel/retail/email/
   identity fakes + `providerAsExecutor`/`executeViaProvider`); PTF owns policy,
   consent, secret-handling, receipts — rails stay host duty.
@@ -86,6 +98,10 @@ no lateral delegation.
   design. Proposals durable per termsDigest file (ADR-0017, idempotent,
   immutable executed); recipient challenges in-memory (lost on restart,
   fail-closed).
+- `pdp-server.ts`: reference HTTP PDP bin over loopback/TLS (scopes,
+  hot-reload rotation, single-replica rule, redaction-tested decision logs).
+- `api.ts` / `index.ts`: curated named-entry vs full barrel (ADR-0011);
+  tests import the barrel, bins are exempt.
 
 ## Invariants (test-enforced)
 

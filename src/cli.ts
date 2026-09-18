@@ -1,11 +1,5 @@
 #!/usr/bin/env node
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -204,7 +198,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = tokens;
   if (command === undefined) {
     throw new Error(
-      "usage: ptf [--dir D] <init|keygen|recipient|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|revoke> ..."
+      "usage: ptf [--dir D] <init|keygen|rekey|recipient|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|revoke|help|version> ..."
     );
   }
   if (!(COMMANDS as readonly string[]).includes(command)) {
@@ -245,6 +239,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 const ALLOWED_FLAGS: Record<string, Set<string>> = {
   init: new Set(),
   keygen: new Set(["alias"]),
+  rekey: new Set([]),
   recipient: new Set(["alias", "key"]),
   grant: new Set([
     "id",
