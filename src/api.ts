@@ -71,6 +71,9 @@ export type {
 
 export { RecipientRegistry } from "./core/identity.js";
 
+export { backupStore, restoreStore } from "./store/backup.js";
+export type { BackupSummary, RestoreSummary } from "./store/backup.js";
+
 export {
   VaultStore,
   saveVault,

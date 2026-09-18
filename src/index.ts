@@ -24,6 +24,7 @@ export * from "./adapters/oauth-agent.js";
 export * from "./adapters/sd-jwt.js";
 export * from "./adapters/audit-interop.js";
 export * from "./store/files.js";
+export * from "./store/backup.js";
 export * from "./store/keystore.js";
 export * from "./store/challenges.js";
 export * from "./store/anchor.js";
