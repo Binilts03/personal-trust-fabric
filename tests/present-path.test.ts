@@ -312,4 +312,41 @@ describe("agent data-delivery loop (ptf_present_data)", () => {
       /present supports \/disclose proposals only; pay via ptf_redeem/
     );
   });
+
+  it("executed presentation survives restart; re-present stays refused", async () => {
+    const { dir, server } = setup();
+    const req = (await callTool(server, "ptf_request_data", {
+      purpose: "support",
+      resource: "credential:issuer-1",
+      verifier: V,
+      claims: ["email"],
+    })) as { termsDigest?: string };
+    const digest = req.termsDigest as string;
+    const first = (await callTool(server, "ptf_present_data", {
+      termsDigest: digest,
+      nonce: NONCE,
+    })) as { presented?: boolean };
+    assert.equal(first.presented, true);
+    // Fresh instance after "restart": receipt durable, present refused.
+    const fresh = createPtfServer({
+      dir,
+      env: { PTF_PASSPHRASE: PASS },
+      principal: P,
+      actor: A,
+      now: () => NOW,
+    });
+    const receipt = (await callTool(fresh, "ptf_get_receipt", {
+      termsDigest: digest,
+    })) as { status?: string; receipt?: { disclosed?: string[] } };
+    assert.equal(receipt.status, "executed");
+    assert.deepEqual(receipt.receipt?.disclosed, ["email"]);
+    await assert.rejects(
+      () =>
+        callTool(fresh, "ptf_present_data", {
+          termsDigest: digest,
+          nonce: "n-fresh-nonce-0123456",
+        }),
+      /already presented\/denied/
+    );
+  });
 });

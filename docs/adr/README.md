@@ -17,3 +17,4 @@
 | [0014](0014-proposal-durability.md)             | Proposal durability: in-memory fail-closed (supersedes 0008)                                                   | accepted | 2026-09-13 |
 | [0015](0015-store-integrity.md)                 | Store integrity via revision CAS + audit freshness binding                                                     | accepted | 2026-09-14 |
 | [0016](0016-vault-encryption.md)                | Vault encryption at rest (DEK in keystore, AEAD envelope, plaintext refused)                                   | accepted | 2026-09-17 |
+| [0017](0017-durable-proposals.md)               | Durable proposals via file CAS, challenges stay in-memory (amends 0014)                                        | accepted | 2026-09-18 |

@@ -38,14 +38,22 @@ release day. This project adheres to Semantic Versioning.
   `ptf_list_capabilities` (fixed-identity only: foreign-principal,
   other-agent, and revoked grants excluded), `ptf_revoke` (request-only,
   mutates nothing). `ptf_redeem` stays `/pay`-only and accepts any `/pay`
-  proposal in the shared map. No approve tool (unchanged).
+  proposal in the shared store. No approve tool (unchanged).
 - Protected provider seam (`src/adapters/providers.ts`): per-kind fakes
   (`makeFakeProviders`, move nothing) plus `providerAsExecutor` /
   `executeViaProvider` with `chainId === capabilityId` and `termsDigest`
   binding; rail results stay evidence via the `x402`/`ap2` verifiers.
+- Durable proposals (ADR-0017, amends ADR-0014): one file per termsDigest
+  under `proposals/` (O_EXCL create, TTL GC, last-writer-wins transitions
+  under single-writer topology) — restart
+  preserves pending/denied/executed; the digest is the idempotency key
+  (re-propose returns stored; executed immutable; denied re-opens on fresh
+  allow). Recipient challenges stay in-memory (live key material).
 
 Backward-compatible, additive only: no breaking API changes to the existing
-CLI/MCP surface or `src/api.ts`.
+CLI/MCP surface or `src/api.ts` — except the documented behavior change
+that proposals now survive restarts (ADR-0017; previously check → unknown
+after restart).
 
 ## [0.1.0-rc.1] - 2026-09-14
 
