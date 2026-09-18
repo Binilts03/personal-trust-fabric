@@ -292,6 +292,7 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010, i
       currency: "INR",
       resource: "flight:domestic:economy",
       purpose: "book domestic economy flight",
+      termsDigest: "cd".repeat(32),
     });
     assert.match(settled.transaction, /^fake-tx-/);
     assert.equal(executor.calls.length, 1);

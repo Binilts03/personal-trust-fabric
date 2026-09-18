@@ -9,6 +9,7 @@ import {
   FileAuditLog,
   VaultStore,
   digestForOperation,
+  executeActionViaProvider,
   executeAndReceipt,
   executeViaProvider,
   executeWithCredential,
@@ -117,6 +118,8 @@ describe("protected provider seam (P0 slice 3)", () => {
         cmd: "/pay",
         args: { amount: 500, currency: "INR" },
         recipient: M,
+        resource: "invoice:7",
+        purpose: "widgets",
         termsDigest: digest,
       },
       {
@@ -149,7 +152,8 @@ describe("protected provider seam (P0 slice 3)", () => {
     assert.equal(receipt.capabilityId, cid);
     assert.equal(receipt.transaction.startsWith("fake-payment-"), true);
 
-    // Wrong chainId fails before any provider effect is trusted.
+    // Wrong chainId fails before any provider effect is trusted (the
+    // operation echo is intact — only the binding is wrong).
     await assert.rejects(
       () =>
         executeViaProvider(
@@ -163,7 +167,11 @@ describe("protected provider seam (P0 slice 3)", () => {
             purpose: "widgets",
             context: { amount: 500, currency: "INR" },
           },
-          { ok: true, chainId: "deadbeef" },
+          {
+            ok: true,
+            chainId: "deadbeef",
+            operation: redeemed.operation,
+          },
           NOW
         ),
       /not bound/
@@ -200,7 +208,23 @@ describe("protected provider seam (P0 slice 3)", () => {
     evil.verify = () => ({ ok: false as const, reason: "terms mismatch" });
     await assert.rejects(
       () =>
-        executeViaProvider(evil, req, { ok: true, chainId: "cid-verify" }, NOW),
+        executeViaProvider(
+          evil,
+          req,
+          {
+            ok: true,
+            chainId: "cid-verify",
+            operation: {
+              cmd: "/pay",
+              args: { amount: 10, currency: "INR" },
+              recipient: M,
+              resource: "res:1",
+              purpose: "p",
+              termsDigest: digest,
+            },
+          },
+          NOW
+        ),
       /terms mismatch/
     );
   });
@@ -216,7 +240,20 @@ describe("protected provider seam (P0 slice 3)", () => {
       resource: "res:1",
       purpose: "p",
     };
-    const redemption = { ok: true as const, chainId: "cid-explicit" };
+    // Operation echo with empty args: binding passes (nothing authorized to
+    // cover), so the explicit amount/currency rule is what fires.
+    const redemption = {
+      ok: true as const,
+      chainId: "cid-explicit",
+      operation: {
+        cmd: "/pay" as const,
+        args: {},
+        recipient: M,
+        resource: "res:1",
+        purpose: "p",
+        termsDigest: digest,
+      },
+    };
     await assert.rejects(
       () =>
         executeViaProvider(
@@ -282,6 +319,8 @@ describe("protected provider seam (P0 slice 3)", () => {
         cmd: "/pay",
         args: { amount: 425, currency: "INR" },
         recipient: M,
+        resource: "invoice:7",
+        purpose: "widgets",
         termsDigest: digest,
       },
       {
@@ -296,10 +335,7 @@ describe("protected provider seam (P0 slice 3)", () => {
     if (!redeemed.ok) throw new Error("redeem must succeed");
 
     const fakes = makeFakeProviders({ nowSec: () => NOW });
-    const executor = providerAsExecutor(fakes.payment, {
-      capabilityId: cid,
-      termsDigest: digest,
-    });
+    const executor = providerAsExecutor(fakes.payment, redeemed);
     const receipt = await executeAndReceipt(
       executor,
       {
@@ -309,6 +345,7 @@ describe("protected provider seam (P0 slice 3)", () => {
         currency: "INR",
         resource: "invoice:7",
         purpose: "widgets",
+        termsDigest: digest,
       },
       redeemed,
       NOW
@@ -328,7 +365,18 @@ describe("protected provider seam (P0 slice 3)", () => {
         purpose: "p",
         context: { amount: 5, currency: "INR", note: SECRET },
       },
-      { ok: true, chainId: "cid-secret" },
+      {
+        ok: true,
+        chainId: "cid-secret",
+        operation: {
+          cmd: "/pay",
+          args: { amount: 5, currency: "INR" },
+          recipient: M,
+          resource: "res:1",
+          purpose: "p",
+          termsDigest: "ef".repeat(16),
+        },
+      },
       NOW
     );
     const blob = canonicalize(secretReceipt);
@@ -342,6 +390,7 @@ describe("protected provider seam (P0 slice 3)", () => {
       "receiptId",
       "recipient",
       "resource",
+      "termsDigest",
       "transaction",
     ]);
   });
@@ -372,7 +421,48 @@ describe("protected provider seam (P0 slice 3)", () => {
     const audit = FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW);
     const fakes = makeFakeProviders({ nowSec: () => NOW });
     const provider = fakes.payment;
-    const redemption = { ok: true as const, chainId: "cid-orchestrator-1" };
+    // Real (dry-run) authorization: the orchestrator never accepts a
+    // manufactured redemption.
+    const { principal, keys } = parties();
+    const orchCaps = new Capabilities({
+      resolveKey: (id) => keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const orchDigest = "ab".repeat(16);
+    const orchCap = orchCaps.issue(
+      null,
+      {
+        iss: P,
+        aud: A,
+        sub: P,
+        cmd: "/pay",
+        pol: [],
+        purpose: "pay",
+        resource: "invoice:7",
+        recipient: M,
+        amountMax: 5000,
+        currency: "INR",
+        exp: NOW + 300,
+        maxUses: 1,
+        termsDigest: orchDigest,
+      },
+      principal.privateKey
+    );
+    const orchRedemption = orchCaps.authorize(
+      [orchCap],
+      {
+        cmd: "/pay",
+        args: { amount: 500, currency: "INR" },
+        recipient: M,
+        resource: "invoice:7",
+        purpose: "pay",
+        termsDigest: orchDigest,
+      },
+      { consume: false }
+    );
+    assert.equal(orchRedemption.ok, true);
+    if (!orchRedemption.ok) throw new Error("dry-run must succeed");
+    const redemption = orchRedemption;
     const digest = "ab".repeat(16);
     let seenInHost: unknown;
     const receipt = await executeWithCredential(vault, {
@@ -422,5 +512,92 @@ describe("protected provider seam (P0 slice 3)", () => {
     const auditBlob = readFileSync(join(dir, "audit.jsonl"), "utf8");
     assert.ok(!auditBlob.includes(SECRET));
     assert.ok(auditBlob.includes("r-pan"));
+  });
+
+  it("executeActionViaProvider runs non-payment actions with no amount or currency", async () => {
+    const { principal, keys } = parties();
+    const caps = new Capabilities({
+      resolveKey: (id) => keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const digest = "cd".repeat(32);
+    const cap = caps.issue(
+      null,
+      {
+        iss: P,
+        aud: A,
+        sub: P,
+        cmd: "/send",
+        pol: [],
+        purpose: "notify",
+        resource: "message:welcome",
+        recipient: M,
+        exp: NOW + 300,
+        maxUses: 1,
+        termsDigest: digest,
+      },
+      principal.privateKey
+    );
+    const redeemed = caps.authorize(
+      [cap],
+      {
+        cmd: "/send",
+        args: { template: "welcome-v1" },
+        recipient: M,
+        resource: "message:welcome",
+        purpose: "notify",
+        termsDigest: digest,
+      },
+      { consume: false }
+    );
+    assert.equal(redeemed.ok, true);
+    if (!redeemed.ok) throw new Error("dry-run must succeed");
+    const fakes = makeFakeProviders({ nowSec: () => NOW });
+    const receipt = await executeActionViaProvider(
+      fakes.email,
+      {
+        capabilityId: redeemed.chainId,
+        termsDigest: digest,
+        action: "/send",
+        recipient: M,
+        resource: "message:welcome",
+        purpose: "notify",
+        context: { template: "welcome-v1" },
+      },
+      redeemed,
+      NOW
+    );
+    assert.equal(receipt.capabilityId, redeemed.chainId);
+    assert.equal(receipt.termsDigest, digest);
+    assert.ok(receipt.transaction.startsWith("fake-email-"));
+    assert.deepEqual(Object.keys(receipt).sort(), [
+      "at",
+      "capabilityId",
+      "purpose",
+      "receiptId",
+      "recipient",
+      "resource",
+      "termsDigest",
+      "transaction",
+    ]);
+    // Mutated template fails closed: authorized args must all hold.
+    await assert.rejects(
+      () =>
+        executeActionViaProvider(
+          fakes.email,
+          {
+            capabilityId: redeemed.chainId,
+            termsDigest: digest,
+            action: "/send",
+            recipient: M,
+            resource: "message:welcome",
+            purpose: "notify",
+            context: { template: "phish-v9" },
+          },
+          redeemed,
+          NOW
+        ),
+      /context\.template differs/
+    );
   });
 });

@@ -197,18 +197,25 @@ export class VaultStore {
     }
     const operation = {
       action: { name: "/disclose" as const },
-      resource: { type: "vault", id: "personal-state" },
+      resource: { type: req.resource.type, id: req.resource.id },
       context: { claims: [...req.requested], verifier: req.verifier },
       purpose: req.purpose,
     };
+    // Actual disclosure consumes uses (ADR-0018): a one-time approval
+    // covers exactly one presentation. Hosts MUST persist authority state
+    // after success (same burn-before-deliver order as execution).
     const decision = req.authority.evaluate(operation, req.ingress, {
+      consume: true,
       nowSec: req.nowSec,
     });
     if (!decision.allow) {
       throw new Error(`vault: authority denied: ${decision.reason}`);
     }
-    const allowed = new Set<string>();
-    const attributes: Record<string, unknown> = {};
+    // Same-type ambiguity fails closed: two live records answering one
+    // claim (e.g. two emails) must never resolve by insertion order.
+    // Update a record by re-putting its id (version bump), or remove the
+    // stale one — the vault will not guess which identity value is yours.
+    const byType = new Map<string, VaultRecord[]>();
     for (const rec of this.listRecords()) {
       if (rec.owner !== req.ingress.principal) continue;
       if (isExpired(rec, req.nowSec)) continue;
@@ -216,14 +223,24 @@ export class VaultStore {
       if (!rec.allowedAgents.includes(req.ingress.id)) continue;
       if (rec.sensitivity === "secret") continue;
       if (!(req.requested as readonly string[]).includes(rec.type)) continue;
-      if (allowed.has(rec.type)) continue;
-      allowed.add(rec.type);
-      attributes[rec.type] = rec.value;
+      const group = byType.get(rec.type) ?? [];
+      group.push(rec);
+      byType.set(rec.type, group);
     }
-    if (allowed.size === 0) {
+    if (byType.size === 0) {
       throw new Error("vault: no records satisfy purpose/agent/expiry policy");
     }
-    const names = [...allowed].sort();
+    const attributes: Record<string, unknown> = {};
+    for (const [type, group] of byType) {
+      const ids = new Set(group.map((r) => r.id));
+      if (ids.size > 1) {
+        throw new Error(
+          `vault: ambiguous claim ${type} (${ids.size} records) — re-put under one id or remove the stale record`
+        );
+      }
+      attributes[type] = (group[0] as VaultRecord).value;
+    }
+    const names = [...byType.keys()].sort();
     const capsule = assembleCapsule({ attributes }, req.purpose, names);
     const pres = Disclose.present(
       {
@@ -281,7 +298,11 @@ export class VaultStore {
       context: { claim: rec.type },
       purpose: opts.purpose,
     };
+    // Actual secret use consumes uses (ADR-0018): a one-time approval
+    // covers exactly one use. Hosts MUST persist authority state after
+    // success (same burn-before-deliver order as execution).
     const decision = opts.authority.evaluate(operation, opts.ingress, {
+      consume: true,
       nowSec: opts.nowSec,
     });
     if (!decision.allow) {
@@ -903,6 +924,12 @@ export interface VaultReadRequest {
   readonly nonce: string;
   readonly nowSec: number;
   readonly authority: Authority;
+  /**
+   * Resource coordinates of the PROPOSED operation. Callers must pass the
+   * exact resource the demand was proposed under (ADR-0018: the vault
+   * evaluates the identical canonical operation, never a rewritten one).
+   */
+  readonly resource: { readonly type: string; readonly id: string };
   /** Host-held holder signing key. holder.id must equal the ingress principal. */
   readonly holder: { readonly id: string; readonly privateKey: KeyObject };
   readonly audit?: FileAuditLog;

@@ -4,6 +4,11 @@
  * (`docs/research/2026-09-09-deep-interop-mcp-webmcp-a2a.md`): RFC 1918,
  * link-local, loopback and unique-local ranges, non-HTTP schemes.
  */
+import { request as httpRequest } from "node:http";
+import type { IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
+import type { RequestOptions as HttpsRequestOptions } from "node:https";
+import { checkServerIdentity as tlsCheckServerIdentity } from "node:tls";
 
 export class UrlError extends Error {
   constructor(reason: string) {
@@ -156,9 +161,19 @@ export interface PinnedFetchResponse {
   readonly text: () => Promise<string>;
 }
 
+export interface PinnedFetchInit {
+  readonly redirect: "manual";
+  /**
+   * Validated IP for this hop (single DNS resolution reused for connect).
+   * The default client MUST dial this IP with SNI/Host preserved; custom
+   * `fetchFn` injections MUST honour it or they reintroduce TOCTOU.
+   */
+  readonly pinnedIp?: string;
+}
+
 export type PinnedFetchFn = (
   url: string,
-  init: { readonly redirect: "manual" }
+  init: PinnedFetchInit
 ) => Promise<PinnedFetchResponse>;
 
 export interface PinnedFetchOptions {
@@ -178,10 +193,109 @@ async function defaultLookup(host: string): Promise<string> {
   return found.address;
 }
 
+/** Original hostname for SNI/Host (WHATWG brackets stripped defensively). */
+function servernameOf(url: URL): string {
+  return url.hostname.replace(/^\[/, "").replace(/\]$/, "");
+}
+
+/**
+ * True pinned transport: dial the already-validated IP for this connection
+ * while preserving TLS SNI + Host + certificate hostname binding to the
+ * original name (src/adapters/urls.ts: fetchViaPinnedIp). No second DNS
+ * happens here — the caller's single resolution is reused.
+ */
+export function fetchViaPinnedIp(
+  url: URL,
+  pinnedIp: string
+): Promise<PinnedFetchResponse> {
+  return new Promise((resolve, reject) => {
+    const isHttps = url.protocol === "https:";
+    const port =
+      url.port !== "" ? Number.parseInt(url.port, 10) : isHttps ? 443 : 80;
+    const path = `${url.pathname}${url.search}` || "/";
+    const barePin = bareIp(pinnedIp);
+    const hostHeader = url.host;
+    const servername = servernameOf(url);
+    const finalUrl = url.toString();
+    const onRes = (res: IncomingMessage): void => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => {
+        chunks.push(c);
+      });
+      res.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        const rawLoc = res.headers["location"];
+        const loc = Array.isArray(rawLoc)
+          ? (rawLoc[0] ?? null)
+          : (rawLoc ?? null);
+        resolve({
+          status: res.statusCode ?? 0,
+          location: loc,
+          url: finalUrl,
+          text: () => Promise.resolve(body),
+        });
+      });
+      res.on("error", (err: unknown) => {
+        reject(err);
+      });
+    };
+    try {
+      if (isHttps) {
+        const opts: HttpsRequestOptions = {
+          hostname: barePin,
+          port,
+          path,
+          method: "GET",
+          headers: { host: hostHeader, connection: "close" },
+          servername,
+          rejectUnauthorized: true,
+          checkServerIdentity: (
+            _host: string,
+            cert: Parameters<typeof tlsCheckServerIdentity>[1]
+          ) => tlsCheckServerIdentity(servername, cert),
+        };
+        const req = httpsRequest(opts, onRes);
+        req.on("error", (err: unknown) => {
+          reject(err);
+        });
+        req.end();
+      } else {
+        const req = httpRequest(
+          {
+            hostname: barePin,
+            port,
+            path,
+            method: "GET",
+            headers: { host: hostHeader, connection: "close" },
+          },
+          onRes
+        );
+        req.on("error", (err: unknown) => {
+          reject(err);
+        });
+        req.end();
+      }
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
 async function defaultFetchFn(
   url: string,
-  init: { readonly redirect: "manual" }
+  init: PinnedFetchInit
 ): Promise<PinnedFetchResponse> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new UrlError("fetch: malformed URL");
+  }
+  const literal = ipLiteralOf(parsed.hostname);
+  const pin = init.pinnedIp;
+  if (literal === null && pin !== undefined && pin.length > 0) {
+    return fetchViaPinnedIp(parsed, pin);
+  }
   const g = globalThis as unknown as { readonly fetch?: unknown };
   if (typeof g.fetch !== "function")
     throw new UrlError("fetch: global fetch unavailable");
@@ -194,7 +308,7 @@ async function defaultFetchFn(
     readonly url: string;
     readonly text: () => Promise<string>;
   }>;
-  const res = await fetchFn(url, init);
+  const res = await fetchFn(url, { redirect: "manual" });
   return {
     status: res.status,
     location: res.headers.get("location"),
@@ -207,16 +321,20 @@ const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
 /**
  * Production fetch path (ticket 11, host-owned, behind `PinnedFetchOptions`).
- * Per hop: `assertSafeUrl` string check → DNS lookup (or `pinnedIps` /
- * IP-literal fast path) → `isBlockedIp` fail-closed → fetch with
- * `redirect: "manual"` → redirect targets re-resolved and re-checked.
- * Defaults to no-follow (`maxRedirects: 0`): any 3xx with a Location
- * fails closed unless the host explicitly opts into following.
+ * Per hop: `assertSafeUrl` string check → single DNS lookup (or `pinnedIps` /
+ * IP-literal fast path) → `isBlockedIp` fail-closed → IP-pinned connect
+ * with `redirect: "manual"` (hostname preserved in URL, socket dials the
+ * validated IP; TLS keeps SNI + Host + cert-hostname binding to the name)
+ * → redirect targets re-resolved and re-checked. Defaults to no-follow
+ * (`maxRedirects: 0`): any 3xx with a Location fails closed unless the host
+ * explicitly opts into following.
  *
- * Residual (stated, not silent): lookup-then-connect is TOCTOU — DNS can
- * change between the check and the socket. Single-operator deployments
- * accept this with reputable DNS; high-value hosts must add OS-level
- * pinning or an egress proxy (accepted-risk, see `docs/audit/limits.md`).
+ * Residual (stated, not silent): the default client pins (single resolution
+ * reused for connect, no re-resolution TOCTOU); an injected `fetchFn` that
+ * ignores `init.pinnedIp` and re-resolves by hostname reintroduces
+ * lookup-then-connect TOCTOU — hosts with proxy-aware clients must honour
+ * `pinnedIp` or add an egress proxy (accepted-risk, see
+ * `docs/audit/limits.md`). Egress proxying stays host duty.
  */
 export async function fetchWithPinning(
   raw: string,
@@ -237,7 +355,10 @@ export async function fetchWithPinning(
     if (ip === null || ip.length === 0)
       throw new UrlError(`${what}: DNS lookup failed`);
     if (isBlockedIp(ip)) throw new UrlError(`${what}: DNS resolves private`);
-    const res = await fetchFn(url.toString(), { redirect: "manual" });
+    const res = await fetchFn(url.toString(), {
+      redirect: "manual",
+      pinnedIp: ip,
+    });
     if (!REDIRECT_STATUS.has(res.status)) return res;
     const loc = res.location;
     if (loc === null || loc.length === 0)

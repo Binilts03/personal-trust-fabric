@@ -157,28 +157,28 @@ function statOf(
  */
 const PTF_PDP_VERSION = "0.1.0";
 
-function loadKeys(file: string): readonly PdpKey[] {
+function loadKeysThrowing(file: string): readonly PdpKey[] {
   let raw: string;
   try {
     raw = readFileSync(file, "utf8");
   } catch {
-    fail(`pdp-server: cannot read PTF_PDP_KEYS_FILE: ${file}`);
+    throw new Error(`pdp-server: cannot read PTF_PDP_KEYS_FILE: ${file}`);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
   } catch {
-    fail(`pdp-server: PTF_PDP_KEYS_FILE is not valid JSON: ${file}`);
+    throw new Error(`pdp-server: PTF_PDP_KEYS_FILE is not valid JSON: ${file}`);
   }
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    fail(
+    throw new Error(
       "pdp-server: PTF_PDP_KEYS_FILE must be a non-empty JSON array [{id,key,principal,actor}]"
     );
   }
   const out: PdpKey[] = [];
   for (const entry of parsed) {
     if (!isRecord(entry)) {
-      fail(
+      throw new Error(
         "pdp-server: PTF_PDP_KEYS_FILE entries must be {id,key,principal,actor} objects"
       );
     }
@@ -187,18 +187,24 @@ function loadKeys(file: string): readonly PdpKey[] {
     const principal: unknown = entry["principal"];
     const actor: unknown = entry["actor"];
     if (typeof id !== "string" || id.length === 0) {
-      fail("pdp-server: every keys-file entry needs a non-empty string id");
+      throw new Error(
+        "pdp-server: every keys-file entry needs a non-empty string id"
+      );
     }
     if (typeof key !== "string" || key.length < 16) {
-      fail("pdp-server: every keys-file key must be a string >= 16 chars");
+      throw new Error(
+        "pdp-server: every keys-file key must be a string >= 16 chars"
+      );
     }
     if (typeof principal !== "string" || principal.length === 0) {
-      fail(
+      throw new Error(
         "pdp-server: every keys-file entry needs a non-empty string principal"
       );
     }
     if (typeof actor !== "string" || actor.length === 0) {
-      fail("pdp-server: every keys-file entry needs a non-empty string actor");
+      throw new Error(
+        "pdp-server: every keys-file entry needs a non-empty string actor"
+      );
     }
     const scopes: unknown = entry["scopes"];
     if (scopes !== undefined) {
@@ -209,7 +215,7 @@ function loadKeys(file: string): readonly PdpKey[] {
             typeof s === "string" && KNOWN_SCOPES.includes(s)
         )
       ) {
-        fail(
+        throw new Error(
           "pdp-server: keys-file scopes must be an array of known scopes [evaluate] when present"
         );
       }
@@ -221,11 +227,19 @@ function loadKeys(file: string): readonly PdpKey[] {
   const seen = new Set<string>();
   for (const k of out) {
     if (seen.has(k.id)) {
-      fail(`pdp-server: duplicate key id in keys file: ${k.id}`);
+      throw new Error(`pdp-server: duplicate key id in keys file: ${k.id}`);
     }
     seen.add(k.id);
   }
   return out;
+}
+
+function loadKeys(file: string): readonly PdpKey[] {
+  try {
+    return loadKeysThrowing(file);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -321,10 +335,12 @@ function main(): void {
     process.env["PTF_PDP_REPLICA_ID"] ?? `${hostname()}:${process.pid}`;
 
   // Keys-file hot reload (ticket 10, rotation without restarts): the file
-  // is re-read when its size/mtime changes. A failed reload keeps the
-  // last-good keys (availability) — rotation completes on the next
-  // successful reload, and a broken file fails the next deploy, not this
-  // process. Buckets are keyed by key id, so rotation never resets limits.
+  // is re-read when its size/mtime changes. Rotation failures retain
+  // last-good keys (availability) via the throwing loader below — the
+  // exiting `loadKeys` wrapper is startup-only, so a malformed rewrite
+  // fails the next deploy/request that needs it, never this process
+  // (src/pdp-server.ts: loadKeysThrowing vs loadKeys). Buckets are keyed
+  // by key id, so rotation never resets limits.
   let keys = loadKeys(keysFile);
   let keysStat = statOf(keysFile);
   const keysLive = (): readonly PdpKey[] => {
@@ -336,7 +352,7 @@ function main(): void {
         now.size !== keysStat.size)
     ) {
       try {
-        keys = loadKeys(keysFile);
+        keys = loadKeysThrowing(keysFile);
         keysStat = now;
       } catch {
         // Keep last-good keys; a malformed rotation must not wedge service.

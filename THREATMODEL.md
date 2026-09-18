@@ -1,57 +1,299 @@
-# Threat model — v2 (supersedes v0.1 skeleton)
+# Threat model — v3 (supersedes v2; matches ADR-0016 + ADR-0017)
+
+Scope: the CURRENT architecture — encrypted vault, durable proposals, present
+flow, file-keystore DEK custody, backup/anchor semantics, fixed-identity stdio
+MCP. v2 sections below are retained where still accurate; stale claims
+(in-memory proposals lost on restart; "no size caps" as a blanket gap) are
+removed. Residuals mirror `docs/audit/limits.md`, not contradict it.
 
 ## Assets
 
-Principal secrets (payment instruments, signing keys, credentials), Authority State (grants/approvals), Personal State, capabilities in flight.
+Principal secrets (vault `secret` records, signing keys, keystore DEK),
+Authority State (grants/approvals/uses), encrypted Personal State at rest
+(ciphertext + DEK), durable proposals + in-memory challenges, backups +
+`anchor.json`, disclosures/presentations in flight, capabilities in flight,
+audit chain.
+
+## Actors
+
+| Actor                                                  | Capability                                        | Example                          |
+| ------------------------------------------------------ | ------------------------------------------------- | -------------------------------- |
+| Prompt-injected agent                                  | Calls MCP tools with attacker-chosen terms        | `pay attacker` via `ptf_propose` |
+| Malicious MCP client                                   | Oversized inputs, unknown digests, challenge spam | Giant payloads, oracle polling   |
+| Oversharing / replaying verifier                       | Requests extra claims, replays a presentation     | 10 claims where 2 allowed        |
+| Substituted recipient                                  | Swaps recipient key, replays capability           | Forged recipient proof           |
+| Store reader (same-host / stolen disk / backup holder) | Reads files, offline-attacks keystore             | Dumps store dir or backup media  |
+| Malicious `buildRequest` / `use` callback author       | Runs in-host with plaintext secret in scope       | Leaks value into context/logs    |
+| Rollback operator / crash                              | Restores old files, kills mid-rotation            | Full-dir rollback, power loss    |
+| Compromised adapter / tool description                 | Smuggles context, lies about effects              | `termsDigest` echo, missing hint |
+| Log scraper / backup shipper                           | Reads audit, logs, backup copies                  | Exfiltrated `audit.jsonl`        |
+| Host-compromised adversary                             | Full host/RAM/file control                        | Total — nothing claimed (see B9) |
 
 ## Trust boundaries
 
-1. Agent (untrusted, possibly injected) ↔ PTF authority plane (trusted, deterministic).
-2. PTF ↔ recipient (authenticated via Identity Binding + Ed25519 proof before execution).
-3. PTF ↔ external protocol (x402/AP2/OpenID4VP/MCP/A2A treated as evidence, never authority).
-4. PTF ↔ human approver (digest-bound proposal; any term change = new approval).
-5. Standards edge (`authzen`/`oauth-agent`/`sd-jwt`/`audit-interop` projections) ↔ `Authority.evaluate`: projections are evidence in, decision in `Authority.evaluate`.
+| #   | Boundary                                            | Trusted side                                          | Untrusted side                                   |
+| --- | --------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
+| B1  | Agent ↔ authority plane                             | `Authority.evaluate`, deterministic core              | Agent / MCP caller                               |
+| B2  | Agent ↔ host secret callbacks                       | `useCredential` receipt-only return                   | `use` / `buildRequest` author + host egress      |
+| B3  | Vault file at rest                                  | AES-256-GCM envelope, keystore                        | Disk/backup readers                              |
+| B4  | DEK rotation window                                 | Stage-then-seal-then-promote ordering                 | Crash / out-of-order operator                    |
+| B5  | Proposal files                                      | Digest re-derivation, TTL/cap, executed-immutable     | File tamperer, filler, racer                     |
+| B6  | Backup media + anchor                               | Whole-unit copy, anchor recompute                     | Rollback / tamperer                              |
+| B7  | Disclosure delivery (present flow)                  | Verifier/nonce binding, single-present, audit         | Replayer, double-presenter                       |
+| B8  | MCP stdio fixed identity                            | Pinned principal/actor, no approve tool               | Remote caller (no story here)                    |
+| B9  | Store concurrency / snapshots / logs                | CAS, freshness bindings, fail-closed loads            | Racer, snapshot restorer, log shipper            |
+| B10 | PTF ↔ recipient / protocol / human / standards edge | Proofs, evidence-only adapters, digest-bound approval | Substituted keys, protocol messages as authority |
 
-## Attackers in scope
+## B1 — Agent ↔ authority plane
 
-Prompt-injected agent requesting `pay attacker ₹100k`; malicious tool description / WebMCP output; substituted recipient key; replayed capability; oversharing verifier; compromised adapter; log scraper; `act` chain confusion; `aud` widening; trusting `ptf_digest` without recompute.
+- Attacks: injected `pay attacker`; mutated terms; wrong-recipient redeem;
+  replayed/expired capability; `act` chain confusion; trusting `ptf_digest`
+  without recompute.
+- Mitigations: default-deny `evaluate` + citations; policy constrains, never
+  creates (ADR-0002); digest derived server-side from normalized operation +
+  fixed ingress (never caller-supplied); child ≤ parent attenuation with
+  recipient + termsDigest fixed (`src/core/authority.ts`,
+  `src/core/capability.ts`); expiry + maxUses enforced at redemption;
+  `requested ∩ available ∩ allowed`, holder-bound disclosure.
+- Residuals: none claimed beyond B9 races (unlimited-use concurrent redeem).
 
-## Out of scope for v0.1 (partially SUPERSEDED by v2 below)
+## B2 — Host callbacks receive PLAINTEXT secrets (new, explicit)
 
-v0.1-skeleton language superseded: "Compromised OS/keychain" is now modeled in v2
-(host-compromise blast radius: PTF guarantees nothing once the host falls).
-Still out of scope: side-channels, independent audit anchoring (noted in ADR-0006), full AP2 Human-Not-Present flows.
+`useCredential` hands the secret value to the in-host `use` callback;
+`executeWithCredential` hands the full `SecretInstruction` (including `value`)
+to `buildRequest` (`src/store/vault.ts`, `src/adapters/providers.ts`).
+
+- Attacks: callback places the value in provider `context`, receipt, logs, or
+  egress; callback retains/copies the heap value.
+- Mitigations: built request scanned for the distinctive secret rendering
+  (verbatim strings; canonical form ≥ 16 chars) before submission; receipt
+  echoing a distinctive secret fails closed instead of minting; requests carry
+  handles only; audit carries ids only; raw record access (`getRecord` /
+  `listRecords`) is private host-only — MCP/CLI expose only evaluate-first
+  `disclose` and receipt-only `useSecret`.
+- Residuals (mirror `limits.md` vault row): PTF prevents AGENT possession, NOT
+  host misuse. Review `buildRequest`/`use` like provider code, with
+  logging/egress controls (host duty). Short scalars (PINs, flags) are
+  indistinguishable from legitimate receipt fields and stay uncovered — keep
+  them out of string-typed receipt fields. Heap copies are best-effort
+  unzeroed — treat heap as sensitive.
+
+## B3 — Encrypted Personal State at rest (ADR-0016)
+
+`personal-state.json` is an AES-256-GCM v2 envelope over the canonical
+snapshot (AAD `ptf-vault/v2`, `kidHex` selects the DEK). The 32-byte DEK lives
+in the passphrase-sealed file keystore under `ptf/vault-dek`; passphrase
+rotation re-wraps the DEK, DEK rotation re-seals data. Legacy plaintext files
+are refused at load AND save (`vault-migrate` seals once).
+
+- Attacks: stolen disk / backup reader (offline scrypt attack on keystore);
+  envelope tamper / wrong DEK (GCM auth fails closed: `decryption failed`);
+  malformed envelope (fails closed: `bad envelope`).
+- Mitigations: ciphertext-only at rest, in backups, in container layers;
+  revision CAS + `vaultRev` freshness binding unchanged (stale restores alarm);
+  `0600` file modes; passphrase via file > TTY > env-legacy.
+- Residuals: a whole-directory backup holds ciphertext AND the DEK (keystore
+  lives in the store dir) — anyone holding a backup can decrypt it. Protect
+  backup media; rotate on exposure. DEK/file separation needs the
+  `KeyProvider` host seam (OS keychain / KMS) — HSM/KMS custody stays a host
+  seam. `authority.json` / `registry.json` metadata remain plaintext to local
+  readers (only the vault is encrypted).
+
+## B4 — DEK rotation crash windows (`ptf vault-rekey` ordering)
+
+- Protocol: stage new DEK under `ptf/vault-dek-next` and persist the keystore
+  BEFORE re-sealing vault data, then promote to `ptf/vault-dek`. Loads resolve
+  the opening DEK by envelope `kidHex` across aliases, so every crash prefix
+  keeps a matching DEK on disk.
+- Attacks / failures: power loss between stage / re-seal / promote; operator
+  calling `rotateVaultDek` bare (persist-after) — bricks on a reseal-then-crash
+  window; incomplete rotation surfaces as `no DEK matches envelope kid …
+re-run vault-rekey` (fail-closed, recoverable — never silent).
+- Residual: rotation is a hard cutover per file; concurrent writers during
+  rekey still serialize on the vault revision CAS.
+
+## B5 — Durable proposal files (ADR-0017; v2 "lost on restart" SUPERSEDED)
+
+One file per termsDigest under `<storeDir>/proposals` (O_EXCL create, TTL GC:
+pending 600s, denied 120s; 1000-file distinct-digest anti-fill cap,
+fail-closed beyond). The digest is the idempotency key; `executed` is
+immutable history (re-propose/re-redeem returns the stored receipt, never
+re-executes); `denied` re-opens to pending when live authority now allows.
+Every propose/redeem re-evaluates live authority — durability never substitutes
+for a fresh decision. Pending recipient challenges stay IN MEMORY with short
+TTLs (lost on restart → redeem phase 1 again): they carry live key material
+that must never touch disk.
+
+- Attacks: tampered proposal file → fail-closed (`proposal terms changed:
+propose again` via digest re-derivation; present-but-unreadable →
+  `proposal store corrupt`, never treated as unknown); expired → propose
+  again; unknown → propose first; store-fill (cap fails closed); concurrent
+  same-digest redeems.
+- Mitigations: digest re-derivation at redeem/present; corrupt/expired/unknown
+  distinguished; executed immutability; burn-before-execute persist ordering
+  (ticket 05); single-use redeem capabilities (`maxUses: 1` per challenge).
+- Residuals: the file does NOT gate spending — under unlimited-use grants,
+  concurrent same-digest redeems can both execute before either transition
+  lands (last-writer-wins). Mitigations in order: single-writer topology (one
+  server per store), maxUses-bounded grants / one-time approvals, single-use
+  redeem capabilities. Restored proposals re-evaluate live authority, so stale
+  demands fail closed rather than resurrect.
+
+## B6 — Backup / restore + anchor semantics (`src/store/backup.ts`)
+
+Whole-unit copy (authority/registry/vault/keystore/audit/proposals),
+never-merge: non-empty destination refused, destination-inside-source refused,
+passphrase-file-inside-store refused, vault restore without key material
+refused. Every backup carries `anchor.json` (Merkle root + count over
+`audit.jsonl`); restore recomputes and refuses mismatch; restored stores reload
+under revision-CAS freshness (mixed vintages fail closed at load).
+
+- Attacks: partial rollback (mixed vintages) → fails closed at load;
+  tampered/rolled-back log → anchor mismatch fails closed; passphrase smuggled
+  into the store → backup refused.
+- Semantics (do not over-read): the anchor proves consistency WITHIN a backup
+  (restored log == backed-up log), NOT external freshness. A full-directory
+  rollback to consistently-old files WITH its matching anchor verifies clean.
+  Live-history freshness comes from revision/`vaultRev` bindings at load;
+  independent external witnessing is a NON-GOAL (ADR-0006).
+
+## B7 — MCP disclosure delivery (`ptf_present_data`)
+
+Pending `/disclose` proposal + caller nonce (≥ 16 chars) → holder-signed
+presentation over `requested ∩ allowed` (secrets excluded; ambiguous same-type
+claims fail closed; proposal identity re-asserted against the fixed ingress;
+tampered terms fail closed before the vault is touched).
+
+- Attacks: nonce replay; double-present; oversharing verifier; tampered
+  proposal smuggled into present.
+- Mitigations: verifier + nonce binding (`Disclose.verify`: `maxAgeSec`
+  default 300, `expectedNonce` equality fails closed `replay`); consumed use
+  persisted BEFORE delivery (burn-before-deliver — a crash burns a use, never
+  double-presents); `executed` transition makes re-present fail closed
+  (`already presented/denied`); `vault.read` audit entry (purpose / verifier /
+  claims / rev, never values).
+- Residuals: nonce-uniqueness + freshness enforcement are VERIFIER duty
+  (`usedNonces` set is host-owned — without it, replay inside the freshness
+  window is possible). Present is a read and consumes nothing extra by design
+  beyond the one approval use (ADR-0018 ordering).
+
+## B8 — MCP fixed-identity stdio scope (no remote auth story)
+
+The server speaks for ONE fixed identity (`PTF_MCP_PRINCIPAL` /
+`PTF_MCP_ACTOR` → `source: "local-registration"`,
+`proofRef: "stdio:<storeDir>"`). Tool inputs carry NO identity fields
+(self-certification impossible). 9 tools: `ptf_propose`, `ptf_check`,
+`ptf_redeem` (/pay only), `ptf_request_data`, `ptf_present_data`,
+`ptf_request_action`, `ptf_get_receipt`, `ptf_list_capabilities`,
+`ptf_revoke`. There is deliberately NO approve tool: approval happens
+human-side (CLI) or ahead of time (standing grants) — the server only spends
+what already exists. `ptf_revoke` is request-only (returns `requested:true` +
+the human command; authority untouched). `ptf_list_capabilities` shows only
+fixed-identity-visible grants (revoked / foreign / expired / exhausted
+excluded).
+
+- Attacks: remote caller impersonation — NO remote auth story in this bin;
+  remote/multi-tenant hosts MUST derive per-caller ingress from a verified
+  token (OAuth/DPoP/mTLS) and pass it to `Authority.evaluate` (host duty, not
+  this file). Malicious client (oversized inputs, unknown digests, challenge
+  spam) → fail-closed `unknown` / `expired` / `corrupt` messages.
+- Residuals: no in-core size caps, rate limits, or per-client quotas — DoS and
+  store-growth are host duties (the 1000-file proposal cap is an anti-fill
+  bound, not a quota; per-key buckets live in the PDP bin, per-process).
+
+## B9 — Store concurrency / snapshots / leakage (retained v2)
+
+- Local malicious process reading store files → `0600` tmp+rename, fail-closed
+  parse, scrypt+AES-GCM keystore. Residual: grants/approvals metadata readable;
+  keystore offline-attackable.
+- `PTF_PASSPHRASE` extraction (`/proc`, dumps, child env) → 0600 file >
+  no-echo TTY > env-legacy; best-effort `zeroize`. Residual: heap/env copies
+  recoverable same-host; HSM/KMS stays a host seam.
+- Symlink/path attacks on store paths → per-write random tmp suffix, parent
+  mkdir, fail-closed parse. Residual: no `O_NOFOLLOW`/`O_EXCL`/dir-fsync
+  discipline on the file-CAS tmp path (proposal create IS O_EXCL); Windows
+  rename is not atomic-replace.
+- Rollback of authority/keystore → revision CAS + audit freshness binding fail
+  closed at load (ADR-0015); full-directory rollback needs the anchor (B6).
+- Concurrent redemption races → optimistic revision CAS fails the loser closed
+  before any receipt while uses remain; audit concurrent-appends fork loudly
+  at next chain verify. Residual: unlimited-use racers can both execute (B5).
+- TOCTOU evaluate→execute → re-evaluation at redeem + persist-before-execute:
+  crash/failing rail burns a use (denied retry), never double-spends. True
+  atomicity with an external rail needs rail participation (2PC — host duty).
+- Stale snapshots restored after revoke → restore revalidates add-gates, but
+  revocation/usage live outside the snapshot: freshness needs the live store.
+- Backup/log leakage → core never emits raw secrets; tamper-evident chain
+  (+opt HMAC). Residual: `detail`/context strings are host-supplied — one
+  interpolated secret poisons every copy; redaction is unenforced convention.
+- Host compromise blast radius: PTF guarantees NOTHING once the host falls
+  (grants minted, revokes suppressed, audit rewritten absent external anchor).
+  Recovery is re-provision from clean backups, not a PTF property.
+
+## B10 — Recipient / protocol / human / standards edge (retained v2)
+
+- Substituted recipient key → Identity Binding + Ed25519 proof before
+  execution; `provider.verify` pins capabilityId + termsDigest (provider-
+  attested — independent `checkSettlement` / `verifyMandatePair` stay host
+  duty; rail results are evidence, never authority, ADR-0005).
+- AuthZEN context smuggling → reserved-echo stripping + digest recompute;
+  unknown envelope metadata ignored. Residual: new context keys are future
+  collision candidates.
+- OAuth `aud` widening → identical-only `aud`, scope subset, depth/cycle caps.
+  Residual: single-string `aud`, no registry — skipping `checkAudience` widens
+  silently.
+- SD-JWT `ptf_digest` without recompute → verifier MUST recompute over the
+  canonical disclosed set.
+- AP2/x402 shape mismatches → fail-closed `unresolved_constraint`; asset /
+  network folded into the caller's termsDigest. Residual: loose mappings are
+  the audit surface.
+- Reference HTTP PDP (`examples/pdp-server.mjs`, dev-only) → loopback-only,
+  ≥16-char key, per-request reload, 1 MiB cap. Residual: single key, no
+  rotation/scope/TLS/rate-limit — never expose as production.
+- Production PDP bin (`src/pdp-server.ts`) → mandatory in-process TLS,
+  per-key timing-safe allowlist + scopes, hot reload (dropped key 401s),
+  read-only reload, secret-free decision logs, per-key buckets + Retry-After,
+  single-replica topology. Residual: buckets per-process (duplicates
+  detectable via replica id, not prevented); no rotation history; log shipping
+  host duty.
+
+## NON-GOALS (plainly)
+
+1. NOT a PSP / wallet / settlement service. `FakePaymentExecutor` moves no
+   money; real rails, settlement verification, and rail atomicity are host
+   duty.
+2. NO HSM / KMS custody. File keystore + `KeyProvider` seam; heap and host
+   compromise are outside PTF's power.
+3. NO multi-tenant remote service. Single-writer, one server per store, fixed
+   stdio identity; remote caller authentication/mapping is host duty.
+4. NO external witness. `anchor.json` is a consistency checkpoint, not a
+   witness; third-party verifiability needs external anchoring (ADR-0006).
+
+## Out of scope
+
+Side-channels; independent audit anchoring; full AP2 Human-Not-Present flows;
+universal DID resolution; GNAP server; x509-chain/DID/attestation crypto;
+mdoc/mDL; nested DCQL; `claim_sets`; full RFC 8785; live mainnet funds;
+multi-writer clustering (SQLite deferred, ADR-0008); per-client OAuth consent /
+PKCE / state / cookies / minimal scopes (host duties); DNS-rebinding beyond
+fetcher-side pinning; egress proxying.
 
 ## Must-hold properties
 
-Default-deny; policy never creates authority; Personal State ≠ Authority State; child ≤ parent; expiry + maxUses enforced at redemption; `requested ∩ available ∩ allowed` disclosure; no secrets to agent or logs.
+Default-deny; policy never creates authority; Personal State ≠ Authority
+State; child ≤ parent; expiry + maxUses at redemption; `requested ∩ available
+∩ allowed`; no secrets to agent, receipt, log, or audit; burn-before-execute
+AND burn-before-deliver (crashes burn uses, never double-spend/present);
+executed proposals immutable; every allow cites its Grant/Approval.
 
 ## Abuse cases to encode as regression evals
 
-Replay, over-spend, expired use, wrong-recipient redeem, mutated termsDigest, verifier requesting 10 claims but allowed 2, MCP token-passthrough attempt, WebMCP description poisoning.
-v0.1-skeleton language superseded where this file claimed skeleton/out-of-scope: the v2 sections below are now the record.
-
-## v2 — host and store adversaries
-
-- Local malicious process reading store files. Capability: same-uid process dumps `authority.json`/`registry.json`/keystore blobs. Mitigation: `atomicWrite` tmp+rename with `0o600`, corrupt/missing fails closed, keystore sealed with scrypt+AES-GCM. Gap: no at-rest ACL beyond file mode; any reader learns grants/approvals metadata and offline-attacks the keystore.
-- `PTF_PASSPHRASE` extraction from environment. Capability: `/proc` scrape, crash dump, or child-process env inherit. Mitigation: `readPassphrase` prefers a 0600 passphrase file, then an interactive no-echo TTY prompt; env remains as legacy; `zeroize` shrinks secret lifetime best-effort. Residual: env-supplied secrets and heap copies are still recoverable same-host (JS erasure limits) — full HSM/KMS custody stays a host seam; review yearly.
-- Symlink/path attacks on store paths and file-CAS tmp files. Capability: pre-planted symlink at `authority.json` or predictable tmp name to redirect writes/reads. Mitigation: per-write random tmp suffix (`pid`+16 hex), `mkdir -p` on parent, fail-closed parse. Gap: no `O_NOFOLLOW`/`O_EXCL` or dir-fsync discipline; a writer following an attacker symlink can clobber an arbitrary path, Windows rename is not atomic-replace.
-- Rollback of `authority.json`/keystore (replay of revoked grants, resurrected uses). Capability: restore yesterday's file to un-revoke or reset `used` counters. Mitigation: revision CAS plus the audit freshness binding — every entry commits to post-save revisions, so any file rolled back past recorded history fails closed at load (`src/store/files.ts`, ADR-0015; rollback regression tests). Residual: full-directory rollback to consistently-old files needs an external anchor (`store/anchor.ts` checkpoints, verified on restore); in-memory restored copies decide from their copy but cannot persist.
-- Concurrent redemption races. Capability: two writers redeem the same single-use approval/cap simultaneously. Mitigation: optimistic revision CAS on authority/registry files — data + revision commit atomically, a stale handle's save throws fail-closed before any receipt, and fresh instances cannot overwrite stores they never loaded (`src/store/files.ts`, ticket 02; race tests in `tests/store.test.ts`). Residual: audit concurrent-appends fork loudly at next chain verify (never silently); Windows rename is not atomic-replace, so keep backups.
-- TOCTOU between `Authority.evaluate` and `executeAndReceipt`. Capability: revoke/expire/pre-spend in the gap after allow, before money moves. Mitigation: re-evaluation at redeem time plus persist-before-execute ordering in both bins — consumption is durable before the rail runs, so a crash/failing rail burns a use (denied retry) instead of double-spending; fault-injection tests pin this (ticket 05). Residual: true atomicity with an external rail needs rail participation (2PC); the rail itself stays host duty.
-
-## v2 — client, snapshot, and leakage adversaries
-
-- Malicious MCP client (oversized inputs, unknown proposals, challenge spam). Capability: giant payloads, unknown proposal ids, challenge-oracle polling. Mitigation: fail-closed `unknown` on missing proposals/challenges, in-memory proposals lost on restart, audience + token-separation checks. Gap: no size caps, rate limits, or per-client quotas in-core — DoS and store-growth are host duties.
-- Stale authority snapshots restored after revoke. Capability: keep a pre-revoke `snapshot()` and `Authority.restore()` it later to decide. Mitigation: restore revalidates through live add-gates (bad bounds/actors still throw). Gap: revocation/usage live outside the snapshot — a stale copy decides as if the revoke never happened; freshness needs the live store, not a copy.
-- Backup/log leakage (audit detail secret-freedom is a host obligation). Capability: backups, log shippers, or `audit.jsonl` copies exfiltrated. Mitigation: core never emits raw secrets to agent view/receipt/log; tamper-evident hash chain (+opt HMAC). Gap: `detail` strings and contexts are host-supplied — one interpolated PAN/key/secret poisons every copy; redaction is unenforced convention, and HMAC without anchoring still trusts the host clock/store.
-- Host compromise blast radius (what PTF still guarantees: nothing). Capability: full host/RAM/file control post-compromise. Mitigation: none claimed — deterministic core gives no independent root of trust once the operator falls. Gap: total — grants minted, revokes suppressed, audit rewritten (absent external anchor), keys exported; recovery is re-provision from clean backups, not a PTF property.
-
-## v2 — adapter-confusion attacks
-
-- AuthZEN context smuggling (`termsDigest` echo, unknown keys). Capability: PEP stuffs `context.termsDigest` or colliding keys to forge binding. Mitigation: recovery strips the reserved echo and recomputes via `digestForOperation`; unknown envelope metadata (`subject.type`) ignored. Gap: every new context key is a future collision candidate — translators must keep the reserved-key list exact or smuggling recurs.
-- OAuth `aud` widening. Capability: replay a token at a second resource server. Mitigation: v0.1 identical-only `aud` (any change throws), `scope` subset + depth/cycle caps. Gap: single-string `aud` with no audience registry — a host that skips `checkAudience` or shares one `aud` across services silently widens every token.
-- SD-JWT `ptf_digest` trust without recompute. Capability: present a valid holder signature over tampered disclosed claims. Mitigation: verifier must recompute `ptf_digest` over the canonical disclosed set; mismatch fails closed. Gap: any verifier that compares the digest string instead of recomputing, or ignores salt/claim-set binding, accepts forged disclosures.
-- AP2/x402 demand-shape mismatches. Capability: AP2 mandate or x402 requirement whose amount/asset/payee shape does not map 1:1 to a PTF demand (e.g. `ap2-payment` vs `flight` resource, `upto` vs `exact`, unconstrained payee lists). Mitigation: evidence-only adapters — unresolved constraints fail closed (`unresolved_constraint`), asset/network folded into caller's `termsDigest`. Gap: every new protocol shape is a silent-deny or, worse, a loose mapping that narrows less than the mandate — shape coverage is the audit surface.
-- Reference HTTP PDP abused as production (dev-only `examples/pdp-server.mjs`). Capability: operator exposes the loopback reference without TLS, with a weak/shared API key, or against a multi-writer store. Mitigation: binds 127.0.0.1 only, refuses to start without ≥16-char key, per-request store reload, 1 MiB body cap. Gap: single API key with no rotation/scope, no rate limiting, no TLS in-process, last-write-wins races — production needs host-owned TLS, real PEP auth, and locking.
-- Production PDP bin abused across instances (`src/pdp-server.ts`). Capability: stolen bearer key replayed at any replica, TLS mis-terminated (plaintext/CIDR-wide bind) exposing keys, request-body echo smuggling secrets into decision logs, RPM bypass by rotating across key ids. Mitigation: mandatory in-process TLS (plaintext needs an explicit flag), per-key timing-safe allowlist with optional per-key scopes (unknown scopes fail startup; parked keys 403), keys-file hot reload (rotation with zero restarts — old key 401s the moment the file drops it), per-request read-only reload (no consume, no writes), decision logs carry key id/replica/decision/reason/authorityId only — never bodies/keys/secrets (regression-tested) — plus per-key token buckets with Retry-After. Single-replica is the supported topology (`compose.yml` pins `replicas: 1`); the replica id on every log/429/readyz makes duplicates visible. Residual: buckets stay per-process (a duplicate deployment still doubles RPM until killed — detectable, not prevented), no key rotation history/scope narrowing beyond `evaluate`, and log/retention shipping stays host duty per `docs/audit/operations.md` — a shared limiter + key lifecycle service belongs in front of this bin only if it ever outgrows one replica.
+Replay; over-spend; expired use; wrong-recipient redeem; mutated termsDigest;
+verifier requesting 10 claims but allowed 2; MCP token-passthrough attempt;
+WebMCP description poisoning; proposal-file tamper → exact fail-closed
+message; expired/corrupt/unknown proposal distinguished; double-present
+refused; nonce replay without verifier cache; `buildRequest` leaking a
+distinctive secret into context; short-scalar receipt accepted-risk;
+bare `rotateVaultDek` brick warning; anchor mismatch on tampered restore;
+full-directory rollback WITH matching anchor verifying clean (documents the
+non-goal); unlimited-use concurrent redeem double-execution.

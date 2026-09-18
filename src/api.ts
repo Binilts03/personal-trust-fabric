@@ -55,9 +55,10 @@ export type {
   AgentView,
 } from "./core/persona.js";
 
-export { executeAndReceipt } from "./core/execute.js";
+export { executeAndReceipt, requireBoundOperation } from "./core/execute.js";
 export type {
   Receipt,
+  ExecutionReceipt,
   PaymentInstruction,
   PaymentExecutor,
 } from "./core/execute.js";
@@ -115,6 +116,7 @@ export {
   makeFakeProviders,
   providerAsExecutor,
   executeViaProvider,
+  executeActionViaProvider,
 } from "./adapters/providers.js";
 export type {
   ProviderKind,

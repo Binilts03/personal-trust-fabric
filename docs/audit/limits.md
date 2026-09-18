@@ -30,6 +30,14 @@ tested at the boundary.
   persist and execute burns a use without a receipt (safe direction: the
   retry denies `uses-exhausted`, it never double-spends). Redeem
   immediately before executing all the same; live rails stay host duty.
+- Exact-operation binding (ADR-0018): `authorize` echoes the verified
+  demand and every execute path deep-compares its instruction against the
+  echo — bare `{ok, chainId}` redemptions fail closed, as does any mutated
+  recipient/amount/currency/resource/purpose/digest. In-process forgery by
+  hostile host code is out of model (the host owns everything); the
+  enforced boundary is agent-facing seams, which build both sides from the
+  same stored demand (proof: `tests/execute.test.ts` mutation matrix,
+  `tests/signing.test.ts`, `tests/providers.test.ts`).
 - Unbounded `/pay*` standing grants rejected at `addGrant` (soft guard) — add
   a `.context.amount` ceiling or use a one-time exact-terms approval.
 - Rollback is detected, not prevented: every audit entry commits to the
@@ -41,6 +49,8 @@ tested at the boundary.
   their copy but can never persist over newer state (revision CAS).
 - Audit/detail secret-freedom is host-enforced — core never emits raw secrets,
   but host-supplied `detail`/context strings can leak into backups/logs.
+- PDP keys hot-reload retains last-good on malformed rewrite (availability); the broken file fails the next deploy instead of killing the process — startup `loadKeys` still exits 2 (proof: `src/pdp-server.ts:160`, `tests/pdp-fronting.test.ts:258`).
+- Policy attenuation is strict on exclusive→inclusive bounds: parent `x < v` + child `x <= w` narrows only when `w < v` (equal admits `v` on the child side); all other `<`/`<=` combos keep `w <= v` (proof: `src/core/policy.ts:198`, `tests/authority.test.ts:529`).
 
 ## Adapters (evidence-only subsets)
 
@@ -72,7 +82,7 @@ tested at the boundary.
   `tests/host-network.test.ts`; mdoc / nested paths / `claim_sets` CUT
   with rejection tests (same file); nonce replay store
   accepted-risk — host must persist used nonces (single-operator duty,
-  owner sign in `operations.md`).
+  owner sign in `operations.md`); `Disclose.verify expectedNonce` binds the presentation nonce to the verifier challenge fail-closed `replay` (proof: `src/core/disclose.ts:136`, `tests/disclosure.test.ts:190`).
 - MCP: audience + token-separation + redirect-registry only. Per-client
   consent, PKCE, single-use state, cookie binding, minimal scopes are host
   duties. `register` is operator-privileged.
@@ -100,12 +110,7 @@ tested at the boundary.
   duty behind the host's own trust root.
 - URLs: hostname-string checks only. DNS-rebinding and redirect-to-private
   require fetcher-side pinning + no-follow-or-recheck + egress proxy.
-  Production: implemented via `fetchWithPinning` — per-hop DNS lookup +
-  `isBlockedIp` fail-closed + manual-redirect re-check, no-follow by
-  default (proof: `tests/host-network.test.ts`); egress proxy
-  accepted-risk — single-operator direct fetch with reputable DNS,
-  proxy recommended for high-value hosts (owner sign in `operations.md`);
-  lookup-then-connect TOCTOU residual stated in code.
+  Production: implemented via `fetchWithPinning` — single per-hop DNS resolution reused for an IP-pinned connect (`fetchViaPinnedIp` preserves SNI + Host + cert-hostname binding) + `isBlockedIp` fail-closed + manual-redirect re-check, no-follow by default (proof: `src/adapters/urls.ts:207`, `tests/host-network.test.ts:147`); egress proxy accepted-risk, and injected `fetchFn` that ignores `init.pinnedIp` reintroduces TOCTOU — hosts must honour it (owner sign in `operations.md`).
 - JWS: strict-b64 helper available (`b64uDecodeStrict`); legacy lenient
   decode retained where verification uses decoded bytes (fail-closed).
   Production: implemented — strict helper for new paths, lenient retained
@@ -132,6 +137,14 @@ tested at the boundary.
   never values (proof: `tests/vault.test.ts`).
   `readForPurpose` evaluates `Authority.evaluate(/disclose)` first, then
   owner/purpose/agent/expiry filtering, and drops `secret` records entirely.
+  Reads and uses CONSUME authority (ADR-0018): dry-run/proposal evaluation
+  does not, actual disclosure and secret use do — one-time approvals cover
+  exactly one presentation/use, and hosts must persist authority state
+  after success (burn-before-deliver; MCP present and CLI vault-read do).
+  The vault evaluates the caller-supplied resource, so proposal and
+  execution authorize the identical canonical operation (present re-derives
+  the digest and requires it to equal the proposal key). Same-type
+  ambiguity fails closed (re-put under one id or retire the stale record).
   `useCredential` is the sole in-host path for `secret` (receipt-only return;
   a receipt echoing a distinctive secret fails closed instead of minting;
   short scalars such as PINs cannot be told apart from legitimate receipt
@@ -166,8 +179,12 @@ tested at the boundary.
   (other actions propose only) and accepts
   any `/pay` proposal in the shared store regardless of originating propose
   tool; disclosures deliver via `ptf_present_data`. Proposals are durable files now (ADR-0017, one per termsDigest =
-  idempotency key; executed immutable, denied re-opens on fresh allow);
-  recipient challenges stay in-memory (lost on restart — redeem phase 1
+  idempotency key; executed immutable, denied re-opens on fresh allow).
+  Digest-keying is deliberate, not a missing ID column: identical terms ARE
+  the same proposal (re-propose returns stored instead of duplicating), and
+  TTL expiry only permits a NEW proposal that still needs FRESH authority
+  (a spent one-time approval denies). Permanent execution identity lives in
+  `audit.jsonl` (`receiptId`), not in the live-intent store. Recipient challenges stay in-memory (lost on restart — redeem phase 1
   again; they carry live key material by design). Pending lives 600s,
   denied 120s; reads GC expired records; distinct-digest proposes are
   capped at 1000 files (fail-closed beyond — anti-fill bound, not a quota).

@@ -1,6 +1,6 @@
 # Personal Trust Fabric
 
-User-owned trust and delegated-authority layer that lets AI agents act for a person without possessing that person's secrets. Single context for the v0.1 agentic-commerce slice: payments, selective disclosure, and signing through existing protocols.
+User-owned authority and protected-use control plane that lets interchangeable agents use precisely bounded pieces of a person's authority, data, and credentials without possessing the underlying secrets. Domains include disclosure, execution (travel, APIs, purchases, payment as one profile), and signing. PTF owns authority, policy, protected state, approval, secret mediation, execution authorization, and audit evidence — never rails, settlement, or PSP functionality.
 
 ## Language
 

@@ -2,7 +2,7 @@
 
 **Let AI agents spend, prove, and sign on your behalf — without ever holding your credentials, keys, payment instruments, or unrestricted authority.**
 
-Today, giving an agent a task means giving it your secrets: card numbers in chat logs, OAuth tokens in tool calls, your whole profile in context. PTF inverts that. It is the **personal-side trust, data, and execution layer for agentic commerce**: a user-owned control plane that sits between a person's sensitive state and autonomous agents. Agents propose; the deterministic core disposes. LLMs may reason _about_ authority — they are never its source.
+Today, giving an agent a task means giving it your secrets: card numbers in chat logs, OAuth tokens in tool calls, your whole profile in context. PTF inverts that. It is a **user-owned authority and protected-use control plane for agentic systems**: interchangeable agents use precisely bounded pieces of a person's authority, data, and credentials without possessing the underlying secrets. Agents propose; the deterministic core disposes. LLMs may reason _about_ authority — they are never its source.
 
 ```text
 Person (owns data, credentials, preferences, authority)
@@ -23,13 +23,13 @@ Merchant · payment provider · travel provider · API · verifier
 
 Tell an agent: _"book the flight under ₹50,000 with my loyalty number, email the confirmation to work."_ The agent completes it — and never sees your card number, your loyalty password, an unrestricted refresh token, your full profile, or a blank check on your money.
 
-## Status: honest
+## Status
 
-This is a working, tested reference implementation on the road to a peer-reviewed standard — not a finished product. What CI proves on every merge: strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning. See `docs/audit/verify.md` to reproduce from scratch.
+This is a working, tested reference implementation on the road to peer review — not a finished product. What CI proves on every merge: strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning. See `docs/audit/verify.md` to reproduce from scratch.
 
-What it **is** today: a strong local authority engine, an encrypted personal-state vault, a complete propose→present/redeem→receipt agent loop over MCP, protected provider seams, and hash-chained audit — all tested including abuse cases.
+What it **is** today: a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
 
-What it **is not** yet: a live payment platform (reference fakes move no money), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in `docs/audit/limits.md` — we list what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
+What it **is not** yet: a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in `docs/audit/limits.md` — the file lists what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
 
 ## For humans: run it in 60 seconds
 
@@ -131,17 +131,17 @@ Three flows cover everything: **disclose** (agent asks, PTF returns the minimal 
 
 Default-deny with citations: every allow names the grant or approval consumed. Policies narrow; learning never mints power. Capabilities attenuate monotonically, bind recipient + terms digest + expiry + uses, and redeem only against a live recipient key proof. Disclosure is `requested ∩ available ∩ allowed`, holder-bound. The vault is AES-256-GCM under a keystore DEK with freshness binding; the audit is hash-chained (optionally HMAC-keyed) and never carries secrets. External protocol messages are untrusted evidence re-validated locally. Full model, threats, and honest limits: `THREATMODEL.md`, `SECURITY.md`, `docs/audit/`.
 
-## Roadmap: milestones to a standard
+## Roadmap: milestones to peer-reviewed infrastructure
 
-PTF's destination is a peer-reviewed standard for agentic commerce. The code items below are ordered; the human/world items need owners with accounts, budgets, or authority — **if you can unblock one, that is the highest-leverage contribution you can make.**
+PTF's destination is peer-reviewed protected-use infrastructure for agentic systems. The code items below are ordered; the human/world items need owners with accounts, budgets, or authority — **if you can unblock one, that is the highest-leverage contribution you can make.**
 
 - [x] **M1 — Authority kernel.** Default-deny engine, attenuation, exact-term approvals, receipts, audit. (Done, tested.)
 - [x] **M2 — Personal vault.** Encrypted durable state, purpose/agent scoping, evaluate-first reads, receipt-only secret use. (Done, tested.)
-- [x] **M3 — Agent loop.** General propose→present/redeem→receipt contract over MCP, filtered capabilities, request-only revocation, durable proposals. (Done, tested.)
+- [x] **M3 — Agent loop.** Propose→present/redeem→receipt for disclosure and payment over MCP, filtered capabilities, request-only revocation, durable proposals. (Done, tested.)
 - [x] **M4 — Operability.** Backup/restore commands, rotation, health signals, container image. (Done, tested.)
 - [ ] **M5 — Normative spec.** An implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY) a second party could build against. _Needs spec authors + reviewers._
 - [ ] **M6 — Conformance suite.** Frozen vectors (digests, chains, disclosure intersections) and fixtures so independent implementations prove compatibility. _Needs a second implementation to validate against._
-- [ ] **M7 — Live rail reference.** One complete staging provider (payment first): idempotency, settlement verification, failure/retry drills. _Needs PSP sandbox accounts and funding._
+- [ ] **M7 — Domain profiles beyond payment.** Travel, email, signing, and identity actions executing over the generic `ExecutionReceipt` — payment as one profile among equals, each with the same authority/consent/receipt contract. _Needs profile authors + one more executing domain to prove generality._
 - [ ] **M8 — Independent audit.** Commissioned third-party review of the trust layer (see `docs/audit/commissioning.md`). _Needs budget and a firm._
 - [ ] **M9 — HSM/KMS custody.** Replace the file keystore behind the existing `KeyProvider` seam. _Needs cloud/hardware accounts._
 - [ ] **M10 — Remote ingress + multi-tenant boundaries.** Per-caller authentication, tenant isolation, rate limiting. _Needs a deployment environment._

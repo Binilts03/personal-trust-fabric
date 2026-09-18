@@ -83,6 +83,14 @@ export interface Demand {
   readonly args: Readonly<Record<string, unknown>>;
   readonly recipient: KeyId;
   readonly termsDigest: string;
+  /**
+   * Bound against the leaf payload when present (fail-closed mismatch).
+   * Callers that execute MUST supply both so the redemption carries the
+   * exact operation (ADR-0018).
+   */
+  readonly resource?: string;
+  /** Bound against the leaf payload when present (fail-closed mismatch). */
+  readonly purpose?: string;
 }
 
 /** Fail-closed verification outcome. */
@@ -99,12 +107,37 @@ export type DenyReason =
   | "forbidden-shape";
 
 export type AuthorizeResult =
-  | { readonly ok: true; readonly remaining: number; readonly chainId: string }
+  | {
+      readonly ok: true;
+      readonly remaining: number;
+      readonly chainId: string;
+      /**
+       * The EXACT operation authorize verified (canonical echo of the
+       * demand: cmd, args, recipient, resource, purpose, termsDigest).
+       * Execute paths must deep-compare their instruction against this —
+       * never trust a bare chainId (ADR-0018: authorized_operation ===
+       * executed_operation). In-process forgery by hostile host code is
+       * out of model (the host already owns everything); the enforced
+       * boundary is agent-facing seams, which construct both sides from
+       * the same stored demand.
+       */
+      readonly operation: AuthorizedOperation;
+    }
   | {
       readonly ok: false;
       readonly reason: DenyReason;
       readonly detail?: string;
     };
+
+/** Canonical echo of the verified demand. See AuthorizeResult.operation. */
+export interface AuthorizedOperation {
+  readonly cmd: Command;
+  readonly args: Readonly<Record<string, unknown>>;
+  readonly recipient: KeyId;
+  readonly resource?: string;
+  readonly purpose?: string;
+  readonly termsDigest: string;
+}
 
 /** Resolve a key id to a raw Ed25519 public key (32 bytes). Return null when unknown. */
 export type KeyResolver = (id: KeyId) => Uint8Array | null;

@@ -255,6 +255,44 @@ describe("ticket 10 — scopes, rotation, replicas, redaction", () => {
     assert.equal(newStays.status, 200);
   });
 
+  it("malformed rewrite keeps serving with last-good keys (no process exit)", async () => {
+    // Baseline: pep-b serves before the bad rewrite.
+    const baseline = await post(port, "/access/v1/evaluation", KEY_B, body());
+    assert.equal(baseline.status, 200);
+    // Malformed rewrite: invalid JSON must not kill the process — the next
+    // request still serves with last-good keys (src/pdp-server.ts: keysLive
+    // retains on loadKeysThrowing failure instead of process.exit(2)).
+    writeFileSync(keysFile, "{not json", "utf8");
+    const kept = await post(port, "/access/v1/evaluation", KEY_B, body());
+    assert.equal(kept.status, 200);
+    const keptAgain = await post(port, "/access/v1/evaluation", KEY_B, body());
+    assert.equal(keptAgain.status, 200);
+    assert.equal(child?.killed, false);
+    assert.equal(child?.exitCode, null);
+    // Recovery: a good rewrite resumes rotation without a restart.
+    writeKeys([
+      { id: "pep-b", key: KEY_B, principal: PRINCIPAL, actor: AGENT },
+    ]);
+    const recovered = await post(port, "/access/v1/evaluation", KEY_B, body());
+    assert.equal(recovered.status, 200);
+    // The broken file still fails the NEXT deploy (startup stays fail-closed).
+    const dirBad = mkdtempSync(join(tmpdir(), "ptf-front-malformed-"));
+    seed(dirBad);
+    const keysBad = join(dirBad, "keys.json");
+    writeFileSync(keysBad, "{not json", "utf8");
+    const bad = spawn(process.execPath, [SERVER], {
+      env: {
+        ...process.env,
+        PTF_PDP_STORE_DIR: dirBad,
+        PTF_PDP_KEYS_FILE: keysBad,
+        PTF_PDP_PORT: "0",
+        PTF_PDP_ALLOW_PLAINTEXT: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(await waitForExit(bad), 2);
+  });
+
   it("decision logs carry the replica id and never bodies, keys, or secrets", async () => {
     const r = await post(
       port,

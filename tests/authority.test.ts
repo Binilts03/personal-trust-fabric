@@ -6,6 +6,7 @@ import {
   claimsSubset,
   digestForOperation,
   generateEd25519Keypair,
+  isPolicyNarrower,
   leafCidHex,
   paymentBounds,
   signBytes,
@@ -521,5 +522,60 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010,
     // Bounded /pay grants still register and allow.
     auth.addGrant(payGrant("bounded-pay"));
     assert.equal(auth.evaluate(op(), INGRESS).allow, true);
+  });
+});
+
+describe("attenuation strictness — exclusive parent vs inclusive child (policy.ts)", () => {
+  it("parent x < 10 + child x <= 10 is NOT narrowing (child admits 10)", () => {
+    assert.equal(
+      isPolicyNarrower([["<", ".amount", 10]], [["<=", ".amount", 10]]),
+      false
+    );
+  });
+
+  it("parent x < 10 + child x <= 9 IS narrowing (strictly smaller)", () => {
+    assert.equal(
+      isPolicyNarrower([["<", ".amount", 10]], [["<=", ".amount", 9]]),
+      true
+    );
+  });
+
+  it("existing combos keep w<=v semantics", () => {
+    // <=/<= equal tightens (identical) and smaller tightens.
+    assert.equal(
+      isPolicyNarrower([["<=", ".amount", 10]], [["<=", ".amount", 10]]),
+      true
+    );
+    assert.equal(
+      isPolicyNarrower([["<=", ".amount", 10]], [["<=", ".amount", 9]]),
+      true
+    );
+    // </< equal and smaller tighten.
+    assert.equal(
+      isPolicyNarrower([["<", ".amount", 10]], [["<", ".amount", 10]]),
+      true
+    );
+    assert.equal(
+      isPolicyNarrower([["<", ".amount", 10]], [["<", ".amount", 9]]),
+      true
+    );
+    // <=/< equal tightens (child excludes the boundary the parent allows).
+    assert.equal(
+      isPolicyNarrower([["<=", ".amount", 10]], [["<", ".amount", 10]]),
+      true
+    );
+    // Widening still rejected in every combo.
+    assert.equal(
+      isPolicyNarrower([["<=", ".amount", 10]], [["<=", ".amount", 11]]),
+      false
+    );
+    assert.equal(
+      isPolicyNarrower([["<", ".amount", 10]], [["<", ".amount", 11]]),
+      false
+    );
+    assert.equal(
+      isPolicyNarrower([["<", ".amount", 10]], [["<=", ".amount", 11]]),
+      false
+    );
   });
 });

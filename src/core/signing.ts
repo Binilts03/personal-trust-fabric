@@ -1,5 +1,7 @@
 import { canonicalize, sha256Hex } from "./canonical.js";
 import { randomHex } from "./crypto.js";
+import { requireBoundOperation } from "./execute.js";
+import type { AuthorizedOperation } from "./types.js";
 
 /**
  * Signing-key Protected Execution with C parity (v04/04).
@@ -15,6 +17,8 @@ export interface SignInstruction {
   readonly bytesHex: string;
   readonly purpose: string;
   readonly resource: string;
+  /** Must equal the authorized terms digest (ADR-0018). */
+  readonly termsDigest: string;
 }
 
 export interface SigningExecutor {
@@ -32,7 +36,12 @@ export interface SignReceipt {
   readonly resource: string;
   readonly signature: string;
   readonly at: number;
+  /** Terms digest the signing ran under (authorized === executed). */
+  readonly termsDigest: string;
 }
+// NOTE: SignReceipt intentionally does not extend ExecutionReceipt — a
+// signature has no transaction counterpart, and forcing one would invent
+// terms. Both carry receiptId/capabilityId/recipient/resource/purpose/at.
 
 function bytesOf(instruction: SignInstruction): Uint8Array {
   if (
@@ -45,29 +54,59 @@ function bytesOf(instruction: SignInstruction): Uint8Array {
   return new Uint8Array(Buffer.from(instruction.bytesHex, "hex"));
 }
 
-/** Runs only with proof of redemption bound to this instruction. Freshness: redeem immediately before signing. */
+/** Runs only with proof of redemption carrying the EXACT authorized operation. Freshness: redeem immediately before signing. */
 export async function signAndReceipt(
   executor: SigningExecutor,
   instruction: SignInstruction,
-  redemption: { readonly ok: true; readonly chainId: string },
+  redemption: {
+    readonly ok: true;
+    readonly chainId: string;
+    readonly operation: AuthorizedOperation;
+  },
   at: number
 ): Promise<SignReceipt> {
   if (redemption.ok !== true)
     throw new Error("signing: redemption required before execution");
+  const op = requireBoundOperation(redemption);
   if (redemption.chainId !== instruction.capabilityId) {
     throw new Error("signing: redemption is not bound to this instruction");
   }
+  if (op.cmd !== "/sign" && !op.cmd.startsWith("/sign/")) {
+    throw new Error("signing: authorized cmd is not a signing operation");
+  }
+  if (op.termsDigest !== instruction.termsDigest) {
+    throw new Error("signing: terms digest mismatch — new approval required");
+  }
+  if (op.recipient !== instruction.recipient) {
+    throw new Error("signing: recipient differs from authorized terms");
+  }
+  if (op.resource === undefined || op.resource !== instruction.resource) {
+    throw new Error("signing: resource differs from authorized terms");
+  }
+  if (op.purpose === undefined || op.purpose !== instruction.purpose) {
+    throw new Error("signing: purpose differs from authorized terms");
+  }
   const bytes = bytesOf(instruction);
+  const bytesDigest = sha256Hex(
+    canonicalize(instruction.bytesHex.toLowerCase())
+  );
+  const bound = (op.args as Record<string, unknown>)["bytesDigest"];
+  if (typeof bound !== "string" || bound !== bytesDigest) {
+    throw new Error(
+      "signing: bytes differ from authorized terms — authorize must bind bytesDigest"
+    );
+  }
   const settled = await executor.sign(instruction);
   void bytes;
   return {
     receiptId: `sig-rcpt-${randomHex(8)}`,
     capabilityId: instruction.capabilityId,
     recipient: instruction.recipient,
-    bytesDigest: sha256Hex(canonicalize(instruction.bytesHex.toLowerCase())),
+    bytesDigest,
     purpose: instruction.purpose,
     resource: instruction.resource,
     signature: settled.signature,
     at,
+    termsDigest: instruction.termsDigest,
   };
 }

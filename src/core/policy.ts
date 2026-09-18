@@ -168,7 +168,9 @@ export function satisfiesPolicy(
 /**
  * Conservative narrowing check: child policy must preserve every parent
  * predicate (exact match) except numeric `<=`/`<` bounds on the same
- * selector, which may tighten (smaller value). Anything else must be
+ * selector, which may tighten (smaller value). Parent `< v` + child
+ * `<= w` needs `w < v` (strict: `<= v` admits `v` which `< v` forbids);
+ * all other `<`/`<=` combos keep `w <= v`. Anything else must be
  * byte-identical. Safe direction: may reject exotic-but-valid narrowings.
  */
 export function isPolicyNarrower(
@@ -179,15 +181,25 @@ export function isPolicyNarrower(
   for (const p of parent) {
     if (childSet.has(canonicalize(p))) continue;
     if ((p[0] === "<=" || p[0] === "<") && typeof p[2] === "number") {
-      const tightened = child.some(
-        (c) =>
-          (c[0] === "<=" || c[0] === "<") &&
-          (c as readonly [string, string, unknown])[1] ===
-            (p as readonly [string, string, unknown])[1] &&
-          typeof (c as readonly [string, string, unknown])[2] === "number" &&
-          ((c as unknown as readonly [string, string, number])[2] as number) <=
-            (p[2] as number)
-      );
+      const tightened = child.some((c) => {
+        if (!(c[0] === "<=" || c[0] === "<")) return false;
+        if (
+          (c as readonly [string, string, unknown])[1] !==
+          (p as readonly [string, string, unknown])[1]
+        )
+          return false;
+        if (typeof (c as readonly [string, string, unknown])[2] !== "number")
+          return false;
+        const w = (
+          c as unknown as readonly [string, string, number]
+        )[2] as number;
+        const v = p[2] as number;
+        // Exclusive-parent + inclusive-child admits the boundary on the
+        // child side only (src/core/policy.ts: strict `<` vs `<=` check),
+        // so equal values widen and must fail.
+        if (p[0] === "<" && c[0] === "<=") return w < v;
+        return w <= v;
+      });
       if (tightened) continue;
     }
     return false;

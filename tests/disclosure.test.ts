@@ -4,6 +4,7 @@ import {
   Disclose,
   canonicalize,
   generateEd25519Keypair,
+  requestToDisclosureDemand,
 } from "../src/index.js";
 
 const ISSUER = "did:test:ca-authority";
@@ -184,5 +185,96 @@ describe("selective disclosure with holder binding (ptf-v01/03)", () => {
     const replay = Disclose.verify(pres, base);
     assert.equal(replay.ok, false);
     if (!replay.ok) assert.equal(replay.reason, "replay");
+  });
+
+  it("enforces expectedNonce challenge binding fail-closed", () => {
+    const { holder } = keys();
+    const pres = Disclose.present(
+      credential(),
+      { verifier: HOSPITAL, nonce: "n-challenge-7", requested: ["ca_status"] },
+      { recipient: HOSPITAL, allowed: ["ca_status"] },
+      { id: HOLDER, privateKey: holder.privateKey },
+      NOW
+    );
+    // Matching challenge passes.
+    assert.equal(
+      Disclose.verify(pres, {
+        holderKey: holder.publicKeyRaw,
+        expectedAud: HOSPITAL,
+        expectedNonce: "n-challenge-7",
+        nowSec: NOW,
+      }).ok,
+      true
+    );
+    // Mismatched challenge fails closed with the nonce-mismatch reason.
+    const wrong = Disclose.verify(pres, {
+      holderKey: holder.publicKeyRaw,
+      expectedAud: HOSPITAL,
+      expectedNonce: "n-other-challenge",
+      nowSec: NOW,
+    });
+    assert.equal(wrong.ok, false);
+    if (!wrong.ok) assert.equal(wrong.reason, "replay");
+    // Absent challenge keeps backwards compatibility (no binding enforced).
+    assert.equal(
+      Disclose.verify(pres, {
+        holderKey: holder.publicKeyRaw,
+        expectedAud: HOSPITAL,
+        nowSec: NOW,
+      }).ok,
+      true
+    );
+  });
+
+  it("threads the OID4VP request nonce as the verify challenge", () => {
+    const { holder } = keys();
+    const client = "redirect_uri:https://verifier.example.com/cb";
+    const demand = requestToDisclosureDemand(
+      {
+        response_type: "vp_token",
+        client_id: client,
+        response_mode: "direct_post",
+        nonce: "n-oid4vp-challenge-0123456789",
+        dcql_query: {
+          credentials: [
+            {
+              id: "c",
+              format: "dc+sd-jwt",
+              claims: [{ path: ["ca_status"] }],
+            },
+          ],
+        },
+      },
+      { allowed: ["redirect_uri"] as const }
+    );
+    const pres = Disclose.present(
+      credential(),
+      {
+        verifier: demand.verifier,
+        nonce: demand.nonce,
+        requested: demand.requested,
+      },
+      { recipient: demand.verifier, allowed: ["ca_status"] },
+      { id: HOLDER, privateKey: holder.privateKey },
+      NOW
+    );
+    // Verifier-owned challenge: correct nonce verifies, wrong nonce fails.
+    assert.equal(
+      Disclose.verify(pres, {
+        holderKey: holder.publicKeyRaw,
+        expectedAud: client,
+        expectedNonce: demand.nonce,
+        nowSec: NOW,
+      }).ok,
+      true
+    );
+    const swapped = Disclose.verify(pres, {
+      holderKey: holder.publicKeyRaw,
+      expectedAud: client,
+      expectedNonce: "n-attacker-challenge-0123456789",
+      nowSec: NOW,
+    });
+    assert.equal(swapped.ok, false);
+    if (!swapped.ok) assert.equal(swapped.reason, "replay");
   });
 });

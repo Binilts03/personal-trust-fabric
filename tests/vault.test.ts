@@ -93,6 +93,7 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       purpose: "support",
       requested: ["email"],
       verifier: VERIFIER,
+      resource: { type: "vault", id: "personal-state" },
       nonce: "n-1",
       nowSec: NOW,
       authority: auth,
@@ -132,6 +133,7 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       purpose: "support",
       requested: ["phone"] as readonly string[],
       verifier: VERIFIER,
+      resource: { type: "vault", id: "personal-state" },
       nonce: "n-x",
       nowSec: NOW,
       authority: auth,
@@ -189,6 +191,7 @@ describe("durable Personal State vault (P0 slice 1)", () => {
           purpose: "pay",
           requested: ["pan"],
           verifier: VERIFIER,
+          resource: { type: "vault", id: "personal-state" },
           nonce: "n-secret",
           nowSec: NOW,
           authority: auth,
@@ -320,6 +323,7 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       purpose: "support",
       requested: ["email"],
       verifier: VERIFIER,
+      resource: { type: "vault", id: "personal-state" },
       nonce: "n-audit",
       nowSec: NOW,
       authority: auth,
@@ -451,5 +455,192 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       loadVault(dir, { keys: { [VAULT_DEK_ALIAS]: dekB } }).loadedRevision(),
       1
     );
+  });
+
+  it("one-time approvals cover exactly one disclosure and one secret use", async () => {
+    const holder = generateEd25519Keypair();
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.createApproval({
+      id: "ap-disc",
+      principal: P,
+      actor: A,
+      action: { name: "/disclose" },
+      resource: { type: "vault", id: "personal-state" },
+      context: { claims: ["email"], verifier: VERIFIER },
+      purpose: "support",
+      ttlSec: 600,
+      maxUses: 1,
+    });
+    auth.createApproval({
+      id: "ap-use",
+      principal: P,
+      actor: A,
+      action: { name: "/use" },
+      resource: { type: "vault-record", id: "r-pan" },
+      context: { claim: "pan" },
+      purpose: "pay",
+      ttlSec: 600,
+      maxUses: 1,
+    });
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r-email",
+      owner: P,
+      type: "email",
+      value: "owner@example.com",
+      sensitivity: "general",
+      source: "user",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    vault.putRecord({
+      id: "r-pan",
+      owner: P,
+      type: "pan",
+      value: SECRET,
+      sensitivity: "secret",
+      source: "issuer",
+      allowedPurposes: ["pay"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    const readReq = {
+      ingress: ingressFor(A),
+      purpose: "support",
+      requested: ["email"] as readonly string[],
+      verifier: VERIFIER,
+      nonce: "n-once",
+      nowSec: NOW,
+      authority: auth,
+      resource: { type: "vault", id: "personal-state" },
+      holder: { id: P, privateKey: holder.privateKey },
+    };
+    const pres = readForPurpose(vault, readReq);
+    assert.deepEqual(
+      pres.disclosures.map((d) => d.name),
+      ["email"]
+    );
+    // Second disclosure under the spent approval fails closed.
+    assert.throws(
+      () => readForPurpose(vault, { ...readReq, nonce: "n-once-2" }),
+      /uses-exhausted|authority denied/
+    );
+    const out = await useCredential(vault, {
+      ingress: ingressFor(A),
+      recordId: "r-pan",
+      purpose: "pay",
+      authority: auth,
+      nowSec: NOW,
+      use: async () => ({ receipt: "host-receipt-1" }),
+    });
+    assert.equal(out.receipt, "host-receipt-1");
+    await assert.rejects(
+      () =>
+        useCredential(vault, {
+          ingress: ingressFor(A),
+          recordId: "r-pan",
+          purpose: "pay",
+          authority: auth,
+          nowSec: NOW,
+          use: async () => ({ receipt: "host-receipt-2" }),
+        }),
+      /uses-exhausted|authority denied/
+    );
+  });
+
+  it("resource-constrained grants bind the vault read", () => {
+    const holder = generateEd25519Keypair();
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant({
+      id: "g-vault-elsewhere",
+      principal: P,
+      actor: { kind: "exact", id: A },
+      action: { name: "/disclose" },
+      resource: { type: "vault", id: "other-state" },
+      bounds: claimsSubset(["email"]),
+      exp: NOW + 3600,
+    });
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r-email",
+      owner: P,
+      type: "email",
+      value: "owner@example.com",
+      sensitivity: "general",
+      source: "user",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    const req = {
+      ingress: ingressFor(A),
+      purpose: "support",
+      requested: ["email"] as readonly string[],
+      verifier: VERIFIER,
+      nonce: "n-res",
+      nowSec: NOW,
+      authority: auth,
+      resource: { type: "vault", id: "personal-state" },
+      holder: { id: P, privateKey: holder.privateKey },
+    };
+    // Proposed resource (vault:personal-state) is not what the grant covers.
+    assert.throws(() => readForPurpose(vault, req), /authority denied/);
+  });
+
+  it("same-type ambiguity fails closed instead of guessing", () => {
+    const holder = generateEd25519Keypair();
+    const auth = new Authority({ nowSec: () => NOW });
+    discloseGrant(auth);
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r-email-old",
+      owner: P,
+      type: "email",
+      value: "old@example.com",
+      sensitivity: "general",
+      source: "user",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    vault.putRecord({
+      id: "r-email-new",
+      owner: P,
+      type: "email",
+      value: "new@example.com",
+      sensitivity: "general",
+      source: "user",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    const req = {
+      ingress: ingressFor(A),
+      purpose: "support",
+      requested: ["email"],
+      verifier: VERIFIER,
+      nonce: "n-ambiguous",
+      nowSec: NOW,
+      authority: auth,
+      resource: { type: "vault", id: "personal-state" },
+      holder: { id: P, privateKey: holder.privateKey },
+    };
+    assert.throws(() => readForPurpose(vault, req), /ambiguous claim email/);
+    // Retire the stale record by expiring it: one live record per type.
+    vault.putRecord({
+      id: "r-email-old",
+      owner: P,
+      type: "email",
+      value: "old@example.com",
+      sensitivity: "general",
+      source: "user",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: NOW - 1,
+    });
+    const pres = readForPurpose(vault, { ...req, nonce: "n-retired" });
+    assert.equal(pres.disclosures.length, 1);
+    assert.equal(pres.disclosures[0]?.value, "new@example.com");
   });
 });
