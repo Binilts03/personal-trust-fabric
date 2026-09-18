@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { canonicalize, sha256Hex } from "./canonical.js";
 import { randomHex } from "./crypto.js";
+import type { AuthorizedOperation } from "./types.js";
 
 /**
  * Protected execution with receipts and secretness audit (ticket 02).
@@ -18,6 +19,8 @@ export interface PaymentInstruction {
   readonly currency: string;
   readonly resource: string;
   readonly purpose: string;
+  /** Must equal the authorized terms digest (ADR-0018). */
+  readonly termsDigest: string;
 }
 
 export interface PaymentExecutor {
@@ -37,36 +40,111 @@ export class FakePaymentExecutor implements PaymentExecutor {
   }
 }
 
-export interface Receipt {
+export interface Receipt extends ExecutionReceipt {
+  readonly amount: number;
+  readonly currency: string;
+}
+
+/**
+ * Domain-neutral execution receipt (ADR-0018): every protected action —
+ * payment, travel, email, signing — returns this shape, with payment
+ * amounts living only on the `Receipt` extension in the payment profile.
+ */
+export interface ExecutionReceipt {
   readonly receiptId: string;
   readonly capabilityId: string;
   readonly recipient: string;
-  readonly amount: number;
-  readonly currency: string;
   readonly resource: string;
   readonly purpose: string;
   readonly transaction: string;
   readonly at: number;
+  /** Terms digest the execution ran under (authorized === executed). */
+  readonly termsDigest: string;
+}
+
+function fieldsEqual(a: unknown, b: unknown): boolean {
+  try {
+    return canonicalize(a) === canonicalize(b);
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Runs only with proof of redemption: pass the successful `authorize` result.
- * The result is bound to the redeemed leaf (`chainId` must equal
- * `instruction.capabilityId`); a bare `{ok:true}` or a redemption for a
- * different capability is rejected. (It cannot prove freshness — redeem
+ * Extract the exact authorized operation carried by a redemption, or throw.
+ * Shared by signing and the provider seam so every execute path enforces
+ * authorized_operation === executed_operation (ADR-0018).
+ */
+export function requireBoundOperation(
+  redemption: unknown
+): AuthorizedOperation {
+  const op = (redemption as { operation?: unknown } | null | undefined)
+    ?.operation;
+  if (
+    typeof op !== "object" ||
+    op === null ||
+    Array.isArray(op) ||
+    typeof (op as Record<string, unknown>)["cmd"] !== "string" ||
+    typeof (op as Record<string, unknown>)["recipient"] !== "string" ||
+    typeof (op as Record<string, unknown>)["termsDigest"] !== "string" ||
+    typeof (op as Record<string, unknown>)["args"] !== "object" ||
+    (op as Record<string, unknown>)["args"] === null ||
+    Array.isArray((op as Record<string, unknown>)["args"])
+  ) {
+    throw new Error(
+      "unbound redemption — authorize must bind the exact operation (ADR-0018)"
+    );
+  }
+  return op as AuthorizedOperation;
+}
+
+/**
+ * Runs only with proof of redemption carrying the EXACT authorized
+ * operation: pass the successful `authorize` result. The instruction must
+ * deep-equal the authorized terms (recipient, amount, currency, resource,
+ * purpose, terms digest) — a bare `{ok:true}` or a redemption for
+ * different terms is rejected. (It cannot prove freshness — redeem
  * immediately before executing. Callers persist consumption BEFORE calling
  * this, so a crash/failing rail burns a use instead of double-spending.)
  */
 export async function executeAndReceipt(
   executor: PaymentExecutor,
   instruction: PaymentInstruction,
-  redemption: { readonly ok: true; readonly chainId: string },
+  redemption: {
+    readonly ok: true;
+    readonly chainId: string;
+    readonly operation: AuthorizedOperation;
+  },
   at: number
 ): Promise<Receipt> {
   if (redemption.ok !== true)
     throw new Error("execute: redemption required before execution");
+  const op = requireBoundOperation(redemption);
   if (redemption.chainId !== instruction.capabilityId) {
     throw new Error("execute: redemption is not bound to this instruction");
+  }
+  if (op.cmd !== "/pay" && !op.cmd.startsWith("/pay/")) {
+    throw new Error("execute: authorized cmd is not a payment");
+  }
+  if (op.termsDigest !== instruction.termsDigest) {
+    throw new Error("execute: terms digest mismatch — new approval required");
+  }
+  if (op.recipient !== instruction.recipient) {
+    throw new Error("execute: recipient differs from authorized terms");
+  }
+  if (op.resource === undefined || op.resource !== instruction.resource) {
+    throw new Error("execute: resource differs from authorized terms");
+  }
+  if (op.purpose === undefined || op.purpose !== instruction.purpose) {
+    throw new Error("execute: purpose differs from authorized terms");
+  }
+  if (
+    !fieldsEqual(op.args, {
+      amount: instruction.amount,
+      currency: instruction.currency,
+    })
+  ) {
+    throw new Error("execute: amount/currency differ from authorized terms");
   }
   const settled = await executor.executePayment(instruction);
   return {
@@ -79,6 +157,7 @@ export async function executeAndReceipt(
     purpose: instruction.purpose,
     transaction: settled.transaction,
     at,
+    termsDigest: instruction.termsDigest,
   };
 }
 

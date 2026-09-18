@@ -816,6 +816,8 @@ export async function run(
         cmd: "/pay",
         args: { amount, currency },
         recipient,
+        resource,
+        purpose,
         termsDigest: digest,
       },
       {
@@ -839,6 +841,7 @@ export async function run(
         currency,
         resource,
         purpose,
+        termsDigest: digest,
       },
       redeemed,
       now()
@@ -1070,11 +1073,14 @@ export async function run(
         nonce,
         nowSec: now(),
         authority: ctx.auth,
+        resource: { type: "vault", id: "personal-state" },
         holder: { id: holder, privateKey: toPrivateKey(holderSeed) },
         audit: ctx.audit,
       });
       // NAMES only — values never print (secret records never even reach here:
-      // readForPurpose drops `secret` before presenting).
+      // readForPurpose drops `secret` before presenting). Persist the
+      // consumed use BEFORE delivering (burn-before-deliver, ticket 05).
+      persistState(ctx);
       io.print(JSON.stringify(pres.disclosures.map((d) => d.name)));
       return 0;
     } catch (err) {
@@ -1113,12 +1119,19 @@ export async function run(
     // the next alias first, re-seal vault data second, promote third. Every
     // crash prefix leaves a keystore DEK matching the envelope kid on disk
     // (current, next, or both), and every load resolves by kid — so no brick
-    // state exists. A crash before promotion is recovered by re-running this
-    // command (the staged next alias is reused, never duplicated).
+    // state exists. A rerun after a crash reuses the staged next alias
+    // instead of minting another DEK (which could orphan a re-sealed vault).
     const kid = readVaultKid(dir);
     const cur = resolveVaultDek(ctx.keys, kid);
     const vault = loadVault(dir, { nowSec: now, dek: cur });
-    const newDek = createVaultDek();
+    const staged = ctx.keys[VAULT_DEK_NEXT_ALIAS];
+    const newDek =
+      staged instanceof Uint8Array && staged.length === 32
+        ? staged
+        : createVaultDek();
+    if (newDek === staged) {
+      io.print("reusing staged DEK from an interrupted rotation");
+    }
     persistKeys(
       dir,
       env,

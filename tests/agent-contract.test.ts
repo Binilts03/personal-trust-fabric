@@ -391,7 +391,13 @@ describe("general agent contract (P0 slice 2)", () => {
     });
     auth.revoke("g-doomed");
     saveAuthority(dir, auth);
-    const server = createPtfServer({ dir, env: {}, principal: P, actor: A });
+    const server = createPtfServer({
+      dir,
+      env: {},
+      principal: P,
+      actor: A,
+      now: () => NOW,
+    });
     const caps = (await callTool(server, "ptf_list_capabilities", {})) as {
       capabilities?: { id: string }[];
     };

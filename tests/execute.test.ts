@@ -95,12 +95,15 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       nowSec: () => NOW,
     });
     const bound = { ...operation, principal: PRINCIPAL, actor: AGENT };
-    const cap = issueCap(caps, principal.privateKey, digestForOperation(bound));
+    const digest = digestForOperation(bound);
+    const cap = issueCap(caps, principal.privateKey, digest);
     const demand = {
       cmd: "/pay" as const,
       args: { amount: 1790, currency: "INR" },
       recipient: MERCHANT,
-      termsDigest: digestForOperation(bound),
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
+      termsDigest: digest,
     };
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
     const proof = {
@@ -121,6 +124,7 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
         currency: "INR",
         resource: "invoice:inv_8472",
         purpose: "pay invoice",
+        termsDigest: digest,
       },
       redeemed,
       NOW
@@ -249,6 +253,7 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       currency: "INR",
       resource: "r",
       purpose: "p",
+      termsDigest: "ab".repeat(32),
     };
     await assert.rejects(() =>
       executeAndReceipt(executor, instruction, { ok: false } as never, NOW)
@@ -257,14 +262,40 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
   });
 
   it("instructions and receipts carry a fixed field set with no room for secrets", async () => {
+    const { principal, merchant, keys } = parties();
+    const caps = new Capabilities({
+      resolveKey: (id) => keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const digest = termsDigestOf({ invoice: "inv_9", amount: 10 });
+    const cap = issueCap(caps, principal.privateKey, digest);
+    const demand = {
+      cmd: "/pay" as const,
+      args: { amount: 10, currency: "INR" },
+      recipient: MERCHANT,
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
+      termsDigest: digest,
+    };
+    const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
+    const redeemed = caps.authorize([cap], demand, {
+      consume: true,
+      proof: {
+        key: merchant.publicKeyRaw,
+        sig: signBytes(merchant.privateKey, cidBytes),
+      },
+    });
+    assert.equal(redeemed.ok, true);
+    if (!redeemed.ok) throw new Error("redeem must succeed in this fixture");
     const executor = new FakePaymentExecutor();
     const instruction = {
-      capabilityId: "cid-x",
+      capabilityId: leafCidHex(cap),
       recipient: MERCHANT,
       amount: 10,
       currency: "INR",
-      resource: "r",
-      purpose: "p",
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
+      termsDigest: digest,
     };
     assert.deepEqual(Object.keys(instruction).sort(), [
       "amount",
@@ -273,11 +304,12 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       "purpose",
       "recipient",
       "resource",
+      "termsDigest",
     ]);
     const receipt = await executeAndReceipt(
       executor,
       instruction,
-      { ok: true, chainId: "cid-x" },
+      redeemed,
       NOW
     );
     assert.deepEqual(Object.keys(receipt).sort(), [
@@ -289,7 +321,86 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       "receiptId",
       "recipient",
       "resource",
+      "termsDigest",
       "transaction",
     ]);
+  });
+
+  it("rejects any mutation between authorization and execution", async () => {
+    const { principal, merchant, keys } = parties();
+    const caps = new Capabilities({
+      resolveKey: (id) => keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const digest = termsDigestOf({ invoice: "inv_9", amount: 10 });
+    const cap = issueCap(caps, principal.privateKey, digest);
+    const base = {
+      capabilityId: leafCidHex(cap),
+      recipient: MERCHANT,
+      amount: 10,
+      currency: "INR",
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
+      termsDigest: digest,
+    };
+    const authorize = () => {
+      const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
+      const r = caps.authorize(
+        [cap],
+        {
+          cmd: "/pay" as const,
+          args: { amount: 10, currency: "INR" },
+          recipient: MERCHANT,
+          resource: "invoice:inv_8472",
+          purpose: "pay invoice",
+          termsDigest: digest,
+        },
+        {
+          consume: false,
+          proof: {
+            key: merchant.publicKeyRaw,
+            sig: signBytes(merchant.privateKey, cidBytes),
+          },
+        }
+      );
+      assert.equal(r.ok, true);
+      if (!r.ok) throw new Error("dry-run must succeed in this fixture");
+      return r;
+    };
+    const executor = new FakePaymentExecutor();
+    // Bare chainId (the old forgery shape) carries no bound operation.
+    await assert.rejects(
+      () =>
+        executeAndReceipt(
+          executor,
+          base,
+          { ok: true, chainId: base.capabilityId } as never,
+          NOW
+        ),
+      /unbound redemption/
+    );
+    // Each mutated field fails with its own reason; nothing executes.
+    const cases: [string, Record<string, unknown>, RegExp][] = [
+      ["recipient", { recipient: ATTACKER }, /recipient differs/],
+      ["amount", { amount: 11 }, /amount\/currency differ/],
+      ["currency", { currency: "USD" }, /amount\/currency differ/],
+      ["resource", { resource: "invoice:evil" }, /resource differs/],
+      ["purpose", { purpose: "evil" }, /purpose differs/],
+      [
+        "termsDigest",
+        { termsDigest: "00".repeat(32) },
+        /terms digest mismatch/,
+      ],
+      ["capabilityId", { capabilityId: "cid-other" }, /not bound/],
+    ];
+    for (const [label, patch, re] of cases) {
+      await assert.rejects(
+        () =>
+          executeAndReceipt(executor, { ...base, ...patch }, authorize(), NOW),
+        re,
+        label
+      );
+    }
+    assert.equal(executor.calls.length, 0);
   });
 });

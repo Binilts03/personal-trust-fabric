@@ -161,17 +161,29 @@ function resolveKeyWithLocalFallback(
 /**
  * Grant visibility for one fixed ingress: the principal must match and the
  * actor selector must cover the agent. The explicit `{ kind: "any" }`
- * wildcard is audit-visible by design, so it stays listed. Revoked grants
- * are excluded — listing them would advertise dead authority.
+ * wildcard is audit-visible by design, so it stays listed. Revoked,
+ * not-yet-valid, expired, and uses-exhausted grants are excluded — listing
+ * them would advertise dead authority as live.
  */
 function grantVisible(
-  g: { readonly principal: string; readonly actor: ActorSelector },
+  g: {
+    readonly principal: string;
+    readonly actor: ActorSelector;
+    readonly nbf?: number;
+    readonly exp?: number;
+    readonly maxUses?: number;
+  },
   id: string,
   ingress: VerifiedIdentity,
-  revoked: (revokedId: string) => boolean
+  revoked: (revokedId: string) => boolean,
+  nowSec: number,
+  usedCount: number
 ): boolean {
   if (g.principal !== ingress.principal) return false;
   if (revoked(id)) return false;
+  if (g.nbf !== undefined && nowSec < g.nbf) return false;
+  if (g.exp !== undefined && nowSec > g.exp) return false;
+  if (g.maxUses !== undefined && usedCount >= g.maxUses) return false;
   switch (g.actor.kind) {
     case "exact":
       return g.actor.id === ingress.id;
@@ -670,6 +682,8 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           cmd: demand.action.name,
           args: { amount, currency },
           recipient,
+          resource,
+          purpose,
           termsDigest: args.termsDigest,
         },
         {
@@ -707,6 +721,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           currency,
           resource,
           purpose,
+          termsDigest: args.termsDigest,
         },
         redeemed,
         now()
@@ -831,7 +846,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       if (proposal.demand.action.name !== "/disclose") {
         fail("present supports /disclose proposals only; pay via ptf_redeem");
       }
-      const { auth, keys } = load();
+      const { auth, keys, audit } = load();
       const demand = { ...proposal.demand, termsDigest: args.termsDigest };
       // Defense in depth: proposals are bound at propose time to this fixed
       // ingress, but re-assert before touching vault or keys.
@@ -840,6 +855,14 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         demand.actor !== ingress.id
       ) {
         fail("proposal identity mismatch: propose again");
+      }
+      // Identical-operation binding (ADR-0018): re-derive the digest from
+      // the stored demand — a tampered proposal file fails closed here,
+      // and the vault below evaluates these exact terms (resource incl.).
+      const { termsDigest: _fileDigest, ...bound } = demand;
+      void _fileDigest;
+      if (digestForOperation(bound) !== args.termsDigest) {
+        fail("proposal terms changed: propose again");
       }
       const holderSeed = keys[demand.principal];
       if (holderSeed === undefined) {
@@ -880,13 +903,22 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           nonce: args.nonce,
           nowSec: now(),
           authority: auth,
+          resource: {
+            type: demand.resource.type,
+            id: demand.resource.id,
+          },
           holder: { id: demand.principal, privateKey: holderPriv },
+          audit,
         });
       } catch (err) {
         markDenied(args.termsDigest);
         throw err instanceof Error ? err : new Error(String(err));
       }
       const disclosed = pres.disclosures.map((d) => d.name);
+      // Persist the consumed use BEFORE delivering (burn-before-deliver:
+      // a crash burns a use without a second presentation — the safe
+      // direction; single-present is enforced by the executed transition).
+      saveAuthority(opts.dir, auth);
       transitionProposal(
         opts.dir,
         args.termsDigest,
@@ -1046,16 +1078,24 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_list_capabilities",
     {
       description:
-        "List grant projections visible to this fixed agent identity (read-only, no keys or capability envelopes). Grants for other principals, other agents, or revoked grants are excluded.",
+        "List grant projections visible to this fixed agent identity (read-only, no keys or capability envelopes). Only live grants are shown: other principals, other agents, revoked, not-yet-valid, expired, and uses-exhausted grants are excluded.",
       inputSchema: z.object({}),
     },
     async () => {
       const { auth } = load();
       const snap = auth.snapshot();
       const revokedIds = new Set(snap.revoked.map(([id]) => id));
+      const usedCounts = new Map(snap.used);
       const grants = snap.grants
         .filter((g) =>
-          grantVisible(g, g.id, ingress, (id) => revokedIds.has(id))
+          grantVisible(
+            g,
+            g.id,
+            ingress,
+            (id) => revokedIds.has(id),
+            now(),
+            usedCounts.get(g.id) ?? 0
+          )
         )
         .map((g) => ({
           id: g.id,

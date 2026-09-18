@@ -111,6 +111,7 @@ const pres = readForPurpose(vault, {
   nonce: `n-${NOW}`,
   nowSec: NOW,
   authority: auth,
+  resource: { type: "vault", id: "personal-state" },
   holder: { id: P, privateKey: holder.privateKey },
 });
 console.log("vault-read:", pres.disclosures.map((d) => d.name).join(","));

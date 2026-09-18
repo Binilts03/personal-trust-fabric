@@ -181,6 +181,12 @@ partial rollback`); a full-directory rollback to consistently-old
    binding) passes this check and is caught by recomputing the checkpoint
    over the restored `audit.jsonl` (same one-liner as backup) and
    comparing root/count against the recorded `anchor.json`.
+   Honest scope: `anchor.json` is a backup _consistency_ checkpoint — it
+   proves the restored files match each other (catches partial restores,
+   mixed vintages, and tamper), not that the backup itself is fresh. A
+   whole backup directory rolled back coherently still verifies; only
+   external retention defeats that (dated read-only media, an independent
+   checkpoint copy — host duty, out of scope per ADR-0006).
 4. Point the MCP/PDP processes at the restored dir; `/readyz` must go 200.
 
 The drill in `tests/operations.test.ts` performs exactly this: backup,

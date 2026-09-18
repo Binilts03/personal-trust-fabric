@@ -127,6 +127,14 @@ export const Disclose = {
       readonly maxAgeSec?: number;
       readonly nowSec: number;
       /**
+       * Verifier challenge binding (OID4VP `nonce` owner). When provided,
+       * `pres.nonce` must equal it exactly, else fail closed `replay`
+       * (reuses the nonce-mismatch reason so existing `DiscloseDenyReason`
+       * callers keep compiling; cf. `checkResponseBinding expectedNonce` in
+       * `src/adapters/oid4vp.ts` and `expectedNonce` in `verifySdProjection`).
+       */
+      readonly expectedNonce?: string;
+      /**
        * Host-managed replay cache. When provided, a repeated nonce is denied
        * and fresh nonces are recorded. The store itself lives with the host;
        * without it, replay inside the freshness window is possible.
@@ -137,6 +145,9 @@ export const Disclose = {
     if (pres.sig.length !== 64) return { ok: false, reason: "unsigned" };
     if (pres.verifier !== opts.expectedAud)
       return { ok: false, reason: "audience" };
+    if (opts.expectedNonce !== undefined && pres.nonce !== opts.expectedNonce) {
+      return { ok: false, reason: "replay" };
+    }
     const maxAge = opts.maxAgeSec ?? 300;
     if (
       opts.nowSec < pres.iat - FUTURE_SKEW_SEC ||

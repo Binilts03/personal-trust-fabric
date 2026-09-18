@@ -13,6 +13,19 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Exact-operation authorization (ADR-0018): `authorize` echoes the verified
+  demand and every execute path deep-compares its instruction against the
+  echo (bare redemptions fail closed); vault reads/uses consume authority
+  with host persistence; proposal and execution authorize the identical
+  canonical operation; generic `ExecutionReceipt` with payment `Receipt` as
+  an extension. Payment affirmed as one domain profile — no live-payment
+  platform goal.
+- Old-defect fixes: PDP hot-reload retains last-good keys, true IP-pinned
+  connects, `expectedNonce` verification, strict exclusive→inclusive
+  attenuation, same-type vault ambiguity fails closed, live-grants-only
+  capabilities, staged-DEK rekey reuse, backup consistency-checkpoint
+  wording.
+
 - Production operations (#13, #14, previously unlisted): shippable runtime
   tarball (narrowed file set), container image (non-root, read-only),
   PDP per-key scopes with hot-reload rotation and the single-replica rule,

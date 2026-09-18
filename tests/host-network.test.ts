@@ -1,10 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import {
   PRODUCTION_OID4VP_PREFIXES,
   assertKeyFetchUrl,
   checkCardKeyPolicy,
   fetchCardKeyBytes,
+  fetchViaPinnedIp,
   fetchWithPinning,
   isBlockedIp,
   parseClientIdProduction,
@@ -139,6 +141,109 @@ describe("host network duties — production fetch path (ticket 11)", () => {
     }
     for (const good of [PUBLIC_IP, "8.8.8.8", "2606:4700:4700::1111"]) {
       assert.equal(isBlockedIp(good), false, good);
+    }
+  });
+
+  it("passes the single validated IP to fetch (resolve-once, hostname preserved)", async () => {
+    let lookups = 0;
+    const seen: Array<{
+      readonly url: string;
+      readonly pinnedIp: string | undefined;
+    }> = [];
+    const res = await fetchWithPinning("https://shop.example.com/a2a", {
+      lookup: (host) => {
+        lookups += 1;
+        assert.equal(host, "shop.example.com");
+        return Promise.resolve(PUBLIC_IP);
+      },
+      fetchFn: (url, init) => {
+        seen.push({ url, pinnedIp: init.pinnedIp });
+        return Promise.resolve(okResponse(url));
+      },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(lookups, 1);
+    assert.equal(seen.length, 1);
+    // Hostname stays in the URL (SNI/Host bind the name); the socket dials
+    // the validated IP handed via init.pinnedIp — no re-resolution TOCTOU.
+    assert.equal(seen[0]?.url, "https://shop.example.com/a2a");
+    assert.equal(seen[0]?.pinnedIp, PUBLIC_IP);
+  });
+
+  it("re-resolves per redirect hop and pins each hop independently", async () => {
+    const lookups: string[] = [];
+    const pins: Array<string | undefined> = [];
+    const res = await fetchWithPinning("https://shop.example.com/start", {
+      maxRedirects: 2,
+      lookup: (host) => {
+        lookups.push(host);
+        return Promise.resolve(
+          host === "other.example.com" ? "8.8.8.8" : PUBLIC_IP
+        );
+      },
+      fetchFn: (url, init) => {
+        pins.push(init.pinnedIp);
+        if (url === "https://shop.example.com/start") {
+          return Promise.resolve(
+            redirectResponse(url, "https://other.example.com/next")
+          );
+        }
+        return Promise.resolve(okResponse(url));
+      },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(lookups, ["shop.example.com", "other.example.com"]);
+    assert.deepEqual(pins, [PUBLIC_IP, "8.8.8.8"]);
+  });
+
+  it("blocks private DNS before any connect (fetch never called)", async () => {
+    let called = false;
+    await assert.rejects(
+      () =>
+        fetchWithPinning("https://shop.example.com/x", {
+          lookup: () => Promise.resolve("10.0.0.5"),
+          fetchFn: (url, init) => {
+            called = true;
+            assert.equal(init.pinnedIp, "10.0.0.5");
+            return Promise.resolve(okResponse(url));
+          },
+        }),
+      /DNS resolves private/
+    );
+    assert.equal(called, false);
+  });
+
+  it("pinned transport dials the validated IP with Host preserved (SNI path)", async () => {
+    let seenHost: string | undefined;
+    let seenUrl: string | undefined;
+    const server = createServer((req, res) => {
+      seenHost = req.headers.host;
+      seenUrl = req.url;
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("pinned-ok");
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve)
+    );
+    try {
+      const addr = server.address();
+      const port =
+        typeof addr === "object" && addr !== null
+          ? (addr as { readonly port: number }).port
+          : 0;
+      assert.ok(port > 0);
+      // Fake hostname never resolves: success proves the socket dialled the
+      // validated IP (127.0.0.1) while Host/SNI kept the original name
+      // (src/adapters/urls.ts: fetchViaPinnedIp preserves servername + Host).
+      const fake = new URL(`http://pinned.test:${port}/hello?x=1`);
+      const res = await fetchViaPinnedIp(fake, "127.0.0.1");
+      assert.equal(res.status, 200);
+      assert.equal(await res.text(), "pinned-ok");
+      assert.equal(res.url, fake.toString());
+      assert.equal(seenHost, `pinned.test:${port}`);
+      assert.equal(seenUrl, "/hello?x=1");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });

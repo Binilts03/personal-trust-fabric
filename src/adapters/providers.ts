@@ -1,11 +1,14 @@
 import { canonicalize } from "../core/canonical.js";
 import { randomHex } from "../core/crypto.js";
+import { requireBoundOperation } from "../core/execute.js";
 import { isNonEmptyString } from "./guards.js";
 import type {
+  ExecutionReceipt,
   PaymentExecutor,
   PaymentInstruction,
   Receipt,
 } from "../core/execute.js";
+import type { AuthorizedOperation } from "../core/types.js";
 import type { Authority, VerifiedIdentity } from "../core/authority.js";
 import type { FileAuditLog } from "../store/files.js";
 import type { SecretInstruction, VaultStore } from "../store/vault.js";
@@ -157,39 +160,117 @@ export function makeFakeProviders(
   };
 }
 
+function fieldsEqual(a: unknown, b: unknown): boolean {
+  try {
+    return canonicalize(a) === canonicalize(b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every term the authorization covered must appear identically in the
+ * request. Extra context keys are allowed (refs and handles the authority
+ * never constrained) — but nothing authorized may differ or go missing.
+ */
+function authorizedTermsCover(
+  op: AuthorizedOperation,
+  req: ProviderRequest
+): void {
+  if (req.termsDigest !== op.termsDigest) {
+    throw new Error("provider: terms digest mismatch — new approval required");
+  }
+  if (req.action !== op.cmd) {
+    throw new Error("provider: action differs from authorized terms");
+  }
+  if (req.recipient !== op.recipient) {
+    throw new Error("provider: recipient differs from authorized terms");
+  }
+  if (op.resource === undefined || req.resource !== op.resource) {
+    throw new Error("provider: resource differs from authorized terms");
+  }
+  if (op.purpose === undefined || req.purpose !== op.purpose) {
+    throw new Error("provider: purpose differs from authorized terms");
+  }
+  const ctx = req.context as Record<string, unknown>;
+  for (const [key, value] of Object.entries(
+    op.args as Record<string, unknown>
+  )) {
+    if (!fieldsEqual(value, ctx[key])) {
+      throw new Error(`provider: context.${key} differs from authorized terms`);
+    }
+  }
+}
+
 /**
  * Adapt a payment provider to the existing `PaymentExecutor` shape.
- * `executeAndReceipt` call sites stay untouched: they keep passing an
- * executor, an identity-free instruction, and a redemption proof.
+ * Takes the redemption (not a bare binding) so the provider request is
+ * built from the exact authorized operation: any divergence between the
+ * instruction and the redemption throws BEFORE submission — never after
+ * money moves. `executeAndReceipt` call sites stay untouched: they keep
+ * passing an executor, an identity-free instruction, and a redemption.
  */
 export function providerAsExecutor(
   provider: ProtectedProvider,
-  binding: { readonly capabilityId: string; readonly termsDigest: string }
+  redemption: { readonly chainId: string; readonly operation: unknown }
 ): PaymentExecutor {
-  if (!isNonEmptyString(binding.capabilityId))
+  const op = requireBoundOperation(redemption);
+  if (!isNonEmptyString(redemption.chainId)) {
     throw new Error("provider: capabilityId required");
-  if (!isNonEmptyString(binding.termsDigest))
-    throw new Error("provider: termsDigest required");
+  }
+  if (op.cmd !== "/pay" && !op.cmd.startsWith("/pay/")) {
+    throw new Error("provider: authorized cmd is not a payment");
+  }
   return {
     async executePayment(
       instruction: PaymentInstruction
     ): Promise<{ readonly ok: true; readonly transaction: string }> {
-      if (instruction.capabilityId !== binding.capabilityId) {
+      if (instruction.capabilityId !== redemption.chainId) {
         throw new Error(
           "provider: instruction is not bound to this capability"
         );
       }
+      if (instruction.termsDigest !== op.termsDigest) {
+        throw new Error(
+          "provider: terms digest mismatch — new approval required"
+        );
+      }
+      if (instruction.recipient !== op.recipient) {
+        throw new Error("provider: recipient differs from authorized terms");
+      }
+      if (op.resource === undefined || instruction.resource !== op.resource) {
+        throw new Error("provider: resource differs from authorized terms");
+      }
+      if (op.purpose === undefined || instruction.purpose !== op.purpose) {
+        throw new Error("provider: purpose differs from authorized terms");
+      }
+      if (
+        !fieldsEqual(op.args, {
+          amount: instruction.amount,
+          currency: instruction.currency,
+        })
+      ) {
+        throw new Error(
+          "provider: amount/currency differ from authorized terms"
+        );
+      }
       const req: ProviderRequest = {
-        capabilityId: binding.capabilityId,
-        termsDigest: binding.termsDigest,
+        capabilityId: redemption.chainId,
+        termsDigest: op.termsDigest,
         action: "/pay",
         recipient: instruction.recipient,
         resource: instruction.resource,
         purpose: instruction.purpose,
-        context: { amount: instruction.amount, currency: instruction.currency },
+        context: {
+          amount: instruction.amount,
+          currency: instruction.currency,
+        },
       };
       const sub = await provider.submit(req);
-      const checked = provider.verify(sub, binding);
+      const checked = provider.verify(sub, {
+        capabilityId: redemption.chainId,
+        termsDigest: op.termsDigest,
+      });
       if (!checked.ok) throw new Error(`provider: ${checked.reason}`);
       return { ok: true, transaction: sub.externalRef };
     },
@@ -197,28 +278,84 @@ export function providerAsExecutor(
 }
 
 /**
- * Generic provider execution with receipt. Requires proof of redemption
- * bound to the request (`chainId === capabilityId`) and pins `termsDigest`
- * through `verify` — a verify failure throws before any receipt exists.
- * `provider.verify` is provider-attested: independent rail settlement checks
+ * Domain-neutral provider execution (ADR-0018): any authorized action runs
+ * here and returns an `ExecutionReceipt` with no payment-shaped fields —
+ * email needs no amount, identity needs no currency. Payment flows keep
+ * using `executeViaProvider` (explicit amount/currency, `Receipt`).
+ * Requires proof of redemption carrying the exact authorized operation;
+ * a verify failure throws before any receipt exists. `provider.verify` is
+ * provider-attested: independent rail settlement checks
  * (`checkSettlement`, `verifyMandatePair`) remain host duty before trusting
- * `externalRef` for value movement (ADR-0005). Receipt reuses `Receipt` with
- * `transaction=externalRef`; amount/currency must ride explicitly in context
- * (0 and explicit values allowed) so the receipt never invents terms the
- * demand did not carry.
+ * `externalRef` for value movement (ADR-0005).
+ */
+export async function executeActionViaProvider(
+  provider: ProtectedProvider,
+  req: ProviderRequest,
+  redemption: {
+    readonly ok: true;
+    readonly chainId: string;
+    readonly operation: AuthorizedOperation;
+  },
+  at: number
+): Promise<ExecutionReceipt> {
+  checkRequest(req);
+  if (redemption.ok !== true)
+    throw new Error("provider: redemption required before execution");
+  const op = requireBoundOperation(redemption);
+  if (redemption.chainId !== req.capabilityId) {
+    throw new Error("provider: redemption is not bound to this request");
+  }
+  authorizedTermsCover(op, req);
+  const sub = await provider.submit(req);
+  const checked = provider.verify(sub, {
+    capabilityId: req.capabilityId,
+    termsDigest: req.termsDigest,
+  });
+  if (!checked.ok) throw new Error(`provider: ${checked.reason}`);
+  return {
+    receiptId: `rcpt-${randomHex(8)}`,
+    capabilityId: req.capabilityId,
+    recipient: req.recipient,
+    resource: req.resource,
+    purpose: req.purpose,
+    transaction: sub.externalRef,
+    at,
+    termsDigest: req.termsDigest,
+  };
+}
+
+/**
+ * Payment-profile provider execution with receipt. Requires proof of
+ * redemption bound to the request (`chainId === capabilityId`) and pins
+ * `termsDigest` through `verify` — a verify failure throws before any receipt
+ * exists. `provider.verify` is provider-attested: independent rail settlement
+ * checks (`checkSettlement`, `verifyMandatePair`) remain host duty before
+ * trusting `externalRef` for value movement (ADR-0005). Receipt reuses
+ * `Receipt` with `transaction=externalRef`; amount/currency must ride
+ * explicitly in context (0 and explicit values allowed) so the receipt never
+ * invents terms the demand did not carry.
  */
 export async function executeViaProvider(
   provider: ProtectedProvider,
   req: ProviderRequest,
-  redemption: { readonly ok: true; readonly chainId: string },
+  redemption: {
+    readonly ok: true;
+    readonly chainId: string;
+    readonly operation: AuthorizedOperation;
+  },
   at: number
 ): Promise<Receipt> {
   checkRequest(req);
   if (redemption.ok !== true)
     throw new Error("provider: redemption required before execution");
+  const op = requireBoundOperation(redemption);
   if (redemption.chainId !== req.capabilityId) {
     throw new Error("provider: redemption is not bound to this request");
   }
+  if (op.cmd !== "/pay" && !op.cmd.startsWith("/pay/")) {
+    throw new Error("provider: authorized cmd is not a payment");
+  }
+  authorizedTermsCover(op, req);
   const sub = await provider.submit(req);
   const checked = provider.verify(sub, {
     capabilityId: req.capabilityId,
@@ -255,6 +392,7 @@ export async function executeViaProvider(
     purpose: req.purpose,
     transaction: sub.externalRef,
     at,
+    termsDigest: req.termsDigest,
   };
 }
 
@@ -297,7 +435,11 @@ export async function executeWithCredential(
     readonly authority: Authority;
     readonly nowSec: number;
     readonly provider: ProtectedProvider;
-    readonly redemption: { readonly ok: true; readonly chainId: string };
+    readonly redemption: {
+      readonly ok: true;
+      readonly chainId: string;
+      readonly operation: AuthorizedOperation;
+    };
     readonly buildRequest: (
       instr: SecretInstruction
     ) => Omit<ProviderRequest, "capabilityId">;

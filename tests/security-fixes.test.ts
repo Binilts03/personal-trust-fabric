@@ -110,20 +110,24 @@ describe("security-fix regressions", () => {
   it("execute binds redemption chainId to the instruction", async () => {
     const { FakePaymentExecutor } = await import("../src/index.js");
     const ex = new FakePaymentExecutor();
-    await assert.rejects(() =>
-      executeAndReceipt(
-        ex,
-        {
-          capabilityId: "cid-A",
-          recipient: "r",
-          amount: 1,
-          currency: "INR",
-          resource: "x",
-          purpose: "p",
-        },
-        { ok: true, chainId: "cid-B" } as never,
-        1_700_000_000
-      )
+    // Unbound (manufactured) redemptions fail before any binding check.
+    await assert.rejects(
+      () =>
+        executeAndReceipt(
+          ex,
+          {
+            capabilityId: "cid-A",
+            recipient: "r",
+            amount: 1,
+            currency: "INR",
+            resource: "x",
+            purpose: "p",
+            termsDigest: "ab".repeat(32),
+          },
+          { ok: true, chainId: "cid-B" } as never,
+          1_700_000_000
+        ),
+      /unbound redemption/
     );
   });
 

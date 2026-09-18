@@ -20,8 +20,11 @@ import { loadVault } from "./vault.js";
  * present, plus the proposals/ directory — never merged across vintages.
  * Every backup carries an `anchor.json` checkpoint (Merkle root + line
  * count over audit.jsonl); restore recomputes it and refuses mismatch, so
- * a full-directory rollback to consistently-old files is caught even
- * though the freshness check cannot see it. Partial rollbacks (mixed
+ * partial rollbacks, mixed vintages, and tamper are caught. Honest scope:
+ * this is a consistency checkpoint *within* one backup, not external
+ * freshness — a whole backup directory rolled back coherently still
+ * verifies (only external retention defeats that; host duty, ADR-0006).
+ * Partial rollbacks (mixed
  * vintages) fail closed at load via the revision freshness check.
  *
  * Refusals (fail-closed, never overwrite/merge):

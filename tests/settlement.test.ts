@@ -17,6 +17,7 @@ const INSTR = {
   currency: "USDC",
   resource: "data:premium",
   purpose: "buy",
+  termsDigest: "ab".repeat(32),
 };
 
 describe("real settlement behind the boundary (v04/03)", () => {

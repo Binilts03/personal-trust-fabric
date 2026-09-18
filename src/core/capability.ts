@@ -10,6 +10,7 @@ import { randomHex, signBytes, verifyBytes } from "./crypto.js";
 import { isPolicyNarrower, satisfiesPolicy } from "./policy.js";
 import type {
   AuthorizeResult,
+  AuthorizedOperation,
   CapabilityChain,
   CapabilityPayload,
   Demand,
@@ -327,6 +328,26 @@ export class Capabilities {
         detail: "recipient mismatch",
       });
     }
+    if (
+      demand.resource !== undefined &&
+      demand.resource !== leaf.payload.resource
+    ) {
+      return fail({
+        ok: false,
+        reason: "terms",
+        detail: "resource mismatch — new approval required",
+      });
+    }
+    if (
+      demand.purpose !== undefined &&
+      demand.purpose !== leaf.payload.purpose
+    ) {
+      return fail({
+        ok: false,
+        reason: "terms",
+        detail: "purpose mismatch — new approval required",
+      });
+    }
     if (demand.termsDigest !== leaf.payload.termsDigest) {
       return fail({
         ok: false,
@@ -383,14 +404,36 @@ export class Capabilities {
         ok: true,
         remaining: remaining - 1,
         chainId: leafCidHex(leaf),
+        operation: boundOperation(demand),
       };
     }
-    return { ok: true, remaining, chainId: leafCidHex(leaf) };
+    return {
+      ok: true,
+      remaining,
+      chainId: leafCidHex(leaf),
+      operation: boundOperation(demand),
+    };
   }
 
   revoke(revocationId: string, exp?: number): void {
     this.revocations.add(revocationId, exp);
   }
+}
+
+/**
+ * Canonical echo of the verified demand (ADR-0018). Execute paths compare
+ * their instruction against this instead of trusting a bare chainId, so a
+ * mutated middle cannot pair an authorization with different terms.
+ */
+function boundOperation(demand: Demand): AuthorizedOperation {
+  return {
+    cmd: demand.cmd,
+    args: { ...(demand.args as Record<string, unknown>) },
+    recipient: demand.recipient,
+    ...(demand.resource !== undefined ? { resource: demand.resource } : {}),
+    ...(demand.purpose !== undefined ? { purpose: demand.purpose } : {}),
+    termsDigest: demand.termsDigest,
+  };
 }
 
 function checkLinkShape(p: CapabilityPayload): string | null {
