@@ -74,6 +74,26 @@ _Avoid_: Address book entry
 The agent-safe outcome of an execution: what happened, to whom, under which capability, without secrets.
 _Avoid_: Result, log entry
 
+**Proposal**:
+A termsDigest-keyed durable record of an evaluated demand (pending, denied, or executed) awaiting redeem/present or kept as history. Re-proposing live terms returns it (idempotency); executed is immutable.
+_Avoid_: Order, intent (implies commitment)
+
+**Challenge**:
+A short-lived in-memory redeem step: the server issues a capability id (`cidHex`) to sign, and the recipient proof authorizes it. Lost on restart by design (challenges carry live key material).
+_Avoid_: Session, login flow
+
+**Anchor**:
+A Merkle-root checkpoint (`anchor.json`: root + line count) over the audit log, recomputed and compared on restore so full-directory rollback is caught.
+_Avoid_: Blockchain proof, ledger
+
+**Keystore / DEK**:
+The passphrase-sealed file holding signing keys plus the vault data-encryption key (`ptf/vault-dek`). Passphrase rotation re-wraps keys; DEK rotation re-seals vault data. Never backed up alongside its own passphrase file.
+_Avoid_: Password file, wallet
+
+**Revision CAS / single-writer**:
+Every durable file carries a `revision` bumped atomically with the data; a stale handle's save fails closed instead of last-write-wins. One CLI/MCP writer per store is the supported topology; CAS is the backstop.
+_Avoid_: Locking, transactions (implies multi-writer support)
+
 ### External
 
 **Mandate**:

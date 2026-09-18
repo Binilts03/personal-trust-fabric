@@ -18,7 +18,6 @@ import {
   requestToDisclosureDemand,
   sanitizeField,
   toAp2PaymentDemand,
-  verifyMandatePair,
   canonicalJcs,
   checkAgentCard,
   verifyCardSignatures,

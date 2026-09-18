@@ -25,7 +25,6 @@ import {
   readPassphrase,
   renderProposal,
   saveAuthority,
-  signBytes,
   digestForOperation,
 } from "./index.js";
 import { readFileSync } from "node:fs";
@@ -664,9 +663,6 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       }
       if (proofKey.length !== 32) fail("recipient key must be 32 bytes");
       if (proofSig.length !== 64) fail("recipient signature must be 64 bytes");
-      const cidBytes = new Uint8Array(
-        Buffer.from(leafCidHex(challenge.cap), "hex")
-      );
       // Authorize the capability FIRST so a bad proof never burns authority.
       const redeemed = caps.authorize(
         [challenge.cap],

@@ -1,14 +1,37 @@
-# Personal Trust Fabric
+# Personal Trust Fabric (PTF)
 
-User-owned trust and delegated-authority layer for the agentic web.
-Agents propose; the deterministic core disposes. LLMs may reason about
-authority — they are never its source.
+**Let AI agents spend, prove, and sign on your behalf — without ever holding your credentials, keys, payment instruments, or unrestricted authority.**
 
-The rule the whole repo enforces: **use without possession**. An agent can
-spend, prove, and sign on your behalf without ever holding your credentials,
-keys, payment instruments, or unrestricted authority.
+Today, giving an agent a task means giving it your secrets: card numbers in chat logs, OAuth tokens in tool calls, your whole profile in context. PTF inverts that. It is the **personal-side trust, data, and execution layer for agentic commerce**: a user-owned control plane that sits between a person's sensitive state and autonomous agents. Agents propose; the deterministic core disposes. LLMs may reason _about_ authority — they are never its source.
 
-## Install
+```text
+Person (owns data, credentials, preferences, authority)
+  │
+  ▼
+PTF ── stores protected personal state (encrypted vault)
+  │── stores grants, approvals, revocations, policies
+  │── decides what an agent may know or do (default-deny + citations)
+  │── performs protected operations using user secrets (in-host only)
+  │── returns minimal disclosures and secret-free receipts
+  │
+  ▼
+Agent / MCP / A2A / AP2 / x402 / OAuth / OpenID4VP
+  │
+  ▼
+Merchant · payment provider · travel provider · API · verifier
+```
+
+Tell an agent: _"book the flight under ₹50,000 with my loyalty number, email the confirmation to work."_ The agent completes it — and never sees your card number, your loyalty password, an unrestricted refresh token, your full profile, or a blank check on your money.
+
+## Status: honest
+
+This is a working, tested reference implementation on the road to a peer-reviewed standard — not a finished product. What CI proves on every merge: strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning. See `docs/audit/verify.md` to reproduce from scratch.
+
+What it **is** today: a strong local authority engine, an encrypted personal-state vault, a complete propose→present/redeem→receipt agent loop over MCP, protected provider seams, and hash-chained audit — all tested including abuse cases.
+
+What it **is not** yet: a live payment platform (reference fakes move no money), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in `docs/audit/limits.md` — we list what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
+
+## For humans: run it in 60 seconds
 
 Requires Node 22+.
 
@@ -17,113 +40,46 @@ npm install
 npm run typecheck && npm test && npm run eval
 ```
 
-As a library: `npm install personal-trust-fabric` (ESM, `exports` →
-`dist/src/api.js` + types). As tools: `npx personal-trust-fabric` is not
-shipped — use the bins after install: `node dist/src/cli.js --help`,
-`PTF_STORE_DIR=./ptf-store ptf-mcp-server` (stdio).
-
-One-command local loop: `scripts/dev-local.sh up` (see `.claude/skills/dev-local/SKILL.md`).
-
-## Sixty-second quickstart
-
-Decide locally in three steps: grant authority, build the operation, evaluate.
-For cross-system interop, project the decision through the standards edge
-instead of emitting internals (`src/adapters/authzen.ts`,
-`src/adapters/oauth-agent.ts`, `src/adapters/sd-jwt.ts`,
-`src/adapters/audit-interop.ts`; canonical demo: `tests/three-env.test.ts`).
+Decide locally in three steps — grant authority, build the operation, evaluate:
 
 ```ts
 import { Authority, paymentBounds } from "personal-trust-fabric";
 import { recipientBounds } from "personal-trust-fabric/profiles/payment";
-import type { VerifiedIdentity } from "personal-trust-fabric";
 
-const ids = {
-  p: "did:example:you",
-  a: "did:example:agent",
-  m: "did:example:shop",
-};
-
-// 1. Authority: a standing grant covers the demand (policy only narrows, never creates).
 const authority = new Authority();
 authority.addGrant({
   id: "groceries",
-  principal: ids.p,
-  actor: { kind: "exact", id: ids.a },
+  principal: "did:example:you",
+  actor: { kind: "exact", id: "did:example:agent" },
   action: { name: "/pay" },
   bounds: [
     ...paymentBounds({ amountMax: 2000, currency: "INR" }),
-    ...recipientBounds([ids.m]),
+    ...recipientBounds(["did:example:shop"]),
   ],
 });
 
-// 2. Operation: identity-free action/resource/context (amounts in atomic units).
-const operation = {
-  action: { name: "/pay" as const },
-  resource: { type: "invoice", id: "invoice:inv-1" },
-  context: { amount: 1790, currency: "INR", recipient: ids.m },
-  purpose: "groceries",
-};
-
-// 3. Verified ingress: the host authenticates the caller OUT-OF-BAND
-// (token/session/key) and binds identity here — never from the request body.
-const ingress: VerifiedIdentity = {
-  id: ids.a,
-  principal: ids.p,
-  source: "local-registration",
-  proofRef: "example",
-};
-
-// 4. Decision: identity binds from the ingress and the digest derives
-// inside the engine — demands never self-certify. Every allow cites its grant.
-const decision = authority.evaluate(operation, ingress);
+const decision = authority.evaluate(
+  {
+    action: { name: "/pay" },
+    resource: { type: "invoice", id: "invoice:inv-1" },
+    context: { amount: 1790, currency: "INR", recipient: "did:example:shop" },
+    purpose: "groceries",
+  },
+  {
+    id: "did:example:agent", // verified OUT-OF-BAND by the host — never from the request body
+    principal: "did:example:you",
+    source: "local-registration",
+    proofRef: "example",
+  }
+);
 if (!decision.allow) throw new Error("denied");
+// Every allow cites its grant: decision.citations[0].authorityId === "groceries"
 ```
-
-Safe grants combine `paymentBounds` + `recipientBounds` (recipient-bounded).
-Merchant-agnostic grants (no recipient bound) require explicit intent — they
-allow payment to any recipient and must be audited as deliberate.
-
-The capability envelope (`src/core/capability.ts`) is internal-only local
-receipt machinery (ADR-0009) — never emitted across systems.
-
-## Layout
-
-- `src/api.ts` — curated public entry (explicit named re-exports: Authority
-  engine, approval presenter, persona, receipts, registry). `src/profiles/` —
-  domain profiles (payment conventions + helpers, no policy language) plus
-  `profiles/data.ts` general agent contract (`requestData`/`requestExecution`,
-  dry-run only, never mints authority).
-  Capability envelope, canonical/crypto machinery, and stores stay internal
-  (ADR-0011).
-- `src/core/` — zero-dependency authority plane: capabilities, policy authority,
-  disclosure, identity bindings, approval presenter, protected execution, audit.
-  Never imports `adapters` (test-enforced).
-- `src/adapters/` — thin translators: standards edge (AuthZEN PDP, OAuth-agent
-  attenuation, SD-JWT/KB-JWT, audit interop) plus evidence parsers (x402 v2,
-  AP2, OpenID4VP, MCP/WebMCP, A2A) and shared URL/JWS helpers, plus
-  `adapters/providers.ts` protected provider seam (payment/travel/retail/email/
-  identity fakes, `providerAsExecutor`/`executeViaProvider`). Evidence in,
-  never authority out.
-- `src/store/`, `src/cli.ts`, `src/mcp-server.ts` — durable JSON stores
-  (`store/files.ts` authority/registry, `store/vault.ts` `personal-state.json`
-  AES-256-GCM envelope under a keystore DEK, revision CAS + freshness
-  binding), `ptf` operator CLI, MCP stdio server
-  (`ptf_propose/check/redeem` + `ptf_request_data/present_data/request_action/
-get_receipt/list_capabilities/revoke`).
-- `examples/` — `payment-disclosure.mjs` (library end-to-end),
-  `mcp-client-config.json` (Claude Desktop wiring).
-- `tests/` — `node:test` suites at the public seam; `tests/eval/` holds
-  fast-check properties and golden attack transcripts (`npm run eval`).
-- `docs/` — system of record: ADRs, protocol deep reads, loops, hygiene checklist.
-- `docs/audit/` — auditor entry: architecture, threats, tests, limits, verify,
-  public-flip + publish checklist (prod-05 done).
 
 ## Operator quickstart (real use)
 
 ```sh
-export PTF_PASSPHRASE='strong-unique-pass'
-# Prefer a 0600 file (or an interactive prompt) so the secret never lives in env:
-# export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase" && unset PTF_PASSPHRASE
+export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase" && chmod 600 "$HOME/.ptf/passphrase"
 node dist/src/cli.js --dir ./ptf-store init
 node dist/src/cli.js --dir ./ptf-store keygen --alias you
 node dist/src/cli.js --dir ./ptf-store keygen --alias shop
@@ -132,29 +88,15 @@ node dist/src/cli.js --dir ./ptf-store grant --id g1 --principal you --cmd /pay 
 node dist/src/cli.js --dir ./ptf-store pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes
 node dist/src/cli.js --dir ./ptf-store audit --verify
 node dist/src/cli.js --dir ./ptf-store backup --to ./backups/ptf-store
+node dist/src/cli.js --dir ./ptf-restored restore --from ./backups/ptf-store
 node dist/src/cli.js --help
 ```
 
-Supported topology: one CLI/MCP writer per store, with optimistic revision
-control as the backstop — a stale writer fails closed ("changed under us")
-instead of last-write-wins. Proposals persist per termsDigest file
-(ADR-0017: restart preserves pending/denied/executed; challenges stay
-in-memory). Vault (Personal State) persists to
-`ptf-store/personal-state.json` with revision CAS + audit freshness binding
-(stale vault fails `audit --verify`); operator commands `vault-put`
-(`--value-file` only, never prints/audits values) and `vault-read`
-(prints disclosed names only), plus library `VaultStore.putRecord` /
-`readForPurpose` / `useCredential` from `src/index.ts` and subpath
-`personal-trust-fabric/vault`. Back up `ptf-store/` for high-value use — as
-one unit including `personal-state.json` (plus an anchor checkpoint; see
-`docs/audit/operations.md`).
+One CLI/MCP writer per store (optimistic revision control fails closed instead of last-write-wins). Vault records persist AES-256-GCM-encrypted under a keystore DEK with freshness binding; proposals persist per termsDigest file (restart-safe, idempotent); backups are one unit plus an anchor checkpoint and refuse to merge vintages. See `docs/audit/operations.md` for the container image, health signals, rotation, and restore drills.
 
-## Agent quickstart (MCP stdio)
+## For agents and agent builders: the MCP contract
 
-Commerce reference host with FIXED identity at startup: the server takes
-principal+actor at instantiation (configured once, not per-tool), and tool
-schemas carry NO principal/agent fields — every propose/redeem is bound to
-that fixed identity.
+The server speaks for ONE fixed identity pinned at startup — tool schemas carry no identity fields, so callers can never self-certify.
 
 ```json
 {
@@ -165,58 +107,53 @@ that fixed identity.
       "cwd": "/path/to/personal-trust-fabric",
       "env": {
         "PTF_STORE_DIR": "./ptf-store",
-        "PTF_PASSPHRASE": "via-env-only"
+        "PTF_PASSPHRASE": "via-file-or-env",
+        "PTF_MCP_PRINCIPAL": "did:example:you",
+        "PTF_MCP_ACTOR": "did:example:agent"
       }
     }
   }
 }
 ```
 
-Tools: `ptf_propose` (dry-run, returns terms + digest, status `pending`),
-`ptf_check` (status by digest), `ptf_redeem` (challenge `cidHex`, then proof
-→ receipt; `/pay` demands only) plus the general contract:
-`ptf_request_data` (`/disclose` dry-run → present via `ptf_present_data`),
-`ptf_present_data` (holder-signed presentation for a pending `/disclose`
-proposal; nonce-bound, single-present, verifier must enforce nonce/freshness),
-`ptf_request_action` (any `/-path`
-dry-run except `/disclose*`), `ptf_get_receipt` (status/receipt by digest,
-in-memory only — `unknown` after restart), `ptf_list_capabilities`
-(read-only grant projections for this fixed identity only, no keys or
-capability envelopes),
-`ptf_revoke` (request-only — returns `requested:true` + the
-`ptf revoke --grant <id>` command, mutates nothing). Propose/redeem/request
-schemas carry demand fields (amount, currency,
-recipient, resource, purpose) with NO principal/agent fields — the fixed
-startup identity applies. No approve tool: humans approve in the CLI; the server only
-spends standing grants, and the contract tools never consume uses. See `examples/mcp-client-config.json`.
+Tools: `ptf_propose` (dry-run, exact terms + digest), `ptf_check` (status), `ptf_redeem` (`/pay` challenge→proof→receipt), `ptf_request_data` (propose a disclosure) → `ptf_present_data` (holder-signed presentation, nonce-bound, single-present), `ptf_request_action` (propose any `/-path` except `/disclose*`), `ptf_get_receipt`, `ptf_list_capabilities` (this identity's live grants only), `ptf_revoke` (request-only). There is deliberately **no approve tool**: humans approve in the CLI, or standing grants cover the demand. The server only ever spends what already exists. See `examples/mcp-client-config.json` and `examples/vault-protected-action.mjs` for the full loop.
+
+## How it works (four planes)
+
+- **Personal State plane** (`src/store/vault.ts`) — encrypted, purpose/agent/expiry/sensitivity-scoped records. No generic read exists: every access is a constrained, audited request.
+- **Authority plane** (`src/core/`) — zero-dependency, deterministic: standing grants + digest-bound one-time approvals, narrowed-only by policy, attenuated capabilities (`child ≤ parent`), recipient authentication before execution.
+- **Protected execution plane** (`src/core/execute.ts`, `src/adapters/providers.ts`) — credentials and instruments are used inside PTF; outward go only sanitized instructions and secret-free receipts.
+- **Protocol edge** (`src/adapters/`) — AP2, x402, OAuth-agent, OpenID4VP/SD-JWT, MCP/WebMCP, A2A, AuthZEN PDP: external messages are **evidence, never authority**.
+
+Three flows cover everything: **disclose** (agent asks, PTF returns the minimal approved claim), **execute** (agent asks, PTF acts internally, agent gets a receipt), **approve** (agent proposes exact terms, the person approves or denies, any change needs a new approval).
 
 ## Security model in one paragraph
 
-Default-deny with citations: every allow names the grant or approval consumed.
-Policies narrow; learning never mints power. Capabilities attenuate monotonically
-(`Authority(child) ≤ Authority(parent)`), bind recipient + terms digest + expiry +
-uses, and redeem only against a live recipient key proof. Disclosure is
-`requested ∩ available ∩ allowed`, holder-bound. Audit is hash-chained (optionally
-HMAC-keyed) and never carries secrets. Audit anchors to a local checkpoint file
-with offline O(log n) inclusion proofs (no ledger/witness network). External
-protocol messages are untrusted evidence re-validated locally. See `THREATMODEL.md`, `SECURITY.md`, and
-`docs/research/` for the full picture and the honest limits (checkpoint-file
-anchoring only — no ledger/witness yet; documented subset implementations for JCS, client_id validation,
-and DCQL paths).
+Default-deny with citations: every allow names the grant or approval consumed. Policies narrow; learning never mints power. Capabilities attenuate monotonically, bind recipient + terms digest + expiry + uses, and redeem only against a live recipient key proof. Disclosure is `requested ∩ available ∩ allowed`, holder-bound. The vault is AES-256-GCM under a keystore DEK with freshness binding; the audit is hash-chained (optionally HMAC-keyed) and never carries secrets. External protocol messages are untrusted evidence re-validated locally. Full model, threats, and honest limits: `THREATMODEL.md`, `SECURITY.md`, `docs/audit/`.
 
-## Verify before ship
+## Roadmap: milestones to a standard
 
-Every change proves itself: `/verify` (`.claude/skills/verify/SKILL.md`) drives the
-public seam with a fresh verifier, runs the full gate, and saves evidence. No proof,
-no merge. Pre-commit hooks run typecheck + tests; CI runs the full gate plus
-secret scanning, Scorecard, and SLSA provenance on release tags.
+PTF's destination is a peer-reviewed standard for agentic commerce. The code items below are ordered; the human/world items need owners with accounts, budgets, or authority — **if you can unblock one, that is the highest-leverage contribution you can make.**
 
-## Contributing
+- [x] **M1 — Authority kernel.** Default-deny engine, attenuation, exact-term approvals, receipts, audit. (Done, tested.)
+- [x] **M2 — Personal vault.** Encrypted durable state, purpose/agent scoping, evaluate-first reads, receipt-only secret use. (Done, tested.)
+- [x] **M3 — Agent loop.** General propose→present/redeem→receipt contract over MCP, filtered capabilities, request-only revocation, durable proposals. (Done, tested.)
+- [x] **M4 — Operability.** Backup/restore commands, rotation, health signals, container image. (Done, tested.)
+- [ ] **M5 — Normative spec.** An implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY) a second party could build against. _Needs spec authors + reviewers._
+- [ ] **M6 — Conformance suite.** Frozen vectors (digests, chains, disclosure intersections) and fixtures so independent implementations prove compatibility. _Needs a second implementation to validate against._
+- [ ] **M7 — Live rail reference.** One complete staging provider (payment first): idempotency, settlement verification, failure/retry drills. _Needs PSP sandbox accounts and funding._
+- [ ] **M8 — Independent audit.** Commissioned third-party review of the trust layer (see `docs/audit/commissioning.md`). _Needs budget and a firm._
+- [ ] **M9 — HSM/KMS custody.** Replace the file keystore behind the existing `KeyProvider` seam. _Needs cloud/hardware accounts._
+- [ ] **M10 — Remote ingress + multi-tenant boundaries.** Per-caller authentication, tenant isolation, rate limiting. _Needs a deployment environment._
+- [ ] **M11 — External anchoring.** Witness/remote append-only audit export beyond the local checkpoint file. _Needs infrastructure._
+- [ ] **M12 — Publish + govern.** npm Trusted Publisher release, version coherence, governance charter, conduct process, liaison with OIDF/FIDO/IETF. _Needs owner sessions and community._
 
-Read `AGENTS.md` (golden rules), `CONTEXT.md` (ubiquitous language), and
-`docs/agents/domain.md` before touching code. Test at the public seam only.
-Report vulnerabilities privately per `SECURITY.md` — never in a public issue.
+## Contributing (humans and bots welcome)
+
+Reviewers, standards authors, host integrators, and agent builders are all first-class contributors — see `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`. The rules in brief: the gate (`typecheck`, unit, eval) must be green; every change proves itself with a fresh verifier run plus one abuse case (**no proof, no merge**); tests live at public seams (`src/index.ts`); secrets never appear anywhere except the local store (synthetic sentinels only); architecture changes need an ADR; new ceilings go in `docs/audit/limits.md`; user-visible changes go in `CHANGELOG.md`. File bugs and proposals with the issue templates — especially reports where PTF allowed what it should have denied. If you participate through an agent, say which one: agent-tooling confusion is a docs bug worth its own PR.
+
+Docs map: ubiquitous language `CONTEXT.md` · decisions `docs/adr/` · auditor entry `docs/audit/README.md` · protocols `docs/research/` · operations `docs/audit/operations.md` · contribution rules `CONTRIBUTING.md`.
 
 ## License
 
-Apache-2.0 — see `LICENSE`.
+Apache-2.0 — see `LICENSE`. Report vulnerabilities privately per `SECURITY.md`, never in a public issue.

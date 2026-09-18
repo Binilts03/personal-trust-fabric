@@ -74,7 +74,8 @@ picks it up. Exercised without restarts in `tests/pdp-fronting.test.ts`.
 ## Health signals (what "healthy" means per process)
 
 - `ptf` CLI: `ptf --dir <store> audit --verify` exits 0 with
-  `audit chain: valid`. It loads authority + registry first, so a rolled
+  `audit chain: valid` (needs the passphrase only when a vault file
+  exists, since freshness verification needs the DEK). It loads authority + registry first, so a rolled
   back store fails closed (nonzero) instead of reporting a valid chain
   over stale state. Use it as the CLI health probe and as step 3 of the
   restore drill.

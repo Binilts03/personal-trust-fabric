@@ -21,6 +21,16 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run eval
+      - name: seam check (tests via public barrel; bins exempt)
+        run: |
+          if grep -R 'from "\.\./src/[^"]*\.js"' tests --include="*.ts" | grep -v 'from "\.\./src/index\.js"' | grep -v 'from "\.\./src/cli\.js"' | grep -v 'from "\.\./src/mcp-server\.js"' | grep -v 'from "\.\./src/pdp-server\.js"'; then
+            echo "FAIL: test reaches past public seam"; exit 1;
+          fi
+      - name: zero-dep check (core is node:crypto + relative only)
+        run: |
+          if grep -R 'from "' src/core --include="*.ts" | grep -v 'from "node:crypto"' | grep -v 'from "\./' | grep -v 'from "\.\./'; then
+            echo "FAIL: core has non-allowlisted import"; exit 1;
+          fi
   secrets:
     runs-on: ubuntu-latest
     permissions:
