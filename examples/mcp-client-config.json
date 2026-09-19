@@ -7,7 +7,7 @@
       "cwd": "/path/to/personal-trust-fabric",
       "env": {
         "PTF_STORE_DIR": "./ptf-store",
-        "PTF_PASSPHRASE": "change-me-via-env-only",
+        "PTF_PASSPHRASE": "",
         "PTF_MCP_PRINCIPAL": "you",
         "PTF_MCP_ACTOR": "shopper"
       }

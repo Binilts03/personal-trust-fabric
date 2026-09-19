@@ -157,12 +157,12 @@ export function helpText(): string {
     "env: PTF_PASSPHRASE (required for keygen/pay/disclose/vault-*; audit needs it only when a vault file exists; never passed as a flag)",
     "     alternatives: PTF_PASSPHRASE_FILE (0600 file, preferred over env), or an interactive TTY prompt",
     "examples:",
-    "  PTF_PASSPHRASE=hunter2 ptf --dir ./ptf-store init",
-    "  PTF_PASSPHRASE=hunter2 ptf keygen --alias you",
+    "  PTF_PASSPHRASE=test-passphrase-change-me ptf --dir ./ptf-store init",
+    "  PTF_PASSPHRASE=test-passphrase-change-me ptf keygen --alias you",
     "  ptf grant --id g1 --principal you --cmd /pay --agent shopper --amount-max 2000 --currency INR",
     "  ptf grant --id g2 --principal you --cmd /pay --actor-set shopper,groceries --amount-max 2000 --currency INR",
     "  ptf grant --id g3 --principal you --cmd /pay --any-agent --amount-max 500 --currency INR",
-    "  PTF_PASSPHRASE=hunter2 ptf pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes",
+    "  PTF_PASSPHRASE=test-passphrase-change-me ptf pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes",
     "docs: README.md, docs/audit/README.md",
   ].join("\n");
 }

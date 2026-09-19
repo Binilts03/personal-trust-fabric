@@ -133,9 +133,10 @@ The server speaks for ONE fixed identity pinned at startup — tool schemas carr
       "command": "node",
       "args": ["./dist/src/mcp-server.js"],
       "cwd": "/path/to/personal-trust-fabric",
+      "$comment": "PTF_PASSPHRASE must come from the environment (or a 0600 file) — never commit a real value; empty fails closed.",
       "env": {
         "PTF_STORE_DIR": "./ptf-store",
-        "PTF_PASSPHRASE": "via-file-or-env",
+        "PTF_PASSPHRASE": "",
         "PTF_MCP_PRINCIPAL": "did:example:you",
         "PTF_MCP_ACTOR": "did:example:agent"
       }

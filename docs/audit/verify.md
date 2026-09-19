@@ -9,9 +9,10 @@ npm run typecheck && npm test && npm run eval
 npm pack --dry-run
 ```
 
-Expected (2026-09-15; CI is the source of truth as counts grow):
-typecheck clean; unit 234 green across 49 suites; eval 9 green; tarball
-contains `package.json`, `README.md`, `LICENSE`, `dist/` (bins `ptf`,
+Expected (2026-09-19; CI is the source of truth as counts grow — read the
+number off the gate, never trust a pinned count here): typecheck clean;
+unit green across all suites (296 at last update); eval green (9 cases);
+tarball contains `package.json`, `README.md`, `LICENSE`, `dist/` (bins `ptf`,
 `ptf-mcp-server`, `ptf-pdp-server`).
 
 ## Drive the seam (fresh verifier, 5 minutes)
