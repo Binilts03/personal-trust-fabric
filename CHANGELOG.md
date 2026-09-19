@@ -13,6 +13,8 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Public-surface minimization: removed internal research notebooks, vendor-specific coding-agent skills, local ticket/loop documentation, and internal audit/project journals; hardened ignore rules for operator state, credentials, generated evidence, and editor/agent state; public verification and audit docs are self-contained.
+
 - Exact-operation authorization, hardened (ADR-0018): CHECK ≠ REDEEM ≠
   EXECUTE — `check()` dry-runs and can never execute (type-level and
   runtime); only `redeem()` yields an executable `Redemption`. Provider
