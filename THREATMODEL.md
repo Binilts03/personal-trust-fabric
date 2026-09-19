@@ -48,14 +48,29 @@ audit chain.
 
 - Attacks: injected `pay attacker`; mutated terms; wrong-recipient redeem;
   replayed/expired capability; `act` chain confusion; trusting `ptf_digest`
-  without recompute.
+  without recompute; dry-run `check()` passed to an execute path; extra
+  effect-bearing keys smuggled alongside authorized args; binding-stripped
+  replay (evaluate without the AP2 binding the approval was minted under);
+  id re-registration making revocation/usage/citations ambiguous.
 - Mitigations: default-deny `evaluate` + citations; policy constrains, never
   creates (ADR-0002); digest derived server-side from normalized operation +
   fixed ingress (never caller-supplied); child ≤ parent attenuation with
   recipient + termsDigest fixed (`src/core/authority.ts`,
   `src/core/capability.ts`); expiry + maxUses enforced at redemption;
-  `requested ∩ available ∩ allowed`, holder-bound disclosure.
-- Residuals: none claimed beyond B9 races (unlimited-use concurrent redeem).
+  `requested ∩ available ∩ allowed`, holder-bound disclosure; CHECK ≠ REDEEM
+  ≠ EXECUTE — `check()` dry-runs (no consumption, no proof, no chainId) and
+  can never execute (type-level: no `consumed`/`proofVerified` flags; runtime:
+  `requireRedemption` rejects); only `redeem()` (proof verified, use
+  consumed) yields an executable `Redemption` (`src/core/capability.ts`
+  check()/redeem(), `src/adapters/providers.ts` requireRedemption);
+  `createApproval` folds verified external bindings (scheme + value) into the
+  digest — evaluation without (or with a different) binding fails closed on
+  terms; authority ids global + immutable across grants/approvals/policies —
+  re-registering throws, revoke first (fail-closed at add/restore).
+- Residuals: none claimed beyond B9 races (unlimited-use concurrent redeem);
+  in-process forgery by hostile host code out of model (host owns everything)
+  — enforced boundary is agent-facing seams building both sides from the same
+  stored demand.
 
 ## B2 — Host callbacks receive PLAINTEXT secrets (new, explicit)
 
@@ -70,13 +85,20 @@ to `buildRequest` (`src/store/vault.ts`, `src/adapters/providers.ts`).
   echoing a distinctive secret fails closed instead of minting; requests carry
   handles only; audit carries ids only; raw record access (`getRecord` /
   `listRecords`) is private host-only — MCP/CLI expose only evaluate-first
-  `disclose` and receipt-only `useSecret`.
+  `disclose` and receipt-only `useSecret`; burn-before-effect — `useSecret`
+  consumes authority then runs `onConsumed` BEFORE the secret reaches the
+  callback, and `executeProtectedAction` owns reload → consume → CAS save →
+  use → execute (`src/store/vault.ts`, `src/adapters/providers.ts`); a CAS
+  conflict fails closed before the secret is touched.
 - Residuals (mirror `limits.md` vault row): PTF prevents AGENT possession, NOT
   host misuse. Review `buildRequest`/`use` like provider code, with
   logging/egress controls (host duty). Short scalars (PINs, flags) are
   indistinguishable from legitimate receipt fields and stay uncovered — keep
   them out of string-typed receipt fields. Heap copies are best-effort
-  unzeroed — treat heap as sensitive.
+  unzeroed — treat heap as sensitive. Persisting after success is too late —
+  without `onConsumed`/protected action a crash between use and persist
+  resurrects one-time authority; single-writer CAS is the backstop (see B9),
+  not multi-writer.
 
 ## B3 — Encrypted Personal State at rest (ADR-0016)
 
@@ -162,7 +184,13 @@ under revision-CAS freshness (mixed vintages fail closed at load).
 Pending `/disclose` proposal + caller nonce (≥ 16 chars) → holder-signed
 presentation over `requested ∩ allowed` (secrets excluded; ambiguous same-type
 claims fail closed; proposal identity re-asserted against the fixed ingress;
-tampered terms fail closed before the vault is touched).
+tampered terms fail closed before the vault is touched). Resource-addressed
+records (ADR-0018): a record carrying `resource` is selected ONLY on exact
+type+id match — the requested resource determines data selection, not just
+authorization; unaddressed records match any resource (back-compat). The vault
+evaluates the caller-supplied resource so proposal and execution authorize the
+identical canonical operation; present re-derives the digest and requires it
+to equal the proposal key.
 
 - Attacks: nonce replay; double-present; oversharing verifier; tampered
   proposal smuggled into present.
@@ -218,9 +246,16 @@ excluded).
 - Concurrent redemption races → optimistic revision CAS fails the loser closed
   before any receipt while uses remain; audit concurrent-appends fork loudly
   at next chain verify. Residual: unlimited-use racers can both execute (B5).
-- TOCTOU evaluate→execute → re-evaluation at redeem + persist-before-execute:
-  crash/failing rail burns a use (denied retry), never double-spends. True
-  atomicity with an external rail needs rail participation (2PC — host duty).
+- TOCTOU evaluate→execute → re-evaluation at redeem + burn-before-effect
+  ordering (reload fresh → consume → CAS save → use/execute via `onConsumed` /
+  `executeProtectedAction`): a CAS conflict fails closed before the secret or
+  rail is touched; crash/failing rail burns a use (denied retry), never
+  double-spends. True atomicity with an external rail needs rail participation
+  (2PC — host duty). Limits (mirror `limits.md`): single-writer topology (one
+  server per store) is the mitigation, CAS is the backstop; under
+  unlimited-use grants racers can both execute while uses remain to burn —
+  bound uses (maxUses-bounded grants / one-time approvals / single-use redeem
+  capabilities) close it, in that order.
 - Stale snapshots restored after revoke → restore revalidates add-gates, but
   revocation/usage live outside the snapshot: freshness needs the live store.
 - Backup/log leakage → core never emits raw secrets; tamper-evident chain
@@ -236,6 +271,16 @@ excluded).
   execution; `provider.verify` pins capabilityId + termsDigest (provider-
   attested — independent `checkSettlement` / `verifyMandatePair` stay host
   duty; rail results are evidence, never authority, ADR-0005).
+- Provider mutated/extra context → exact context equality
+  (`src/adapters/providers.ts` authorizedTermsCover): authorized args must
+  deep-equal request `context` EXACTLY (action/recipient/resource/purpose/
+  digest + canonical args == context) — any extra effect-bearing key fails
+  closed; dry-run `check()` can never execute (`requireRedemption` needs
+  `consumed` + `proofVerified` + `chainId === capabilityId`). `metadata` is
+  non-effect by rule only: never compared, never receipted — hosts must ensure
+  in review it cannot alter the external effect. Residual: metadata
+  effectfulness is unenforced convention (same class as `detail`/context
+  secret-freedom in B9); hostile host forgery out of model.
 - AuthZEN context smuggling → reserved-echo stripping + digest recompute;
   unknown envelope metadata ignored. Residual: new context keys are future
   collision candidates.
@@ -245,15 +290,26 @@ excluded).
 - SD-JWT `ptf_digest` without recompute → verifier MUST recompute over the
   canonical disclosed set.
 - AP2/x402 shape mismatches → fail-closed `unresolved_constraint`; asset /
-  network folded into the caller's termsDigest. Residual: loose mappings are
-  the audit surface.
+  network folded into the caller's termsDigest. Identity-free adapters
+  (`src/adapters/x402.ts` toX402PaymentDemand, `src/adapters/ap2.ts`
+  toAp2PaymentDemand): outputs carry NO identity and NO digest — terms only
+  (purpose/resource/currency + expectations); host binds verified ingress at
+  `evaluate` (ADR-0013); AP2 transactionId travels as `VerifiedExternalBinding`,
+  never in `operation.context`. Approval binding coverage
+  (`src/core/authority.ts` createApproval): verified external bindings
+  (scheme + value, e.g. AP2 transaction id) fold into the digest; evaluation
+  without (or with a different) binding fails closed on terms. Residual: loose
+  mappings are the audit surface.
 - Reference HTTP PDP (`examples/pdp-server.mjs`, dev-only) → loopback-only,
   ≥16-char key, per-request reload, 1 MiB cap. Residual: single key, no
   rotation/scope/TLS/rate-limit — never expose as production.
 - Production PDP bin (`src/pdp-server.ts`) → mandatory in-process TLS,
   per-key timing-safe allowlist + scopes, hot reload (dropped key 401s),
   read-only reload, secret-free decision logs, per-key buckets + Retry-After,
-  single-replica topology. Residual: buckets per-process (duplicates
+  single-replica topology; duplicate key ids AND duplicate key values both
+  fail the keys file (fail-closed at startup; hot-reload retains last-good —
+  availability, broken file fails next deploy; message names the id only,
+  never the secret). Residual: buckets per-process (duplicates
   detectable via replica id, not prevented); no rotation history; log shipping
   host duty.
 
@@ -282,9 +338,14 @@ fetcher-side pinning; egress proxying.
 
 Default-deny; policy never creates authority; Personal State ≠ Authority
 State; child ≤ parent; expiry + maxUses at redemption; `requested ∩ available
-∩ allowed`; no secrets to agent, receipt, log, or audit; burn-before-execute
-AND burn-before-deliver (crashes burn uses, never double-spend/present);
-executed proposals immutable; every allow cites its Grant/Approval.
+∩ allowed`; no secrets to agent, receipt, log, or audit; CHECK ≠ REDEEM ≠
+EXECUTE (dry-run values unexecutable by type + runtime); authorized ≡
+executed (context deep-equals args exactly; `metadata` never compared, never
+receipted, must not alter effect); burn-before-execute AND burn-before-deliver
+AND burn-before-effect (`onConsumed` / `executeProtectedAction`: CAS conflict
+fails before secret/rail; crashes burn uses, never double-spend/present);
+executed proposals immutable; authority ids global + immutable; every allow
+cites its Grant/Approval.
 
 ## Abuse cases to encode as regression evals
 
@@ -296,4 +357,9 @@ refused; nonce replay without verifier cache; `buildRequest` leaking a
 distinctive secret into context; short-scalar receipt accepted-risk;
 bare `rotateVaultDek` brick warning; anchor mismatch on tampered restore;
 full-directory rollback WITH matching anchor verifying clean (documents the
-non-goal); unlimited-use concurrent redeem double-execution.
+non-goal); unlimited-use concurrent redeem double-execution; dry-run `check()`
+passed to execute refused (type + runtime); extra effect-bearing context key
+refused (metadata-only bypass refused); binding-stripped evaluate denied on
+terms; resource-mismatched record not selected; ambiguous same-type claim
+refused; CAS conflict fails before secret touched; duplicate authority id
+re-register throws; duplicate PDP key id/value fails file.

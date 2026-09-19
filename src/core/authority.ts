@@ -161,6 +161,12 @@ export interface OneTimeApproval {
   readonly resource: AuthorityRequest["resource"];
   readonly context?: Record<string, unknown>;
   readonly purpose?: string;
+  /**
+   * Verified external binding the approval was minted under (e.g. an AP2
+   * transaction id). Folded into the terms digest, so evaluation with a
+   * different (or absent) binding fails closed on terms.
+   */
+  readonly binding?: VerifiedExternalBinding;
   readonly termsDigest: string;
   readonly exp: number;
   readonly maxUses: number;
@@ -691,6 +697,7 @@ export class Authority {
     if (typeof g.id !== "string" || g.id.length === 0) {
       throw new Error("grant id required");
     }
+    this.checkDuplicateId(g.id, `grant ${g.id}`);
     const rec = g as unknown as Record<string, unknown>;
     if (rec["actor"] === undefined) {
       throw new Error(
@@ -764,6 +771,7 @@ export class Authority {
     if (typeof a.id !== "string" || a.id.length === 0) {
       throw new Error("approval id required");
     }
+    this.checkDuplicateId(a.id, `approval ${a.id}`);
     const what = `approval ${a.id}`;
     if (typeof a.principal !== "string" || a.principal.length === 0) {
       throw new Error(`${what}: principal required`);
@@ -814,6 +822,9 @@ export class Authority {
     if (typeof a.termsDigest !== "string" || a.termsDigest.length === 0) {
       throw new Error(`${what}: termsDigest required`);
     }
+    if (a.binding !== undefined) {
+      checkBinding(a.binding, what);
+    }
     checkTimeUses(a, what);
     this.approvals.set(a.id, a);
   }
@@ -821,7 +832,9 @@ export class Authority {
   /**
    * Mint a one-time approval binding the EXACT operation. The digest is
    * derived internally via digestForOperation — there is no terms parameter
-   * to disagree about. Any term change → new approval.
+   * to disagree about. Any term change → new approval. Pass the verified
+   * external binding (e.g. AP2 evidence) to mint exact approvals for bound
+   * operations; the binding folds into the digest.
    */
   createApproval(params: {
     readonly id: string;
@@ -832,6 +845,7 @@ export class Authority {
     readonly resource: AuthorityRequest["resource"];
     readonly context?: Record<string, unknown>;
     readonly purpose?: string;
+    readonly binding?: VerifiedExternalBinding;
     readonly ttlSec: number;
     readonly maxUses?: number;
   }): OneTimeApproval {
@@ -854,6 +868,9 @@ export class Authority {
       throw new Error("createApproval: maxUses must be an integer >= 1");
     }
     checkActionName(params.action.name, "createApproval");
+    if (params.binding !== undefined) {
+      checkBinding(params.binding, "createApproval");
+    }
     const action: AuthorityRequest["action"] = {
       name: params.action.name,
       ...(params.action.properties !== undefined
@@ -887,7 +904,19 @@ export class Authority {
         ? { context: { ...params.context } }
         : {}),
       ...(params.purpose !== undefined ? { purpose: params.purpose } : {}),
-      termsDigest: digestForOperation(op),
+      ...(params.binding !== undefined
+        ? {
+            binding: {
+              scheme: params.binding.scheme,
+              value: params.binding.value,
+              evidenceRef: params.binding.evidenceRef,
+            },
+          }
+        : {}),
+      termsDigest: digestForOperation(
+        op,
+        params.binding !== undefined ? params.binding : undefined
+      ),
       exp: this.nowSec() + params.ttlSec,
       maxUses: params.maxUses ?? 1,
     };
@@ -902,6 +931,7 @@ export class Authority {
     if (typeof p.id !== "string" || p.id.length === 0) {
       throw new Error("policy id required");
     }
+    this.checkDuplicateId(p.id, `policy ${p.id}`);
     const what = `policy ${p.id}`;
     if (p.actor !== undefined) checkActorSelector(p.actor, what);
     if (p.actionName !== undefined) {
@@ -923,6 +953,24 @@ export class Authority {
     this.policies.set(p.id, p);
   }
 
+  /**
+   * Authority ids are global across grants, approvals, and policies:
+   * revocation, usage, and citations are all keyed by id, so silently
+   * replacing authority under an existing identifier would make history
+   * ambiguous. Re-registering an id throws — revoke the old one first
+   * (revocation is permanent and audit-visible).
+   */
+  private checkDuplicateId(id: string, what: string): void {
+    if (
+      this.grants.has(id) ||
+      this.approvals.has(id) ||
+      this.policies.has(id)
+    ) {
+      throw new Error(
+        `${what}: id ${id} already registered (ids are global and immutable — revoke first)`
+      );
+    }
+  }
   /**
    * Record which capability revocation ids were minted under an authority id,
    * so `revoke` fans out to everything derived from it (spec story 4).
@@ -1018,6 +1066,25 @@ export class Authority {
     for (const key of ["grants", "approvals", "policies"] as const) {
       if (!Array.isArray(snap[key]))
         throw new Error(`authority snapshot: ${key} must be an array`);
+    }
+    // Fail fast on ambiguous history: ids are global, so a snapshot reusing
+    // one id across entries (any kinds) is corrupt input, not something to
+    // half-load. Recovery is manual: assign distinct ids in the snapshot.
+    {
+      const seen = new Set<string>();
+      for (const key of ["grants", "approvals", "policies"] as const) {
+        for (const entry of snap[key] as unknown[]) {
+          const id: unknown = (entry as Record<string, unknown>)["id"];
+          if (typeof id === "string") {
+            if (seen.has(id)) {
+              throw new Error(
+                `authority snapshot: duplicate id ${id} — assign distinct ids across grants, approvals, and policies`
+              );
+            }
+            seen.add(id);
+          }
+        }
+      }
     }
     for (const g of snap["grants"] as unknown[])
       auth.addGrant(g as StandingGrant);

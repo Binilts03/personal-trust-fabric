@@ -13,9 +13,11 @@ import type {
   AuthorizedOperation,
   CapabilityChain,
   CapabilityPayload,
+  CheckResult,
   Demand,
   KeyResolver,
   Predicate,
+  RedemptionResult,
   RevocationStore,
   SealedCapability,
   UseLedger,
@@ -169,14 +171,91 @@ export class Capabilities {
   }
 
   /**
-   * Verify (consume=false, dry-run for adapters) or redeem (consume=true, requires
-   * recipient proof, decrements the use ledger). Fail-closed: first failure wins.
+   * Dry-run check (ADR-0018): verifies the demand against the chain without
+   * consuming uses and without checking any recipient proof. The success
+   * value carries NO chainId and NO redemption flags, so it can never be
+   * passed to an execute path (type-level and runtime). For execution, use
+   * `redeem`.
+   */
+  check(
+    chain: CapabilityChain,
+    demand: Demand,
+    opts: { readonly nowSec?: number } = {}
+  ): CheckResult {
+    return this.runAuthorization(chain, demand, opts, "check");
+  }
+
+  /**
+   * Redemption (ADR-0018): verifies, checks the recipient proof, consumes
+   * one use, and returns the ONLY value execute paths accept. Proof is
+   * required (no bare authorization exists).
+   */
+  redeem(
+    chain: CapabilityChain,
+    demand: Demand,
+    opts: {
+      readonly proof: { readonly key: Uint8Array; readonly sig: Uint8Array };
+      readonly nowSec?: number;
+    }
+  ): RedemptionResult {
+    return this.runAuthorization(chain, demand, opts, "redeem");
+  }
+
+  /**
+   * Back-compat dispatcher: `consume: true` redeems (proof required),
+   * otherwise checks. New code should call `check`/`redeem` directly so
+   * the type system tracks which outcome may execute.
    */
   authorize(
     chain: CapabilityChain,
     demand: Demand,
     opts: AuthorizeOptions = {}
   ): AuthorizeResult {
+    if (opts.consume === true) {
+      if (opts.proof === undefined) {
+        return fail({
+          ok: false,
+          reason: "recipient",
+          detail: "recipient proof required",
+        });
+      }
+      return this.redeem(chain, demand, {
+        proof: opts.proof,
+        ...(opts.nowSec !== undefined ? { nowSec: opts.nowSec } : {}),
+      });
+    }
+    return this.check(chain, demand, {
+      ...(opts.nowSec !== undefined ? { nowSec: opts.nowSec } : {}),
+    });
+  }
+
+  private runAuthorization(
+    chain: CapabilityChain,
+    demand: Demand,
+    opts: {
+      readonly proof?: { readonly key: Uint8Array; readonly sig: Uint8Array };
+      readonly nowSec?: number;
+    },
+    mode: "check"
+  ): CheckResult;
+  private runAuthorization(
+    chain: CapabilityChain,
+    demand: Demand,
+    opts: {
+      readonly proof?: { readonly key: Uint8Array; readonly sig: Uint8Array };
+      readonly nowSec?: number;
+    },
+    mode: "redeem"
+  ): RedemptionResult;
+  private runAuthorization(
+    chain: CapabilityChain,
+    demand: Demand,
+    opts: {
+      readonly proof?: { readonly key: Uint8Array; readonly sig: Uint8Array };
+      readonly nowSec?: number;
+    },
+    mode: "check" | "redeem"
+  ): CheckResult | RedemptionResult {
     const now = opts.nowSec ?? this.nowSec();
     if (chain.length === 0)
       return fail({ ok: false, reason: "chain", detail: "empty chain" });
@@ -370,8 +449,9 @@ export class Capabilities {
       if (left < remaining) remaining = left;
     }
 
-    if (opts.consume === true) {
-      if (opts.proof === undefined)
+    if (mode === "redeem") {
+      const proof = opts.proof;
+      if (proof === undefined)
         return fail({
           ok: false,
           reason: "recipient",
@@ -384,7 +464,7 @@ export class Capabilities {
           reason: "recipient",
           detail: "unknown recipient key",
         });
-      if (!bytesEqual(opts.proof.key, expected)) {
+      if (!bytesEqual(proof.key, expected)) {
         return fail({
           ok: false,
           reason: "recipient",
@@ -392,7 +472,7 @@ export class Capabilities {
         });
       }
       const cidBytes = new Uint8Array(Buffer.from(leafCidHex(leaf), "hex"));
-      if (!verifyBytes(opts.proof.key, cidBytes, opts.proof.sig)) {
+      if (!verifyBytes(proof.key, cidBytes, proof.sig)) {
         return fail({
           ok: false,
           reason: "recipient",
@@ -405,12 +485,14 @@ export class Capabilities {
         remaining: remaining - 1,
         chainId: leafCidHex(leaf),
         operation: boundOperation(demand),
+        consumed: true as const,
+        proofVerified: true as const,
+        redemptionId: `rdm-${randomHex(8)}`,
       };
     }
     return {
       ok: true,
       remaining,
-      chainId: leafCidHex(leaf),
       operation: boundOperation(demand),
     };
   }

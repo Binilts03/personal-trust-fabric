@@ -1,4 +1,7 @@
-import type { AuthorityRequest } from "../core/authority.js";
+import type {
+  AuthorityOperation,
+  AuthorityRequest,
+} from "../core/authority.js";
 import { digestForOperation } from "../core/authority.js";
 import { isRecord, reqString } from "./guards.js";
 
@@ -131,9 +134,13 @@ export function parsePaymentRequired(headerB64: string): ParsedChallenge {
   };
 }
 
+/**
+ * Identity-free demand context (ADR-0013): identity comes from verified
+ * ingress, never from the adapter. The caller supplies only terms
+ * (purpose/resource/currency + policy-selected expectations); the host
+ * binds identity at `evaluate` time.
+ */
 export interface DemandContext {
-  readonly principal: string;
-  readonly agent: string;
   readonly purpose: string;
   readonly resource: string;
   readonly currency: string;
@@ -164,12 +171,17 @@ export function requirementMatches(
   );
 }
 
-/** One accepted requirement → PTF demand + capability args. Still evidence: must pass Authority + Capabilities. */
+/**
+ * One accepted requirement → identity-free PTF operation + capability args.
+ * Still evidence: must pass Authority + Capabilities under the host's
+ * verified ingress. Fail-closed checks (resource/asset/network match,
+ * atomic amount) are unchanged.
+ */
 export function toX402PaymentDemand(
   accepted: PaymentRequirement,
   ctx: DemandContext
 ): {
-  readonly demand: AuthorityRequest;
+  readonly operation: AuthorityOperation;
   readonly capabilityArgs: {
     readonly amount: number;
     readonly currency: string;
@@ -194,9 +206,7 @@ export function toX402PaymentDemand(
     throw new X402Error("network mismatch: requirement not selected by policy");
   }
   const amount = parseAtomicAmount(accepted.amount);
-  const operation = {
-    principal: ctx.principal,
-    actor: ctx.agent,
+  const operation: AuthorityOperation = {
     action: { name: "/pay" as const },
     resource: { type: "x402-payment", id: ctx.resource },
     context: {
@@ -209,19 +219,16 @@ export function toX402PaymentDemand(
     },
     purpose: ctx.purpose,
   };
-  const demand: AuthorityRequest = {
-    ...operation,
-    termsDigest: digestForOperation(operation),
+  const capabilityArgs = {
+    amount,
+    currency: ctx.currency,
+    asset: accepted.asset,
+    network: accepted.network,
+    scheme: accepted.scheme,
   };
   return {
-    demand,
-    capabilityArgs: {
-      amount,
-      currency: ctx.currency,
-      asset: accepted.asset,
-      network: accepted.network,
-      scheme: accepted.scheme,
-    },
+    operation,
+    capabilityArgs,
   };
 }
 

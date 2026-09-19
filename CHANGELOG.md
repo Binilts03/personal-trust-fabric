@@ -13,13 +13,15 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
-- Exact-operation authorization (ADR-0018): `authorize` echoes the verified
-  demand and every execute path deep-compares its instruction against the
-  echo (bare redemptions fail closed); vault reads/uses consume authority
-  with host persistence; proposal and execution authorize the identical
-  canonical operation; generic `ExecutionReceipt` with payment `Receipt` as
-  an extension. Payment affirmed as one domain profile — no live-payment
-  platform goal.
+- Exact-operation authorization, hardened (ADR-0018): CHECK ≠ REDEEM ≠
+  EXECUTE — `check()` dry-runs and can never execute (type-level and
+  runtime); only `redeem()` yields an executable `Redemption`. Provider
+  context must deep-equal authorized args (telemetry rides an explicit
+  `metadata` bag); `executeProtectedAction` owns reload → consume → CAS
+  save → use → execute for effectful secret use; vault records may carry
+  resource addresses; `createApproval` folds external bindings;
+  authority ids are global and immutable; x402/AP2 translators are
+  identity-free; PDP keys reject duplicate secrets.
 - Old-defect fixes: PDP hot-reload retains last-good keys, true IP-pinned
   connects, `expectedNonce` verification, strict exclusive→inclusive
   attenuation, same-type vault ambiguity fails closed, live-grants-only

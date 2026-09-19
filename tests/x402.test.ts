@@ -42,15 +42,17 @@ describe("x402 v2 adapter as evidence (ptf-v01/04)", () => {
     assert.equal(parsed.resource.url, "https://api.example.com/data");
     const first = parsed.accepts[0];
     assert.ok(first);
-    const { demand, capabilityArgs } = toX402PaymentDemand(first, {
-      principal: PRINCIPAL,
-      agent: AGENT,
+    const { operation, capabilityArgs } = toX402PaymentDemand(first, {
       purpose: "buy data",
       resource: "data:premium",
       currency: "USDC",
     });
-    assert.equal(demand.context["recipient"], PAYTO);
-    assert.equal(demand.context["amount"], 10000);
+    // ADR-0013: identity-free — no principal/actor/digest on the operation.
+    assert.ok(!("principal" in operation));
+    assert.ok(!("actor" in operation));
+    assert.ok(!("termsDigest" in operation));
+    assert.equal(operation.context["recipient"], PAYTO);
+    assert.equal(operation.context["amount"], 10000);
     assert.deepEqual(capabilityArgs, {
       amount: 10000,
       currency: "USDC",
@@ -115,9 +117,7 @@ describe("x402 v2 adapter as evidence (ptf-v01/04)", () => {
       ...ACCEPT,
       payTo: "0xAttacker0000000000000000000000000000000000",
     };
-    const { demand } = toX402PaymentDemand(tampered as never, {
-      principal: "did:test:principal",
-      agent: "did:test:agent",
+    const { operation } = toX402PaymentDemand(tampered as never, {
       purpose: "buy data",
       resource: "data:premium",
       currency: "USDC",
@@ -126,8 +126,8 @@ describe("x402 v2 adapter as evidence (ptf-v01/04)", () => {
       [cap],
       {
         cmd: "/pay",
-        args: { amount: demand.context["amount"], currency: "USDC" },
-        recipient: demand.context["recipient"] as string,
+        args: { amount: operation.context["amount"], currency: "USDC" },
+        recipient: operation.context["recipient"] as string,
         termsDigest: digest,
       },
       { consume: false }

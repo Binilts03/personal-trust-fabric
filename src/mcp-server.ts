@@ -676,7 +676,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       if (proofKey.length !== 32) fail("recipient key must be 32 bytes");
       if (proofSig.length !== 64) fail("recipient signature must be 64 bytes");
       // Authorize the capability FIRST so a bad proof never burns authority.
-      const redeemed = caps.authorize(
+      const redeemed = caps.redeem(
         [challenge.cap],
         {
           cmd: demand.action.name,
@@ -687,7 +687,6 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           termsDigest: args.termsDigest,
         },
         {
-          consume: true,
           proof: {
             key: proofKey,
             sig: proofSig,

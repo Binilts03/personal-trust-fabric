@@ -578,4 +578,82 @@ describe("attenuation strictness — exclusive parent vs inclusive child (policy
       false
     );
   });
+
+  it("authority ids are global and immutable across grants, approvals, and policies", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant(payGrant("x"));
+    assert.throws(() => auth.addGrant(payGrant("x")), /already registered/);
+    assert.throws(
+      () =>
+        auth.addApproval({
+          id: "x",
+          principal: PRINCIPAL,
+          actor: AGENT,
+          action: { name: "/pay" },
+          resource: { type: "invoice", id: "invoice:inv_8472" },
+          context: { amount: 10, currency: "INR", recipient: MERCHANT },
+          purpose: "pay invoice",
+          termsDigest: "ab".repeat(32),
+          exp: NOW + 600,
+          maxUses: 1,
+        }),
+      /already registered/
+    );
+    assert.throws(
+      () => auth.addPolicy({ id: "x", bounds: [] }),
+      /already registered/
+    );
+    // Distinct ids coexist.
+    auth.addGrant(payGrant("y"));
+    auth.addPolicy({ id: "z", bounds: [] });
+  });
+
+  it("restore refuses snapshots with duplicate ids across kinds", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant(payGrant("dup"));
+    const snap = auth.snapshot() as unknown as Record<string, unknown>;
+    (snap["policies"] as unknown[]).push({ id: "dup", bounds: [] });
+    assert.throws(() => Authority.restore(snap), /duplicate id dup/);
+  });
+
+  it("createApproval binds verified external bindings into the digest", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    const binding = {
+      scheme: "ap2" as const,
+      value: "ap2-tx-123",
+      evidenceRef: "mandate-1",
+    };
+    auth.createApproval({
+      id: "ap-bound",
+      principal: PRINCIPAL,
+      actor: AGENT,
+      action: { name: "/pay" as const },
+      resource: { type: "invoice", id: "invoice:inv_8472" },
+      context: { amount: 10, currency: "INR", recipient: MERCHANT },
+      purpose: "pay invoice",
+      binding,
+      ttlSec: 600,
+      maxUses: 1,
+    });
+    const operation = {
+      action: { name: "/pay" as const },
+      resource: { type: "invoice", id: "invoice:inv_8472" },
+      context: { amount: 10, currency: "INR", recipient: MERCHANT },
+      purpose: "pay invoice",
+    };
+    // Same operation WITH the binding allows and cites the approval.
+    const bound = auth.evaluate(operation, INGRESS, { binding });
+    assert.equal(bound.allow, true);
+    if (bound.allow) assert.equal(bound.citations[0]?.authorityId, "ap-bound");
+    // Same operation WITHOUT the binding denies on terms.
+    const unbound = auth.evaluate(operation, INGRESS);
+    assert.equal(unbound.allow, false);
+    if (!unbound.allow) assert.equal(unbound.reason, "terms");
+    // Same operation with a DIFFERENT binding denies on terms.
+    const rebound = auth.evaluate(operation, INGRESS, {
+      binding: { ...binding, value: "ap2-tx-999" },
+    });
+    assert.equal(rebound.allow, false);
+    if (!rebound.allow) assert.equal(rebound.reason, "terms");
+  });
 });

@@ -43,6 +43,14 @@ export interface VaultRecord {
   readonly value: unknown;
   readonly sensitivity: VaultSensitivity;
   readonly source: string;
+  /**
+   * Optional resource address (e.g. `{type:"credential", id:"credential:issuer-1"}`).
+   * When set, the record is selected ONLY for reads whose operation
+   * resource matches exactly — the resource then determines data selection,
+   * not just authorization. Records without one match any resource
+   * (back-compat for owner-scoped personal data).
+   */
+  readonly resource?: { readonly type: string; readonly id: string };
   readonly allowedPurposes: readonly string[];
   /** Exact agent ids (no wildcards). */
   readonly allowedAgents: readonly string[];
@@ -60,6 +68,7 @@ export interface VaultRecordInput {
   readonly value: unknown;
   readonly sensitivity: VaultSensitivity;
   readonly source: string;
+  readonly resource?: { readonly type: string; readonly id: string };
   readonly allowedPurposes: readonly string[];
   readonly allowedAgents: readonly string[];
   readonly expiresAt?: number | null;
@@ -111,6 +120,17 @@ function checkInput(input: VaultRecordInput): void {
   parseSensitivity(input.sensitivity);
   if (!isNonEmptyString(input.source))
     throw new Error("vault: source required");
+  if (input.resource !== undefined) {
+    if (
+      typeof input.resource !== "object" ||
+      input.resource === null ||
+      Array.isArray(input.resource) ||
+      !isNonEmptyString((input.resource as { type?: unknown }).type) ||
+      !isNonEmptyString((input.resource as { id?: unknown }).id)
+    ) {
+      throw new Error("vault: resource must be { type, id } non-empty strings");
+    }
+  }
   checkStringArray(input.allowedPurposes, "allowedPurposes");
   checkStringArray(input.allowedAgents, "allowedAgents");
   checkExpiresAt(input.expiresAt ?? null);
@@ -158,6 +178,14 @@ export class VaultStore {
       value: input.value,
       sensitivity: input.sensitivity,
       source: input.source,
+      ...(input.resource !== undefined
+        ? {
+            resource: {
+              type: input.resource.type,
+              id: input.resource.id,
+            },
+          }
+        : {}),
       allowedPurposes: [...input.allowedPurposes],
       allowedAgents: [...input.allowedAgents],
       expiresAt: input.expiresAt ?? null,
@@ -223,6 +251,16 @@ export class VaultStore {
       if (!rec.allowedAgents.includes(req.ingress.id)) continue;
       if (rec.sensitivity === "secret") continue;
       if (!(req.requested as readonly string[]).includes(rec.type)) continue;
+      // Resource-addressable records are selected ONLY by their resource:
+      // the requested resource determines data selection, not just
+      // authorization. Unaddressed records match any resource (back-compat).
+      if (
+        rec.resource !== undefined &&
+        (rec.resource.type !== req.resource.type ||
+          rec.resource.id !== req.resource.id)
+      ) {
+        continue;
+      }
       const group = byType.get(rec.type) ?? [];
       group.push(rec);
       byType.set(rec.type, group);
@@ -271,6 +309,8 @@ export class VaultStore {
    * Sole in-host path for `secret` records. Validates Authority for `/use`,
    * hands the value to the in-host callback only, and returns the callback's
    * receipt — the value never reaches the caller, receipts, logs, or audit.
+   * Selection is by exact record id (stronger than resource filtering); the
+   * `/use` authority operation binds the same id.
    */
   async useSecret(opts: SecretUseOptions): Promise<{
     readonly recordId: string;
@@ -299,8 +339,9 @@ export class VaultStore {
       purpose: opts.purpose,
     };
     // Actual secret use consumes uses (ADR-0018): a one-time approval
-    // covers exactly one use. Hosts MUST persist authority state after
-    // success (same burn-before-deliver order as execution).
+    // covers exactly one use. Hosts MUST persist authority state via the
+    // onConsumed hook (burn-before-effect) — persisting after success is
+    // already too late for effectful uses; see executeProtectedAction.
     const decision = opts.authority.evaluate(operation, opts.ingress, {
       consume: true,
       nowSec: opts.nowSec,
@@ -308,6 +349,8 @@ export class VaultStore {
     if (!decision.allow) {
       throw new Error(`vault: authority denied: ${decision.reason}`);
     }
+    // Burn-before-effect: persist consumption before the secret moves.
+    await opts.onConsumed?.(opts.authority);
     const instr: SecretInstruction = {
       recordId: rec.id,
       type: rec.type,
@@ -440,6 +483,14 @@ export class VaultStore {
         allowedAgents: r["allowedAgents"] as readonly string[],
         ...(r["expiresAt"] === null || typeof r["expiresAt"] === "number"
           ? { expiresAt: r["expiresAt"] as number | null }
+          : {}),
+        ...(r["resource"] !== undefined
+          ? {
+              resource: {
+                type: (r["resource"] as { type?: unknown }).type as string,
+                id: (r["resource"] as { id?: unknown }).id as string,
+              },
+            }
           : {}),
       };
       checkInput(input);
@@ -968,6 +1019,14 @@ export interface SecretUseOptions {
   readonly nowSec: number;
   readonly use: (instr: SecretInstruction) => Promise<SecretUseResult>;
   readonly audit?: FileAuditLog;
+  /**
+   * Burn-before-effect hook (ADR-0018): runs after authority is consumed
+   * but BEFORE the secret reaches the callback. Hosts persist authority
+   * state here, so a crash between consumption and the external effect
+   * burns a use instead of resurrecting it. Without this hook, callers
+   * must persist before invoking — persisting after success is too late.
+   */
+  readonly onConsumed?: (authority: Authority) => void | Promise<void>;
 }
 
 /**

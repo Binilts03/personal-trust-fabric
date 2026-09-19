@@ -1,7 +1,7 @@
 import { canonicalize, sha256Hex } from "./canonical.js";
 import { randomHex } from "./crypto.js";
 import { requireBoundOperation } from "./execute.js";
-import type { AuthorizedOperation } from "./types.js";
+import type { Redemption } from "./types.js";
 
 /**
  * Signing-key Protected Execution with C parity (v04/04).
@@ -58,16 +58,18 @@ function bytesOf(instruction: SignInstruction): Uint8Array {
 export async function signAndReceipt(
   executor: SigningExecutor,
   instruction: SignInstruction,
-  redemption: {
-    readonly ok: true;
-    readonly chainId: string;
-    readonly operation: AuthorizedOperation;
-  },
+  redemption: Redemption,
   at: number
 ): Promise<SignReceipt> {
   if (redemption.ok !== true)
     throw new Error("signing: redemption required before execution");
+  // Binding first, then flags — see execute.ts.
   const op = requireBoundOperation(redemption);
+  if (redemption.consumed !== true || redemption.proofVerified !== true) {
+    throw new Error(
+      "signing: dry-run check cannot execute — redeem with proof first (ADR-0018)"
+    );
+  }
   if (redemption.chainId !== instruction.capabilityId) {
     throw new Error("signing: redemption is not bound to this instruction");
   }

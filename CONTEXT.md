@@ -83,8 +83,8 @@ A short-lived in-memory redeem step: the server issues a capability id (`cidHex`
 _Avoid_: Session, login flow
 
 **Anchor**:
-A Merkle-root checkpoint (`anchor.json`: root + line count) over the audit log, recomputed and compared on restore so full-directory rollback is caught.
-_Avoid_: Blockchain proof, ledger
+A Merkle-root consistency checkpoint (`anchor.json`: root + line count) over the audit log, recomputed and compared on restore so partial restores and mixed vintages fail closed. It proves a backup matches itself — not external freshness (a coherently rolled-back backup still verifies; only external retention defeats that).
+_Avoid_: Blockchain proof, freshness anchor
 
 **Keystore / DEK**:
 The passphrase-sealed file holding signing keys plus the vault data-encryption key (`ptf/vault-dek`). Passphrase rotation re-wraps keys; DEK rotation re-seals vault data. Never backed up alongside its own passphrase file.

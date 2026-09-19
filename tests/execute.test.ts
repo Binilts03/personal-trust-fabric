@@ -110,7 +110,7 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       key: merchant.publicKeyRaw,
       sig: signBytes(merchant.privateKey, cidBytes),
     };
-    const redeemed = caps.authorize([cap], demand, { consume: true, proof });
+    const redeemed = caps.redeem([cap], demand, { proof });
     assert.equal(redeemed.ok, true);
     if (!redeemed.ok) throw new Error("redeem must succeed in this fixture");
 
@@ -171,11 +171,8 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       sig: signBytes(merchant.privateKey, cidBytes),
     };
 
-    assert.equal(
-      caps.authorize([cap], demand, { consume: true, proof }).ok,
-      true
-    );
-    const replay = caps.authorize([cap], demand, { consume: true, proof });
+    assert.equal(caps.redeem([cap], demand, { proof }).ok, true);
+    const replay = caps.redeem([cap], demand, { proof });
     assert.equal(replay.ok, false);
     if (!replay.ok) assert.equal(replay.reason, "uses-exhausted");
 
@@ -278,8 +275,7 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       termsDigest: digest,
     };
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
-    const redeemed = caps.authorize([cap], demand, {
-      consume: true,
+    const redeemed = caps.redeem([cap], demand, {
       proof: {
         key: merchant.publicKeyRaw,
         sig: signBytes(merchant.privateKey, cidBytes),
@@ -333,7 +329,25 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       nowSec: () => NOW,
     });
     const digest = termsDigestOf({ invoice: "inv_9", amount: 10 });
-    const cap = issueCap(caps, principal.privateKey, digest);
+    const cap = caps.issue(
+      null,
+      {
+        iss: "did:test:principal",
+        aud: "did:test:agent",
+        sub: "did:test:principal",
+        cmd: "/pay",
+        pol: [["<=", ".amount", 2000]],
+        purpose: "pay invoice",
+        resource: "invoice:inv_8472",
+        recipient: MERCHANT,
+        amountMax: 2000,
+        currency: "INR",
+        exp: NOW + 300,
+        maxUses: 100,
+        termsDigest: digest,
+      },
+      principal.privateKey
+    );
     const base = {
       capabilityId: leafCidHex(cap),
       recipient: MERCHANT,
@@ -345,7 +359,7 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
     };
     const authorize = () => {
       const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
-      const r = caps.authorize(
+      const r = caps.redeem(
         [cap],
         {
           cmd: "/pay" as const,
@@ -356,7 +370,6 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
           termsDigest: digest,
         },
         {
-          consume: false,
           proof: {
             key: merchant.publicKeyRaw,
             sig: signBytes(merchant.privateKey, cidBytes),
@@ -364,11 +377,11 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
         }
       );
       assert.equal(r.ok, true);
-      if (!r.ok) throw new Error("dry-run must succeed in this fixture");
+      if (!r.ok) throw new Error("redeem must succeed in this fixture");
       return r;
     };
     const executor = new FakePaymentExecutor();
-    // Bare chainId (the old forgery shape) carries no bound operation.
+    // Bare chainId (the old forgery shape) binds nothing at all.
     await assert.rejects(
       () =>
         executeAndReceipt(
@@ -378,6 +391,36 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
           NOW
         ),
       /unbound redemption/
+    );
+    // Flags without a bound operation fail at the binding gate.
+    await assert.rejects(
+      () =>
+        executeAndReceipt(
+          executor,
+          base,
+          {
+            ok: true,
+            chainId: base.capabilityId,
+            consumed: true,
+            proofVerified: true,
+          } as never,
+          NOW
+        ),
+      /unbound redemption/
+    );
+    // A real dry-run check authorizes nothing executable.
+    const checked = caps.check([cap], {
+      cmd: "/pay" as const,
+      args: { amount: 10, currency: "INR" },
+      recipient: MERCHANT,
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
+      termsDigest: digest,
+    });
+    assert.equal(checked.ok, true);
+    await assert.rejects(
+      () => executeAndReceipt(executor, base, checked as never, NOW),
+      /dry-run check cannot execute/
     );
     // Each mutated field fails with its own reason; nothing executes.
     const cases: [string, Record<string, unknown>, RegExp][] = [

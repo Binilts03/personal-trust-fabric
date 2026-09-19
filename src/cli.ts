@@ -810,7 +810,7 @@ export async function run(
     const recipientPriv = toPrivateKey(recipientSeed);
     const recipientPub = publicKeyFromPrivate(recipientPriv);
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
-    const redeemed = capabilities.authorize(
+    const redeemed = capabilities.redeem(
       [cap],
       {
         cmd: "/pay",
@@ -821,7 +821,6 @@ export async function run(
         termsDigest: digest,
       },
       {
-        consume: true,
         proof: {
           key: rawPublicKey(recipientPub),
           sig: signBytes(recipientPriv, cidBytes),

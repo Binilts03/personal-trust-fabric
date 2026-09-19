@@ -33,11 +33,22 @@ tested at the boundary.
 - Exact-operation binding (ADR-0018): `authorize` echoes the verified
   demand and every execute path deep-compares its instruction against the
   echo — bare `{ok, chainId}` redemptions fail closed, as does any mutated
-  recipient/amount/currency/resource/purpose/digest. In-process forgery by
-  hostile host code is out of model (the host owns everything); the
-  enforced boundary is agent-facing seams, which build both sides from the
-  same stored demand (proof: `tests/execute.test.ts` mutation matrix,
+  recipient/amount/currency/resource/purpose/digest. CHECK ≠ REDEEM ≠
+  EXECUTE: `check()` dry-runs (no consumption, no proof, no chainId) and
+  can never execute — type-level and runtime; only `redeem()` (proof
+  verified, use consumed) yields an executable `Redemption`. In-process
+  forgery by hostile host code is out of model (the host owns everything);
+  the enforced boundary is agent-facing seams, which build both sides from
+  the same stored demand (proof: `tests/execute.test.ts` mutation matrix,
   `tests/signing.test.ts`, `tests/providers.test.ts`).
+- Authority ids are global and immutable across grants, approvals, and
+  policies: re-registering an id throws (revoke first) — revocation,
+  usage, and citations stay unambiguous (proof: `tests/authority.test.ts`).
+  Snapshots reusing one id across entries fail closed at restore with a
+  repair instruction (assign distinct ids by hand).
+- `createApproval` accepts verified external bindings and folds them into
+  the digest; evaluation without (or with a different) binding fails on
+  terms (proof: `tests/authority.test.ts`).
 - Unbounded `/pay*` standing grants rejected at `addGrant` (soft guard) — add
   a `.context.amount` ceiling or use a one-time exact-terms approval.
 - Rollback is detected, not prevented: every audit entry commits to the
@@ -141,9 +152,14 @@ tested at the boundary.
   does not, actual disclosure and secret use do — one-time approvals cover
   exactly one presentation/use, and hosts must persist authority state
   after success (burn-before-deliver; MCP present and CLI vault-read do).
-  The vault evaluates the caller-supplied resource, so proposal and
-  execution authorize the identical canonical operation (present re-derives
-  the digest and requires it to equal the proposal key). Same-type
+  For effectful secret use, persistence must precede the external effect:
+  `useCredential` offers `onConsumed`, and `executeProtectedAction`
+  owns reload → consume → CAS save → use → execute (a CAS conflict fails
+  closed before the secret is touched). The vault evaluates the
+  caller-supplied resource, so proposal and execution authorize the
+  identical canonical operation (present re-derives the digest and requires
+  it to equal the proposal key); resource-addressed records are selected
+  only by their resource. Same-type
   ambiguity fails closed (re-put under one id or retire the stale record).
   `useCredential` is the sole in-host path for `secret` (receipt-only return;
   a receipt echoing a distinctive secret fails closed instead of minting;
@@ -202,13 +218,19 @@ tested at the boundary.
   `makeFakeProviders` (payment/travel/retail/email/identity) move nothing —
   canned `fake-<kind>-` refs plus a call log for assertions. Real rails are
   host duty (`ProtectedProvider.submit` / `PaymentExecutor`).
-  `providerAsExecutor` / `executeViaProvider` require redemption binding
-  (`chainId === capabilityId`) plus `termsDigest` verify before any receipt;
+  `providerAsExecutor` / `executeViaProvider` / `executeActionViaProvider`
+  require a `Redemption` (consumed + proofVerified — dry-run checks fail
+  closed) with binding (`chainId === capabilityId`) plus `termsDigest`
+  verify before any receipt;
   `provider.verify` is provider-attested, so independent rail settlement
-  checks stay host duty (see ADR-0005 line below). Receipts reuse fixed
-  `Receipt` fields with amount/currency taken explicitly from context
-  (missing values fail closed — never fabricated), so free-text context
-  handles never leak (proof: `tests/providers.test.ts`). Rail results are
+  checks stay host duty (see ADR-0005 line below). Provider context must
+  deep-equal authorized args exactly — extra effect-bearing keys fail
+  closed; non-effectful telemetry rides in the explicit `metadata` bag
+  (never compared, never receipted; hosts must ensure it cannot alter the
+  external effect). Receipts reuse fixed fields with amount/currency taken
+  explicitly from context for payments (`Receipt`) and omitted for generic
+  actions (`ExecutionReceipt`), so free-text context handles never leak
+  (proof: `tests/providers.test.ts`). Rail results are
   evidence, never authority (ADR-0005): hosts must run the `x402`
   (`checkSettlement`) / `ap2` (`verifyMandatePair`) verifiers on provider
   output before trusting it for value movement.
