@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+<title id="title">Personal Trust Fabric social preview</title>
+<desc id="desc">Authority belongs to the person, not the agent.</desc>
+<defs>
+  <linearGradient id="accent" x1="90" y1="80" x2="1160" y2="560"><stop stop-color="#49D7FF"/><stop offset="1" stop-color="#62E6A7"/></linearGradient>
+  <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#17212B" stroke-width="1"/></pattern>
+</defs>
+<rect width="1280" height="640" fill="#0B0F14"/>
+<rect width="1280" height="640" fill="url(#grid)"/>
+<rect x="50" y="50" width="1180" height="540" rx="32" fill="none" stroke="#25303C"/>
+<g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <g transform="translate(90 94)">
+    <path d="M0 0h30l15 15-15 15H0L15 15 0 0z" fill="none" stroke="url(#accent)" stroke-width="3"/>
+    <text x="62" y="23" fill="#95A1AF" font-size="18" font-weight="700" letter-spacing="2.4">PERSONAL TRUST FABRIC</text>
+    <text x="0" y="128" fill="#F4F7FA" font-size="58" font-weight="760">Authority belongs to the person.</text>
+    <text x="0" y="194" fill="url(#accent)" font-size="58" font-weight="760">Not the agent.</text>
+    <text x="0" y="248" fill="#95A1AF" font-size="23">User-owned authority and protected use for interchangeable AI agents.</text>
+  </g>
+  <g transform="translate(90 420)">
+    <text fill="#49D7FF" font-size="14" font-weight="750" letter-spacing="1.2">DEFAULT DENY</text>
+    <text x="160" fill="#62E6A7" font-size="14" font-weight="750" letter-spacing="1.2">EXACT TERMS</text>
+    <text x="302" fill="#49D7FF" font-size="14" font-weight="750" letter-spacing="1.2">SECRET-FREE</text>
+    <text x="448" fill="#62E6A7" font-size="14" font-weight="750" letter-spacing="1.2">VENDOR-NEUTRAL</text>
+  </g>
+  <g transform="translate(855 338)">
+    <g fill="#111821" stroke="#25303C">
+      <rect x="0" y="-110" width="104" height="36" rx="10"/><rect x="0" y="-54" width="104" height="36" rx="10"/><rect x="0" y="2" width="104" height="36" rx="10"/>
+    </g>
+    <g fill="#F4F7FA" font-size="13" font-weight="650"><text x="22" y="-87">Agent A</text><text x="22" y="-31">Agent B</text><text x="22" y="25">Local</text></g>
+    <path d="M104-92h62l28 54M104-36h90M104 20h62l28-54" fill="none" stroke="#49D7FF" stroke-width="2"/>
+    <rect x="194" y="-72" width="120" height="92" rx="18" fill="#111821" stroke="url(#accent)" stroke-width="2.4"/>
+    <text x="254" y="-36" text-anchor="middle" fill="#F4F7FA" font-size="22" font-weight="760">PTF</text>
+    <text x="254" y="-12" text-anchor="middle" fill="#95A1AF" font-size="11" font-weight="650">AUTHORITY</text>
+    <path d="M314-42h64" stroke="#62E6A7" stroke-width="2"/>
+    <text x="388" y="-63" fill="#95A1AF" font-size="12">identity</text><text x="388" y="-39" fill="#95A1AF" font-size="12">signing</text><text x="388" y="-15" fill="#95A1AF" font-size="12">protected actions</text>
+  </g>
+</g>
+</svg>
