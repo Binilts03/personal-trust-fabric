@@ -41,3 +41,12 @@ User-owned trust layer: agents propose, deterministic core disposes. LLMs reason
 - `docs/agents/domain.md` — read before exploring code; glossary + ADR-conflict flagging rules.
 
 Skills: `docs/agents/domain.md` is a guide; the consumer contract is `src/index.ts` + `docs/audit/architecture.md`. Test at public seams only; agree seams before code.
+
+## Brand contract
+
+- `assets/brand/` and the README region between `PTF-BRAND:START` and `PTF-BRAND:END` define **Authority Manifest v1**.
+- Unrelated engineering work MUST NOT modify that directory or protected README region.
+- Stable brand copy describes enduring product invariants only. Volatile status, APIs, protocol versions, test counts, providers, and milestones belong below the protected region.
+- If a product change genuinely invalidates brand copy, flag it for explicit brand review instead of silently rewriting it.
+- Primary brand visuals MUST remain repository-owned static assets; do not replace them with dynamic third-party README renderers.
+- Read `docs/brand/BRAND.md` before intentional brand work and run `npm run check:brand` after any README or brand-asset change.
