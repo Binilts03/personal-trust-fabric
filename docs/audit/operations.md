@@ -1,9 +1,9 @@
-# Operations pack (ticket 12) — run it without the author in the room
+# Operations guide
 
-Single-operator production surface: image, health signals, audit shipping +
-retention, backup/restore with the ticket-03 freshness check, install
-hygiene. Proved by `tests/operations.test.ts` (PDP probes, full drill,
-hygiene contract) and the fresh-host drill below.
+Single-operator reference surface: image, health signals, audit shipping and
+retention, backup/restore with freshness checks, and install hygiene.
+Behavior is exercised by `tests/operations.test.ts` and the fresh-host drill
+below.
 
 ## Container image
 
@@ -39,7 +39,7 @@ planning data, verifier output, and the store out of the build context. Record
 the built image digest with the release that produced it. Residual: no image
 signing yet — sign with the same Sigstore flow as the release when enabled.
 
-## PDP front door (ticket 10) — scopes, rotation, one replica
+## PDP front door — scopes, rotation, one replica
 
 `compose.yml` is the deploy config: a single PDP replica (`replicas: 1`
 is load-bearing — buckets are per-process, so a second replica doubles
@@ -165,7 +165,7 @@ line count next to the backup; the mechanized form is
 `checkpoint(entries, at)` / `verifyConsistency` from `store/anchor.ts`
 (proved in the drill). Restore:
 
-1. Stop writers (single-writer topology, ticket 02).
+1. Stop writers (single-writer topology).
 2. Copy the backup over a fresh directory — never merge files across
    backups (mixed vintages trip the freshness check on purpose). The unit
    includes `personal-state.json` when present; same no-merge rule applies.
@@ -203,10 +203,11 @@ revoke, stale-restore alarms (load + CLI refuse), clean-restore verifies
 - `lint-staged` is scoped per area (`src/**`, `tests/**`, `**/*.{json,md}`)
   — the old bare `*` also formatted stray staged files.
 
-## Accepted risks awaiting owner sign (merge checklist)
+## Operational residuals
 
-Single-operator accepted risks from tickets 11–12. Merging the release
-signs all four; unchecking one blocks the release:
+The reference deployment has the following operator-owned residuals. These are
+documented limits rather than release checkboxes; the canonical technical
+detail remains in `limits.md`:
 
 - [ ] Egress proxy deferred — direct fetch with per-hop DNS + redirect
       re-checks (`fetchWithPinning`); proxy recommended for high-value hosts
@@ -221,10 +222,3 @@ signs all four; unchecking one blocks the release:
       irreversible effects independently (`limits.md` WebMCP row).
 - [ ] Image digest recorded at release time is the pin; image unsigned
       until the owner enables Sigstore for images.
-
-## Decision-trail visibility (the `.scratch/` question)
-
-Local planning and ticket deliberation are intentionally not part of the
-public repository. Durable architecture decisions belong in `docs/adr/`;
-security properties and residuals belong in `THREATMODEL.md` and
-`docs/audit/limits.md`. Git and pull-request history remain the change record.
