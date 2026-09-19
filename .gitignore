@@ -1,20 +1,55 @@
+# Dependencies and generated output
 node_modules/
 dist/
-evidence/*
-!evidence/.gitkeep
-.scratch/
+coverage/
+release-assets/
 *.tsbuildinfo
-# Operator artifacts: stores, backups, and secrets must never be committed.
+*.tgz
+*.log
+npm-debug.log*
+tmp/
+.tmp/
+.temp/
+
+# Local planning / coding-agent state
+.scratch/
+.claude/
+.cursor/
+.codex/
+.aider*
+.vscode/
+.idea/
+
+# Operator stores, backups, runtime evidence
 ptf-store/
 ptf-restored/
 backups/
-*.tgz
+proposals/
+evidence/
+logs/
+secrets/
+personal-state.json
+authority.json
+registry.json
+keystore.json
+audit.jsonl
+anchor.json
+pdp-keys.json
+
+# Secrets and local configuration
 .env
 .env.*
-pdp-keys.json
+.npmrc
 tls/
-coverage/
-.vscode/
-.idea/
+*.key
+*.crt
+*.p12
+*.pfx
+*.pem
+!tests/fixtures/test-only-insecure-key.pem
+!tests/fixtures/test-only-insecure-cert.pem
+
+# OS/editor noise
 .DS_Store
 *.swp
+*~
