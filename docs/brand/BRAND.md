@@ -1,50 +1,93 @@
-# Authority Fabric — Brand System v1
+# Authority Manifest v1
 
-Authority Fabric is the visual identity of Personal Trust Fabric (PTF).
+Authority Manifest is the repository identity for Personal Trust Fabric.
 
-Its job is to make one product idea legible before a visitor reads the implementation:
+Its job is not to make GitHub resemble a marketing site. Its job is to make the
+core mechanism legible in the medium developers already trust: text, code,
+structured artifacts, and precise technical prose.
 
-> **Authority belongs to the person. Not the agent.**
+The governing line is:
 
-The brand is intentionally independent of today's protocol adapters, CLI shape,
-test counts, providers, and roadmap milestones. Those details evolve. The
-authority boundary should not.
+> **Authority should travel. Secrets should not.**
 
-## Visual language
+## Design read
 
-The mark is four independent routes converging through one bounded aperture.
-It represents interchangeable agents and systems borrowing authority through a
-single user-owned control point.
+This is a repository for security engineers, agent-runtime builders, standards
+people, and technically serious early adopters. The visual language therefore
+comes from signed manifests, protocol transcripts, RFCs, capability grants, and
+decision logs rather than generic cybersecurity branding.
 
-### Palette
+The design should feel authored, not decorated.
 
-| Token | Dark | Light | Meaning |
-| --- | --- | --- | --- |
-| Background | `#0B0F14` | `#F7F9FB` | neutral trust surface |
-| Surface | `#111821` | `#FFFFFF` | bounded components |
-| Primary text | `#F4F7FA` | `#10151C` | high-confidence text |
-| Secondary text | `#95A1AF` | `#5E6A78` | explanatory text |
-| Authority cyan | `#49D7FF` | `#007E9E` | routing / verification |
-| Allow mint | `#62E6A7` | `#168B61` | permitted bounded action |
-| Warning amber | `#F2B84B` | `#A56800` | ceilings / constraints |
+## Signature element
 
-Red is intentionally not a primary brand color. Deny states may use it
-sparingly in future diagrams, but the identity is about bounded authority, not
-alarm aesthetics.
+The README's ASCII authority topology is the primary brand artifact.
 
-## Repository assets
+It is functional. It must explain:
 
-All primary visual assets are committed locally under `assets/brand/`.
-Do not replace them with dynamic third-party renderers.
+1. authority belongs to the person;
+2. multiple interchangeable agents may request bounded use;
+3. PTF is the decision and protected-use boundary;
+4. Personal State remains behind that boundary;
+5. outward results are disclosures, protected actions, signatures, or receipts;
+6. secrets do not cross to the agent.
 
-- `ptf-mark-dark.svg` / `ptf-mark-light.svg` — compact mark.
-- `hero-dark.svg` / `hero-light.svg` — repository landing hero.
-- `architecture-dark.svg` / `architecture-light.svg` — stable conceptual model.
-- `authority-trace-dark.svg` / `authority-trace-light.svg` — example decision trace.
-- `social-preview.svg` — 1280×640 social-card source.
+Do not replace the ASCII topology with a decorative hero illustration unless a
+future brand review explicitly changes this system.
 
-GitHub README images use `<picture>` so light/dark mode is selected by the
-viewer without JavaScript.
+## Visual system
+
+GitHub itself provides the primary surface. In-repository content should inherit
+GitHub's typography, spacing, code rendering, and light/dark themes rather than
+fight them.
+
+Owned visual assets are intentionally minimal.
+
+| Token | Value | Role |
+| --- | --- | --- |
+| GitHub dark | `#0D1117` | social preview background |
+| GitHub light | `#FFFFFF` | light neutral reference |
+| Dark foreground | `#F0F6FC` | social preview type |
+| Muted dark | `#8B949E` | secondary social preview type |
+| Signal orange | `#FF6A1A` | the single brand accent |
+
+Signal orange marks the authority boundary or decisive transition. It is not a
+gradient color and should not become general decoration.
+
+## Typography
+
+Inside GitHub, use native Markdown and code rendering.
+
+- Normal prose uses GitHub's native text face.
+- Monospace is reserved for code, protocol-like structures, ASCII topology,
+  identifiers, and decision transcripts.
+- No decorative monospace.
+- No all-caps eyebrow labels above section headings.
+- No gradient text.
+- No typography introduced only to imitate a startup landing page.
+
+The social preview may use a system sans-serif fallback stack because it is a
+standalone static asset. Its composition, not a novelty font, carries the
+identity.
+
+## Layout
+
+The brand region is left-aligned and reading-first.
+
+Do not introduce:
+- centered SaaS heroes;
+- rows of equal feature cards;
+- pill badges used as decoration;
+- bento grids with no information hierarchy;
+- glassmorphism;
+- neon cybersecurity motifs;
+- fake terminal windows;
+- lock or shield clichés;
+- Matrix imagery;
+- visitor counters, streaks, GitHub stats, or animated typing banners.
+
+The ASCII topology and decision transcript are the only intentionally technical
+visual devices in the README landing layer.
 
 ## Stable versus evolving content
 
@@ -56,18 +99,49 @@ and:
 
 `<!-- PTF-BRAND:END -->`
 
-is the stable brand layer. It may state enduring product principles, but it
-must not contain volatile facts such as test counts, current protocol versions,
-number of tools, supported provider counts, or current milestone status.
+is the stable brand layer.
 
-Everything below that region is normal evolving technical documentation.
+It may describe enduring product principles, but it must not contain volatile
+facts such as test counts, current adapter lists, protocol versions, package
+release state, or roadmap milestone completion.
 
-### Agent rule
+Everything below that region is evolving technical documentation.
+
+## Copy rules
+
+Preferred language:
+
+- "Authority should travel. Secrets should not."
+- "Use without possession."
+- "External messages are evidence, never authority."
+- "The agent proposes. PTF decides."
+- "Protected state stays behind the boundary."
+
+Avoid:
+- presenting PTF as a payment platform, wallet, PSP, settlement service, or
+  generic agent framework;
+- vague claims such as "secure", "production-grade", or "enterprise-ready"
+  without evidence;
+- generic AI marketing language;
+- technical claims inside visual decoration that can drift from implementation.
+
+## Social preview
+
+`assets/brand/social-preview.svg` is the only primary branded graphic committed
+to the repository. It is a 1280×640 poster-like source built around
+"AUTHORITY WITHOUT POSSESSION", a minimal PTF topology, and the signal-orange
+boundary.
+
+A raster export may be uploaded to GitHub repository settings for the social
+preview. The source should change only through explicit brand review.
+
+## Maintenance contract
 
 Unrelated engineering work MUST NOT modify `assets/brand/` or the protected
-README brand region. If a technical change genuinely invalidates a statement
-inside the brand region, flag it for explicit brand review instead of silently
-rewriting it.
+README brand region.
+
+If an implementation change genuinely invalidates a statement in the brand
+region, flag it for explicit brand review instead of silently rewriting it.
 
 Run:
 
@@ -77,33 +151,8 @@ npm run check:brand
 
 after any README or brand-asset change.
 
-## Copy rules
-
-Preferred:
-- "Authority belongs to the person. Not the agent."
-- "User-owned authority and protected use for interchangeable AI agents."
-- "Agents propose. The deterministic core decides."
-- "Use without possession."
-- "External messages are evidence, never authority."
-
-Avoid:
-- presenting PTF as a payment platform, wallet, PSP, settlement service, or
-  generic AI-agent framework;
-- generic hacker/cybersecurity language;
-- claims that depend on the current implementation;
-- unsupported production-readiness claims;
-- purple AI gradients, lock/shield clichés, Matrix imagery, or decorative
-  GitHub-stat widgets.
-
-## Social preview
-
-`social-preview.svg` is the editable source and is intentionally static. GitHub
-repository settings currently expect a raster social-preview upload, so export
-this source to a 1280×640 PNG when configuring the repository social preview.
-The source should change only when the core positioning changes.
-
 ## Versioning
 
-This document defines **Authority Fabric v1**. Changes to colors, mark geometry,
-hero thesis, or the core visual metaphor are brand-version changes. Ordinary
-README and product-documentation maintenance is not.
+This document defines **Authority Manifest v1**. A change to the governing line,
+ASCII topology, one-accent rule, or social-card composition is a brand-version
+change. Ordinary technical documentation maintenance is not.
