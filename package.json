@@ -9,31 +9,31 @@
   "exports": {
     ".": {
       "types": "./dist/src/api.d.ts",
-      "import": "./dist/src/api.js"
+      "default": "./dist/src/api.js"
     },
     "./authzen": {
       "types": "./dist/src/adapters/authzen.d.ts",
-      "import": "./dist/src/adapters/authzen.js"
+      "default": "./dist/src/adapters/authzen.js"
     },
     "./oauth": {
       "types": "./dist/src/adapters/oauth-agent.d.ts",
-      "import": "./dist/src/adapters/oauth-agent.js"
+      "default": "./dist/src/adapters/oauth-agent.js"
     },
     "./profiles/payment": {
       "types": "./dist/src/profiles/payment.d.ts",
-      "import": "./dist/src/profiles/payment.js"
+      "default": "./dist/src/profiles/payment.js"
     },
     "./profiles/data": {
       "types": "./dist/src/profiles/data.d.ts",
-      "import": "./dist/src/profiles/data.js"
+      "default": "./dist/src/profiles/data.js"
     },
     "./providers": {
       "types": "./dist/src/adapters/providers.d.ts",
-      "import": "./dist/src/adapters/providers.js"
+      "default": "./dist/src/adapters/providers.js"
     },
     "./vault": {
       "types": "./dist/src/store/vault.d.ts",
-      "import": "./dist/src/store/vault.js"
+      "default": "./dist/src/store/vault.js"
     },
     "./package.json": "./package.json"
   },

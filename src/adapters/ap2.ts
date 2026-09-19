@@ -1,4 +1,8 @@
-import type { AuthorityRequest } from "../core/authority.js";
+import type {
+  AuthorityOperation,
+  AuthorityRequest,
+  VerifiedExternalBinding,
+} from "../core/authority.js";
 import { digestForOperation } from "../core/authority.js";
 import {
   b64uDecode,
@@ -517,51 +521,59 @@ function verifyKb(
   }
 }
 
+/**
+ * Identity-free demand context (ADR-0013): identity comes from verified
+ * ingress, never from the adapter. The caller supplies only terms
+ * (purpose/resource); the host binds identity at `evaluate` time and folds
+ * the returned `binding` into `digestForOperation` / `evaluate` opts.
+ */
 export interface Ap2DemandContext {
-  readonly principal: string;
-  readonly agent: string;
   readonly purpose: string;
   readonly resource: string;
 }
 
 /**
- * Verified mandate -> PTF demand + capability args. Still evidence: must pass
- * Authority + Capabilities. AP2 exception to derive-never-trust: the verified
- * mandate cryptographically binds `transactionId` (== checkout_hash), so it is
- * folded into context and covered by the PTF-derived digest.
+ * Verified mandate -> identity-free PTF operation + capability args, PLUS
+ * the verified external binding. Still evidence: must pass Authority +
+ * Capabilities. AP2 exception to derive-never-trust: the verified mandate
+ * cryptographically binds `transactionId` (== checkout_hash), so it travels
+ * as a `VerifiedExternalBinding` for the host to fold into the
+ * PTF-derived digest — never as a caller-supplied digest, and no longer
+ * inside `operation.context`.
  */
 export function toAp2PaymentDemand(
   verified: VerifiedMandate,
   ctx: Ap2DemandContext
 ): {
-  readonly demand: AuthorityRequest;
+  readonly operation: AuthorityOperation;
+  readonly binding: VerifiedExternalBinding;
   readonly capabilityArgs: {
     readonly amount: number;
     readonly currency: string;
   };
 } {
-  const operation = {
-    principal: ctx.principal,
-    actor: ctx.agent,
+  const operation: AuthorityOperation = {
     action: { name: "/pay" as const },
     resource: { type: "ap2-payment", id: ctx.resource },
     context: {
       recipient: verified.payeeId,
       amount: verified.amountMinor,
       currency: verified.currency,
-      transactionId: verified.transactionId,
     },
     purpose: ctx.purpose,
   };
-  const demand: AuthorityRequest = {
-    ...operation,
-    termsDigest: digestForOperation(operation),
+  const binding: VerifiedExternalBinding = {
+    scheme: "ap2",
+    value: verified.transactionId,
+    evidenceRef: "ap2-mandate",
+  };
+  const capabilityArgs = {
+    amount: verified.amountMinor,
+    currency: verified.currency,
   };
   return {
-    demand,
-    capabilityArgs: {
-      amount: verified.amountMinor,
-      currency: verified.currency,
-    },
+    operation,
+    binding,
+    capabilityArgs,
   };
 }

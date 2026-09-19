@@ -53,7 +53,7 @@ function issue(
       resource: RESOURCE,
       recipient: R,
       exp: NOW + 300,
-      maxUses: 1,
+      maxUses: 100,
       termsDigest: DIGEST,
     },
     priv
@@ -97,8 +97,7 @@ describe("SigningExecutor parity (v04/04)", () => {
   it("signs with a bound redemption and receipt without key material", async () => {
     const { principal, recipient, caps } = setup();
     const cap = issue(caps, principal.privateKey);
-    const redeemed = caps.authorize([cap], demand(bytesDigestOf(BYTES)), {
-      consume: true,
+    const redeemed = caps.redeem([cap], demand(bytesDigestOf(BYTES)), {
       proof: proofFor(cap, recipient),
     });
     assert.equal(redeemed.ok, true);
@@ -120,8 +119,7 @@ describe("SigningExecutor parity (v04/04)", () => {
   it("rejects mismatched chainId and malformed bytes", async () => {
     const { principal, recipient, caps } = setup();
     const cap = issue(caps, principal.privateKey);
-    const redeemed = caps.authorize([cap], demand(bytesDigestOf(BYTES)), {
-      consume: false,
+    const redeemed = caps.redeem([cap], demand(bytesDigestOf(BYTES)), {
       proof: proofFor(cap, recipient),
     });
     assert.equal(redeemed.ok, true);
@@ -150,9 +148,11 @@ describe("SigningExecutor parity (v04/04)", () => {
     const cap = issue(caps, principal.privateKey);
     const good = demand(bytesDigestOf(BYTES));
     const authorize = () => {
-      const r = caps.authorize([cap], good, { consume: false });
+      const r = caps.redeem([cap], good, {
+        proof: proofFor(cap, recipient),
+      });
       assert.equal(r.ok, true);
-      if (!r.ok) throw new Error("dry-run must succeed in this fixture");
+      if (!r.ok) throw new Error("redeem must succeed in this fixture");
       return r;
     };
     const ex = new FakeSigningExecutor();
@@ -162,6 +162,13 @@ describe("SigningExecutor parity (v04/04)", () => {
       () =>
         signAndReceipt(ex, base, { ok: true, chainId: "cid-x" } as never, NOW),
       /unbound redemption/
+    );
+    // A real dry-run check authorizes nothing executable.
+    const checked = caps.check([cap], good);
+    assert.equal(checked.ok, true);
+    await assert.rejects(
+      () => signAndReceipt(ex, base, checked as never, NOW),
+      /dry-run check cannot execute/
     );
     const cases: [string, Record<string, unknown>, RegExp][] = [
       ["bytes", { bytesHex: "cd".repeat(32) }, /bytes differ/],

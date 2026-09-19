@@ -11,12 +11,15 @@ import {
   digestForOperation,
   executeActionViaProvider,
   executeAndReceipt,
+  executeProtectedAction,
   executeViaProvider,
   executeWithCredential,
   generateEd25519Keypair,
   leafCidHex,
+  loadAuthority,
   makeFakeProviders,
   providerAsExecutor,
+  saveAuthority,
   signBytes,
   FakeProvider,
   canonicalize,
@@ -112,7 +115,7 @@ describe("protected provider seam (P0 slice 3)", () => {
     );
     const cid = leafCidHex(cap);
     const cidBytes = new Uint8Array(Buffer.from(cid, "hex"));
-    const redeemed = caps.authorize(
+    const redeemed = caps.redeem(
       [cap],
       {
         cmd: "/pay",
@@ -123,7 +126,6 @@ describe("protected provider seam (P0 slice 3)", () => {
         termsDigest: digest,
       },
       {
-        consume: true,
         proof: {
           key: merchant.publicKeyRaw,
           sig: signBytes(merchant.privateKey, cidBytes),
@@ -152,8 +154,8 @@ describe("protected provider seam (P0 slice 3)", () => {
     assert.equal(receipt.capabilityId, cid);
     assert.equal(receipt.transaction.startsWith("fake-payment-"), true);
 
-    // Wrong chainId fails before any provider effect is trusted (the
-    // operation echo is intact — only the binding is wrong).
+    // Wrong chainId fails before any provider effect is trusted. The
+    // operation echo is the real one — only the binding is tampered.
     await assert.rejects(
       () =>
         executeViaProvider(
@@ -167,11 +169,7 @@ describe("protected provider seam (P0 slice 3)", () => {
             purpose: "widgets",
             context: { amount: 500, currency: "INR" },
           },
-          {
-            ok: true,
-            chainId: "deadbeef",
-            operation: redeemed.operation,
-          },
+          { ...redeemed, chainId: "deadbeef" },
           NOW
         ),
       /not bound/
@@ -204,6 +202,7 @@ describe("protected provider seam (P0 slice 3)", () => {
       false
     );
     // executeViaProvider with a provider whose verify always fails throws before receipt.
+    // (Well-formed echo isolates the verify rule; binding is covered above.)
     const evil = new FakeProvider("payment", { nowSec: () => NOW });
     evil.verify = () => ({ ok: false as const, reason: "terms mismatch" });
     await assert.rejects(
@@ -222,6 +221,10 @@ describe("protected provider seam (P0 slice 3)", () => {
               purpose: "p",
               termsDigest: digest,
             },
+            remaining: 1,
+            consumed: true,
+            proofVerified: true,
+            redemptionId: "rdm-test-evil",
           },
           NOW
         ),
@@ -240,8 +243,9 @@ describe("protected provider seam (P0 slice 3)", () => {
       resource: "res:1",
       purpose: "p",
     };
-    // Operation echo with empty args: binding passes (nothing authorized to
-    // cover), so the explicit amount/currency rule is what fires.
+    // Operation echo with empty args: only an empty context binds. A
+    // context carrying un-authorized terms fails at binding (exact
+    // equality), and an empty context fails at the explicit amount rule.
     const redemption = {
       ok: true as const,
       chainId: "cid-explicit",
@@ -253,6 +257,10 @@ describe("protected provider seam (P0 slice 3)", () => {
         purpose: "p",
         termsDigest: digest,
       },
+      remaining: 1,
+      consumed: true as const,
+      proofVerified: true as const,
+      redemptionId: "rdm-test-explicit",
     };
     await assert.rejects(
       () =>
@@ -272,13 +280,29 @@ describe("protected provider seam (P0 slice 3)", () => {
           redemption,
           NOW
         ),
-      /context\.currency/
+      /context differs from authorized terms/
     );
-    // Explicit zero passes — stated, never invented.
+    // Explicit zero passes when authorized exactly — stated, never invented.
+    const stated = {
+      ok: true as const,
+      chainId: "cid-explicit",
+      operation: {
+        cmd: "/pay" as const,
+        args: { amount: 0, currency: "INR" },
+        recipient: M,
+        resource: "res:1",
+        purpose: "p",
+        termsDigest: digest,
+      },
+      remaining: 1,
+      consumed: true as const,
+      proofVerified: true as const,
+      redemptionId: "rdm-test-stated",
+    };
     const receipt = await executeViaProvider(
       fakes.payment,
       { ...base, context: { amount: 0, currency: "INR" } },
-      redemption,
+      stated,
       NOW
     );
     assert.equal(receipt.amount, 0);
@@ -313,7 +337,7 @@ describe("protected provider seam (P0 slice 3)", () => {
     );
     const cid = leafCidHex(cap);
     const cidBytes = new Uint8Array(Buffer.from(cid, "hex"));
-    const redeemed = caps.authorize(
+    const redeemed = caps.redeem(
       [cap],
       {
         cmd: "/pay",
@@ -324,7 +348,6 @@ describe("protected provider seam (P0 slice 3)", () => {
         termsDigest: digest,
       },
       {
-        consume: true,
         proof: {
           key: merchant.publicKeyRaw,
           sig: signBytes(merchant.privateKey, cidBytes),
@@ -353,8 +376,43 @@ describe("protected provider seam (P0 slice 3)", () => {
     assert.ok(receipt.transaction.startsWith("fake-payment-"));
     assert.equal(fakes.payment.calls.length, 1);
 
-    // Secret in context never reaches the receipt: only amount/currency project.
-    const secretReceipt = await executeViaProvider(
+    // Extra effect-bearing context is rejected even when every authorized
+    // field matches: authorize every field or put telemetry in metadata.
+    await assert.rejects(
+      () =>
+        executeViaProvider(
+          fakes.retail,
+          {
+            capabilityId: "cid-secret",
+            termsDigest: "ef".repeat(16),
+            action: "/pay",
+            recipient: M,
+            resource: "res:1",
+            purpose: "p",
+            context: { amount: 5, currency: "INR", note: SECRET },
+          },
+          {
+            ok: true,
+            chainId: "cid-secret",
+            operation: {
+              cmd: "/pay",
+              args: { amount: 5, currency: "INR" },
+              recipient: M,
+              resource: "res:1",
+              purpose: "p",
+              termsDigest: "ef".repeat(16),
+            },
+            remaining: 1,
+            consumed: true,
+            proofVerified: true,
+            redemptionId: "rdm-test-secret",
+          },
+          NOW
+        ),
+      /context differs from authorized terms/
+    );
+    // ...while declared metadata rides along without affecting the binding.
+    const metaReceipt = await executeViaProvider(
       fakes.retail,
       {
         capabilityId: "cid-secret",
@@ -363,7 +421,8 @@ describe("protected provider seam (P0 slice 3)", () => {
         recipient: M,
         resource: "res:1",
         purpose: "p",
-        context: { amount: 5, currency: "INR", note: SECRET },
+        context: { amount: 5, currency: "INR" },
+        metadata: { traceId: "trace-1" },
       },
       {
         ok: true,
@@ -376,12 +435,16 @@ describe("protected provider seam (P0 slice 3)", () => {
           purpose: "p",
           termsDigest: "ef".repeat(16),
         },
+        remaining: 1,
+        consumed: true,
+        proofVerified: true,
+        redemptionId: "rdm-test-meta",
       },
       NOW
     );
-    const blob = canonicalize(secretReceipt);
+    const blob = canonicalize(metaReceipt);
     assert.ok(!blob.includes(SECRET));
-    assert.deepEqual(Object.keys(secretReceipt).sort(), [
+    assert.deepEqual(Object.keys(metaReceipt).sort(), [
       "amount",
       "at",
       "capabilityId",
@@ -421,9 +484,9 @@ describe("protected provider seam (P0 slice 3)", () => {
     const audit = FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW);
     const fakes = makeFakeProviders({ nowSec: () => NOW });
     const provider = fakes.payment;
-    // Real (dry-run) authorization: the orchestrator never accepts a
-    // manufactured redemption.
-    const { principal, keys } = parties();
+    // Real redemption (consumed, proof-verified): the orchestrator never
+    // accepts a manufactured or dry-run authorization.
+    const { principal, merchant, keys } = parties();
     const orchCaps = new Capabilities({
       resolveKey: (id) => keys.get(id) ?? null,
       nowSec: () => NOW,
@@ -448,20 +511,31 @@ describe("protected provider seam (P0 slice 3)", () => {
       },
       principal.privateKey
     );
-    const orchRedemption = orchCaps.authorize(
+    const orchCidBytes = new Uint8Array(
+      Buffer.from(leafCidHex(orchCap), "hex")
+    );
+    const orchRedemption = orchCaps.redeem(
       [orchCap],
       {
         cmd: "/pay",
-        args: { amount: 500, currency: "INR" },
+        // Every effect-bearing handle is authorized up front (exact
+        // context equality): the loyalty reference travels, the secret
+        // value never does.
+        args: { amount: 500, currency: "INR", panRef: "r-pan" },
         recipient: M,
         resource: "invoice:7",
         purpose: "pay",
         termsDigest: orchDigest,
       },
-      { consume: false }
+      {
+        proof: {
+          key: merchant.publicKeyRaw,
+          sig: signBytes(merchant.privateKey, orchCidBytes),
+        },
+      }
     );
     assert.equal(orchRedemption.ok, true);
-    if (!orchRedemption.ok) throw new Error("dry-run must succeed");
+    if (!orchRedemption.ok) throw new Error("redeem must succeed");
     const redemption = orchRedemption;
     const digest = "ab".repeat(16);
     let seenInHost: unknown;
@@ -515,7 +589,7 @@ describe("protected provider seam (P0 slice 3)", () => {
   });
 
   it("executeActionViaProvider runs non-payment actions with no amount or currency", async () => {
-    const { principal, keys } = parties();
+    const { principal, merchant, keys } = parties();
     const caps = new Capabilities({
       resolveKey: (id) => keys.get(id) ?? null,
       nowSec: () => NOW,
@@ -533,12 +607,13 @@ describe("protected provider seam (P0 slice 3)", () => {
         resource: "message:welcome",
         recipient: M,
         exp: NOW + 300,
-        maxUses: 1,
+        maxUses: 10,
         termsDigest: digest,
       },
       principal.privateKey
     );
-    const redeemed = caps.authorize(
+    const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
+    const redeemed = caps.redeem(
       [cap],
       {
         cmd: "/send",
@@ -548,10 +623,15 @@ describe("protected provider seam (P0 slice 3)", () => {
         purpose: "notify",
         termsDigest: digest,
       },
-      { consume: false }
+      {
+        proof: {
+          key: merchant.publicKeyRaw,
+          sig: signBytes(merchant.privateKey, cidBytes),
+        },
+      }
     );
     assert.equal(redeemed.ok, true);
-    if (!redeemed.ok) throw new Error("dry-run must succeed");
+    if (!redeemed.ok) throw new Error("redeem must succeed");
     const fakes = makeFakeProviders({ nowSec: () => NOW });
     const receipt = await executeActionViaProvider(
       fakes.email,
@@ -580,7 +660,7 @@ describe("protected provider seam (P0 slice 3)", () => {
       "termsDigest",
       "transaction",
     ]);
-    // Mutated template fails closed: authorized args must all hold.
+    // Mutated template fails closed: context must equal authorized args.
     await assert.rejects(
       () =>
         executeActionViaProvider(
@@ -597,7 +677,156 @@ describe("protected provider seam (P0 slice 3)", () => {
           redeemed,
           NOW
         ),
-      /context\.template differs/
+      /context differs from authorized terms/
     );
+    // Extra keys fail closed too — telemetry rides in metadata, not context.
+    await assert.rejects(
+      () =>
+        executeActionViaProvider(
+          fakes.email,
+          {
+            capabilityId: redeemed.chainId,
+            termsDigest: digest,
+            action: "/send",
+            recipient: M,
+            resource: "message:welcome",
+            purpose: "notify",
+            context: { template: "welcome-v1", cc: "attacker@example.com" },
+          },
+          redeemed,
+          NOW
+        ),
+      /context differs from authorized terms/
+    );
+    // ...while declared metadata rides along without affecting the binding.
+    const metaReceipt = await executeActionViaProvider(
+      fakes.email,
+      {
+        capabilityId: redeemed.chainId,
+        termsDigest: digest,
+        action: "/send",
+        recipient: M,
+        resource: "message:welcome",
+        purpose: "notify",
+        context: { template: "welcome-v1" },
+        metadata: { traceId: "trace-1" },
+      },
+      redeemed,
+      NOW
+    );
+    assert.ok(metaReceipt.transaction.startsWith("fake-email-"));
+  });
+
+  it("executeProtectedAction persists consumption before the external effect", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-protected-"));
+    const seed = new Authority({ nowSec: () => NOW });
+    seed.addGrant({
+      id: "g-use",
+      principal: P,
+      actor: { kind: "exact", id: A },
+      action: { name: "/use" },
+      bounds: [{ path: ".context.claim", op: "==", value: "pan" }],
+      exp: NOW + 3600,
+      maxUses: 1,
+    });
+    saveAuthority(dir, seed);
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r-pan",
+      owner: P,
+      type: "pan",
+      value: SECRET,
+      sensitivity: "secret",
+      source: "issuer",
+      allowedPurposes: ["pay"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    const { principal, merchant, keys } = parties();
+    const caps = new Capabilities({
+      resolveKey: (id) => keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const digest = "cd".repeat(32);
+    const cap = caps.issue(
+      null,
+      {
+        iss: P,
+        aud: A,
+        sub: P,
+        cmd: "/pay",
+        pol: [],
+        purpose: "pay",
+        resource: "invoice:7",
+        recipient: M,
+        amountMax: 5000,
+        currency: "INR",
+        exp: NOW + 300,
+        maxUses: 10,
+        termsDigest: digest,
+      },
+      principal.privateKey
+    );
+    const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
+    const redeemed = caps.redeem(
+      [cap],
+      {
+        cmd: "/pay",
+        args: { amount: 250, currency: "INR", ref: "r-pan" },
+        recipient: M,
+        resource: "invoice:7",
+        purpose: "pay",
+        termsDigest: digest,
+      },
+      {
+        proof: {
+          key: merchant.publicKeyRaw,
+          sig: signBytes(merchant.privateKey, cidBytes),
+        },
+      }
+    );
+    assert.equal(redeemed.ok, true);
+    if (!redeemed.ok) throw new Error("redeem must succeed");
+    const fakes = makeFakeProviders({ nowSec: () => NOW });
+    const audit = FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW);
+    const base = {
+      dir,
+      nowSec: NOW,
+      ingress: {
+        id: A,
+        principal: P,
+        source: "local-registration" as const,
+        proofRef: "protected-test",
+      },
+      recordId: "r-pan",
+      purpose: "pay",
+      provider: fakes.payment,
+      redemption: redeemed,
+      buildRequest: (instr: { recordId: string }) => ({
+        termsDigest: digest,
+        action: "/pay" as const,
+        recipient: M,
+        resource: "invoice:7",
+        purpose: "pay",
+        context: { amount: 250, currency: "INR", ref: instr.recordId },
+      }),
+      loadVaultState: () => vault,
+      audit,
+      at: NOW,
+    };
+    const receipt = await executeProtectedAction(base);
+    assert.equal(receipt.amount, 250);
+    assert.ok(receipt.transaction.startsWith("fake-payment-"));
+    // Consumption persisted to disk before delivery: reload and prove it.
+    const reloaded = loadAuthority(dir, { nowSec: () => NOW });
+    const used = new Map(reloaded.snapshot().used);
+    assert.equal(used.get("g-use"), 1);
+    // Second run denies on the persisted use — no second external effect.
+    await assert.rejects(
+      () => executeProtectedAction(base),
+      /denied|exhausted/
+    );
+    assert.equal(fakes.payment.calls.length, 1);
+    assert.ok(!readFileSync(join(dir, "audit.jsonl"), "utf8").includes(SECRET));
   });
 });

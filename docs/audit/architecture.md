@@ -23,11 +23,14 @@ proposal → Authority.evaluate(grants, approvals, policies)
   → Capabilities.attenuate* (child ≤ parent on cmd, pol, exp, nbf,
      maxUses, purpose, resource, recipient, termsDigest, amountMax,
      currency, claims)
-  → Capabilities.authorize(chain, demand, {consume, proof})
-     [shape → sigs → chain → expiry → revocation → cmd/pol →
-      amount/currency/claims → recipient → termsDigest → uses → proof]
-  → executeAndReceipt(executor, instruction, {ok:true, chainId})
-     [chainId === capabilityId, else throw]
+  → Capabilities.check(chain, demand) (dry-run: shape → sigs → chain →
+     expiry → revocation → cmd/pol → amount/currency/claims → recipient →
+     termsDigest → uses; no consumption, no proof, no chainId)
+  → Capabilities.redeem(chain, demand, {proof}) (proof verify + consume →
+     Redemption: chainId + exact operation echo + consumed + proofVerified)
+  → executeAndReceipt(executor, instruction, redemption)
+     [redemption flags + deep-compare instruction === authorized operation,
+      else throw]
   → Audit.append → FileAuditLog (JSONL, canonical, hash-chained, opt HMAC)
 ```
 
@@ -36,15 +39,17 @@ no lateral delegation.
 
 ## Modules
 
-- `core/types`: `ptf/cap@0.1` payload (local-only `@internal` per ADR-0009 — never wire; interop uses the standards edge), `AuthorizeResult` (`ok+chainId` binds
-  execution to redemption), no logic.
+- `core/types`: `ptf/cap@0.1` payload (local-only `@internal` per ADR-0009 — never wire; interop uses the standards edge), `CheckResult` (dry-run, no chainId) vs `RedemptionResult` (consumed + proofVerified + exact operation echo — the only executable value), no logic.
 - `core/canonical`: sorted-key JSON, plain-objects only (Date/class/symbol
   rejected), finite numbers. All digests/CIDs derive from it.
 - `core/crypto`: Ed25519 sign/verify, `randomHex`; fail-closed on bad lengths.
 - `core/policy`: AuthZEN-shaped offline eval, Cedar precedence (forbid wins,
   then cited permit, else deny). Policy narrows only (ADR-0002).
-- `core/capability`: `issue/authorize/revoke`, subtree use-budget, cascade
+- `core/capability`: `issue`/`check`/`redeem`, subtree use-budget, cascade
   revocation via `revocationId` links, recipient Ed25519 proof over leaf CID.
+  CHECK ≠ REDEEM ≠ EXECUTE (ADR-0018): `check` dry-runs (no consumption, no
+  proof, no chainId) and can never execute; only `redeem` yields an
+  executable `Redemption` (consumed + proofVerified + exact operation echo).
 - `core/authority`: grants + one-time digest-bound approvals + constraints,
   citations on every allow, `snapshot/restore` for durability (revision CAS
   - audit freshness binding per ADR-0015).
@@ -107,5 +112,6 @@ no lateral delegation.
 
 Child ≤ parent; recipient + termsDigest fixed; `/`-top, powerline
 (`iss≠sub` root), immortal (`exp` required) rejected; policy-never-creates;
-holder-bound disclosure; chainId-bound execution; secretness (no raw secret
+holder-bound disclosure; exact-operation execution (CHECK ≠ REDEEM ≠
+EXECUTE; instruction deep-equals authorized terms); secretness (no raw secret
 in receipt/log/audit — sentinel-tested).

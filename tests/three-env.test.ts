@@ -316,31 +316,20 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010, i
       mode: "direct" as const,
     };
     const mapped = toAp2PaymentDemand(verified, {
-      principal: PRINCIPAL,
-      agent: AGENT_B,
       purpose: "book domestic economy flight",
       resource: "flight:domestic:economy",
     });
     assert.equal(mapped.capabilityArgs.amount, verified.amountMinor);
     assert.equal(mapped.capabilityArgs.currency, verified.currency);
-    const {
-      termsDigest: _stripped,
-      principal: _strippedPrincipal,
-      actor: _strippedActor,
-      ...ap2Op
-    } = mapped.demand;
-    void _stripped;
-    void _strippedPrincipal;
-    void _strippedActor;
-    const binding: VerifiedExternalBinding = {
-      scheme: "ap2",
-      value: verified.transactionId,
-      evidenceRef: "ap2-mandate",
-    };
+    // Identity-free operation + separate verified binding (ADR-0013):
+    // identity binds from the host-verified ingress at evaluate time.
+    const binding: VerifiedExternalBinding = mapped.binding;
+    assert.equal(binding.scheme, "ap2");
+    assert.equal(binding.value, verified.transactionId);
     const ingressB = ingressFor(AGENT_B, "local-registration", "three-env-c");
     const out = evaluateAuthZen(
       auth,
-      demandToAuthZen(bind(ap2Op, ingressB)),
+      demandToAuthZen(bind(mapped.operation, ingressB)),
       ingressB,
       { binding }
     );
@@ -451,31 +440,16 @@ describe("three-env proof: one store, three executors (pivot/04, neutral 0010, i
       mode: "direct" as const,
     };
     const mapped = toAp2PaymentDemand(verified, {
-      principal: PRINCIPAL,
-      agent: AGENT_B,
       purpose: "book domestic economy flight",
       resource: "flight:domestic:economy",
     });
-    const {
-      termsDigest: _strippedRevoke,
-      principal: _strippedPrincipalRevoke,
-      actor: _strippedActorRevoke,
-      ...ap2OpRevoke
-    } = mapped.demand;
-    void _strippedRevoke;
-    void _strippedPrincipalRevoke;
-    void _strippedActorRevoke;
     const ingressB = ingressFor(AGENT_B, "local-registration", "three-env-c");
     const ap2Out = evaluateAuthZen(
       auth,
-      demandToAuthZen(bind(ap2OpRevoke, ingressB)),
+      demandToAuthZen(bind(mapped.operation, ingressB)),
       ingressB,
       {
-        binding: {
-          scheme: "ap2",
-          value: verified.transactionId,
-          evidenceRef: "ap2-mandate",
-        },
+        binding: mapped.binding,
       }
     );
     assert.equal(ap2Out.decision, false);

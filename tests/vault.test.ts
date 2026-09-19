@@ -643,4 +643,38 @@ describe("durable Personal State vault (P0 slice 1)", () => {
     assert.equal(pres.disclosures.length, 1);
     assert.equal(pres.disclosures[0]?.value, "new@example.com");
   });
+
+  it("onConsumed runs after consumption but before secret use", async () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    useGrant(auth);
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r-pan",
+      owner: P,
+      type: "pan",
+      value: SECRET,
+      sensitivity: "secret",
+      source: "issuer",
+      allowedPurposes: ["pay"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    const order: string[] = [];
+    const out = await useCredential(vault, {
+      ingress: ingressFor(A),
+      recordId: "r-pan",
+      purpose: "pay",
+      authority: auth,
+      nowSec: NOW,
+      onConsumed: () => {
+        order.push("consumed");
+      },
+      use: async () => {
+        order.push("used");
+        return { receipt: "r-1" };
+      },
+    });
+    assert.equal(out.receipt, "r-1");
+    assert.deepEqual(order, ["consumed", "used"]);
+  });
 });

@@ -8,9 +8,10 @@ import type {
   PaymentInstruction,
   Receipt,
 } from "../core/execute.js";
-import type { AuthorizedOperation } from "../core/types.js";
+import type { AuthorizedOperation, Redemption } from "../core/types.js";
 import type { Authority, VerifiedIdentity } from "../core/authority.js";
 import type { FileAuditLog } from "../store/files.js";
+import { loadAuthority, saveAuthority } from "../store/files.js";
 import type { SecretInstruction, VaultStore } from "../store/vault.js";
 import { useCredential } from "../store/vault.js";
 
@@ -44,8 +45,20 @@ export interface ProviderRequest {
   readonly recipient: string;
   readonly resource: string;
   readonly purpose: string;
-  /** Handles only — ids, amounts, refs. Never secrets. */
+  /**
+   * Effect-bearing terms — must deep-equal the authorized args exactly
+   * (ADR-0018). Extra keys are NOT allowed: anything that can alter the
+   * external effect belongs in the authorization, never smuggled alongside.
+   */
   readonly context: Readonly<Record<string, unknown>>;
+  /**
+   * Non-effectful telemetry (trace/correlation ids, provider hints).
+   * Never compared, never receipted, never part of the authorized terms —
+   * and MUST NOT alter the external effect. Hosts enforce that last clause
+   * in review: metadata rides along only because the provider transport
+   * needs plumbing, not because it is authorized.
+   */
+  readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
 export interface ProviderSubmission {
@@ -169,9 +182,30 @@ function fieldsEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
+ * Redemption gate shared by every provider execute path (ADR-0018):
+ * dry-run checks can never execute — only a consumed, proof-verified
+ * redemption runs.
+ */
+function requireRedemption(redemption: Redemption): AuthorizedOperation {
+  if (redemption.ok !== true) {
+    throw new Error("provider: redemption required before execution");
+  }
+  // Binding first (nothing bound at all?), then flags (dry-run checks can
+  // never execute) — distinct forgeries, distinct errors.
+  const op = requireBoundOperation(redemption);
+  if (redemption.consumed !== true || redemption.proofVerified !== true) {
+    throw new Error(
+      "provider: dry-run check cannot execute — redeem with proof first (ADR-0018)"
+    );
+  }
+  return op;
+}
+
+/**
  * Every term the authorization covered must appear identically in the
- * request. Extra context keys are allowed (refs and handles the authority
- * never constrained) — but nothing authorized may differ or go missing.
+ * request — and nothing else effect-bearing may ride along. The authorized
+ * args must deep-equal the request context EXACTLY (ADR-0018); use
+ * `metadata` for non-effectful telemetry.
  */
 function authorizedTermsCover(
   op: AuthorizedOperation,
@@ -192,13 +226,15 @@ function authorizedTermsCover(
   if (op.purpose === undefined || req.purpose !== op.purpose) {
     throw new Error("provider: purpose differs from authorized terms");
   }
-  const ctx = req.context as Record<string, unknown>;
-  for (const [key, value] of Object.entries(
-    op.args as Record<string, unknown>
-  )) {
-    if (!fieldsEqual(value, ctx[key])) {
-      throw new Error(`provider: context.${key} differs from authorized terms`);
-    }
+  if (
+    !fieldsEqual(
+      op.args as Record<string, unknown>,
+      req.context as Record<string, unknown>
+    )
+  ) {
+    throw new Error(
+      "provider: context differs from authorized terms — authorize every effect-bearing field, use metadata for the rest"
+    );
   }
 }
 
@@ -212,9 +248,9 @@ function authorizedTermsCover(
  */
 export function providerAsExecutor(
   provider: ProtectedProvider,
-  redemption: { readonly chainId: string; readonly operation: unknown }
+  redemption: Redemption
 ): PaymentExecutor {
-  const op = requireBoundOperation(redemption);
+  const op = requireRedemption(redemption);
   if (!isNonEmptyString(redemption.chainId)) {
     throw new Error("provider: capabilityId required");
   }
@@ -291,17 +327,11 @@ export function providerAsExecutor(
 export async function executeActionViaProvider(
   provider: ProtectedProvider,
   req: ProviderRequest,
-  redemption: {
-    readonly ok: true;
-    readonly chainId: string;
-    readonly operation: AuthorizedOperation;
-  },
+  redemption: Redemption,
   at: number
 ): Promise<ExecutionReceipt> {
   checkRequest(req);
-  if (redemption.ok !== true)
-    throw new Error("provider: redemption required before execution");
-  const op = requireBoundOperation(redemption);
+  const op = requireRedemption(redemption);
   if (redemption.chainId !== req.capabilityId) {
     throw new Error("provider: redemption is not bound to this request");
   }
@@ -338,17 +368,11 @@ export async function executeActionViaProvider(
 export async function executeViaProvider(
   provider: ProtectedProvider,
   req: ProviderRequest,
-  redemption: {
-    readonly ok: true;
-    readonly chainId: string;
-    readonly operation: AuthorizedOperation;
-  },
+  redemption: Redemption,
   at: number
 ): Promise<Receipt> {
   checkRequest(req);
-  if (redemption.ok !== true)
-    throw new Error("provider: redemption required before execution");
-  const op = requireBoundOperation(redemption);
+  const op = requireRedemption(redemption);
   if (redemption.chainId !== req.capabilityId) {
     throw new Error("provider: redemption is not bound to this request");
   }
@@ -435,11 +459,7 @@ export async function executeWithCredential(
     readonly authority: Authority;
     readonly nowSec: number;
     readonly provider: ProtectedProvider;
-    readonly redemption: {
-      readonly ok: true;
-      readonly chainId: string;
-      readonly operation: AuthorizedOperation;
-    };
+    readonly redemption: Redemption;
     readonly buildRequest: (
       instr: SecretInstruction
     ) => Omit<ProviderRequest, "capabilityId">;
@@ -463,6 +483,86 @@ export async function executeWithCredential(
       // appear anywhere in the built request — including provider call logs,
       // which retain `context`. Short scalars stay uncovered (same residual
       // as the receipt leak guard; see limits.md vault row).
+      const rendered =
+        typeof instr.value === "string"
+          ? instr.value
+          : tryCanonicalInstruction(instr.value);
+      const distinctive =
+        rendered !== null &&
+        (typeof instr.value === "string"
+          ? rendered.length > 0
+          : rendered.length >= 16);
+      if (distinctive) {
+        const encoded = canonicalize({ ...partial });
+        if (encoded.includes(rendered as string)) {
+          throw new Error(
+            "provider: buildRequest leaked secret into provider request"
+          );
+        }
+      }
+      const req: ProviderRequest = {
+        ...partial,
+        capabilityId: opts.redemption.chainId,
+      };
+      const receipt = await executeViaProvider(
+        opts.provider,
+        req,
+        opts.redemption,
+        at
+      );
+      captured = receipt;
+      return { receipt: receipt.transaction };
+    },
+  });
+  if (captured === undefined) {
+    throw new Error("provider: orchestrator produced no receipt");
+  }
+  return captured;
+}
+
+/**
+ * Store-backed protected execution (ADR-0018): the production-safe path
+ * for effectful secret use. Owns the full ordering — reload authority
+ * fresh, consume, CAS-persist the consumption, THEN use the secret and
+ * execute — so a crash between consumption and the external effect burns
+ * a use instead of resurrecting one-time authority. A CAS conflict fails
+ * closed before the secret is touched. Hosts supply the loaded vault
+ * (they hold the DEK) and the provider; this function owns authority
+ * freshness and persistence, which bare `useCredential` cannot
+ * (persistence after success is already too late).
+ */
+export async function executeProtectedAction(opts: {
+  readonly dir: string;
+  readonly nowSec?: number;
+  readonly ingress: VerifiedIdentity;
+  readonly recordId: string;
+  readonly purpose: string;
+  readonly provider: ProtectedProvider;
+  readonly redemption: Redemption;
+  readonly buildRequest: (
+    instr: SecretInstruction
+  ) => Omit<ProviderRequest, "capabilityId">;
+  readonly loadVaultState: () => VaultStore;
+  readonly audit?: FileAuditLog;
+  readonly at?: number;
+}): Promise<Receipt> {
+  const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
+  const at = opts.at ?? nowSec;
+  const authority = loadAuthority(opts.dir, { nowSec: () => nowSec });
+  const vault = opts.loadVaultState();
+  let captured: Receipt | undefined;
+  await useCredential(vault, {
+    ingress: opts.ingress,
+    recordId: opts.recordId,
+    purpose: opts.purpose,
+    authority,
+    nowSec,
+    ...(opts.audit !== undefined ? { audit: opts.audit } : {}),
+    onConsumed: () => {
+      saveAuthority(opts.dir, authority);
+    },
+    use: async (instr) => {
+      const partial = opts.buildRequest(instr);
       const rendered =
         typeof instr.value === "string"
           ? instr.value

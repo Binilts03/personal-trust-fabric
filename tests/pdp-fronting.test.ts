@@ -370,6 +370,71 @@ describe("ticket 10 — scopes, rotation, replicas, redaction", () => {
     }
   });
 
+  it("duplicate key values fail startup, fail-closed", async () => {
+    const dirBad = mkdtempSync(join(tmpdir(), "ptf-front-dupkey-"));
+    seed(dirBad);
+    const keysBad = join(dirBad, "keys.json");
+    const dup = "front-key-duplicate-00000000";
+    writeFileSync(
+      keysBad,
+      JSON.stringify([
+        { id: "pep-x", key: dup, principal: PRINCIPAL, actor: AGENT },
+        { id: "pep-y", key: dup, principal: PRINCIPAL, actor: AGENT },
+      ]),
+      "utf8"
+    );
+    const bad = spawn(process.execPath, [SERVER], {
+      env: {
+        ...process.env,
+        PTF_PDP_STORE_DIR: dirBad,
+        PTF_PDP_KEYS_FILE: keysBad,
+        PTF_PDP_PORT: "0",
+        PTF_PDP_ALLOW_PLAINTEXT: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(await waitForExit(bad), 2);
+  });
+
+  it("distinct key values load: two ids serve independently", async () => {
+    const dirGood = mkdtempSync(join(tmpdir(), "ptf-front-distinct-"));
+    seed(dirGood);
+    const keysGood = join(dirGood, "keys.json");
+    const keyX = "front-key-distinct-xxxxxxxx";
+    const keyY = "front-key-distinct-yyyyyyyy";
+    writeFileSync(
+      keysGood,
+      JSON.stringify([
+        { id: "pep-x", key: keyX, principal: PRINCIPAL, actor: AGENT },
+        { id: "pep-y", key: keyY, principal: PRINCIPAL, actor: AGENT },
+      ]),
+      "utf8"
+    );
+    const good = spawn(process.execPath, [SERVER], {
+      env: {
+        ...process.env,
+        PTF_PDP_STORE_DIR: dirGood,
+        PTF_PDP_KEYS_FILE: keysGood,
+        PTF_PDP_PORT: "0",
+        PTF_PDP_ALLOW_PLAINTEXT: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    try {
+      const goodPort = await waitForListening(good);
+      assert.equal(
+        (await post(goodPort, "/access/v1/evaluation", keyX, body())).status,
+        200
+      );
+      assert.equal(
+        (await post(goodPort, "/access/v1/evaluation", keyY, body())).status,
+        200
+      );
+    } finally {
+      good.kill();
+    }
+  });
+
   it("unknown scopes fail startup, fail-closed", async () => {
     const dirBad = mkdtempSync(join(tmpdir(), "ptf-front-bad-"));
     seed(dirBad);

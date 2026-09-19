@@ -93,14 +93,6 @@ function setupStore(): {
     bounds: paymentBounds({ amountMax: 5000, currency: "INR" }),
     exp: liveNow + 3600,
   });
-  auth.addGrant({
-    id: "g-mcp",
-    principal: "did:test:p",
-    actor: { kind: "exact", id: "did:test:a" },
-    action: { name: "/pay" },
-    bounds: paymentBounds({ amountMax: 5000, currency: "INR" }),
-    exp: liveNow + 3600,
-  });
   saveAuthority(dir, auth);
   const reg = new RecipientRegistry(() => NOW);
   reg.register("did:test:p", principal.publicKeyRaw, NOW);

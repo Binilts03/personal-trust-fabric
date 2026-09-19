@@ -202,7 +202,7 @@ describe("security-fix regressions", () => {
     );
   });
 
-  it("ap2 folds transactionId into context under a derived digest", () => {
+  it("ap2 folds transactionId into a binding, never into caller terms", () => {
     const v = {
       payeeId: "did:test:payee",
       payeeName: "Shop",
@@ -212,33 +212,30 @@ describe("security-fix regressions", () => {
       transactionId: "ab".repeat(32),
       mode: "direct",
     } as never;
-    const { demand } = toAp2PaymentDemand(v, {
-      principal: "p",
-      agent: "a",
+    const { operation, binding } = toAp2PaymentDemand(v, {
       purpose: "x",
       resource: "r",
     });
-    // AP2 exception: the verified mandate's transactionId is folded into
-    // context, so the PTF-derived digest covers it — callers supply no digest.
-    assert.equal(demand.context["transactionId"], "ab".repeat(32));
-    assert.equal(demand.context["recipient"], "did:test:payee");
-    assert.equal(demand.context["amount"], 10);
+    // Identity-free operation: no principal, agent, or digest on the mapper
+    // output — the host binds identity at evaluate time.
     assert.equal(
-      demand.termsDigest,
-      digestForOperation({
-        principal: "p",
-        actor: "a",
-        action: { name: "/pay" as const },
-        resource: { type: "ap2-payment", id: "r" },
-        context: {
-          recipient: "did:test:payee",
-          amount: 10,
-          currency: "INR",
-          transactionId: "ab".repeat(32),
-        },
-        purpose: "x",
-      })
+      (operation as Record<string, unknown>)["principal"],
+      undefined
     );
+    assert.equal((operation as Record<string, unknown>)["actor"], undefined);
+    // AP2 exception: the verified transactionId travels as a binding the
+    // host folds into the digest — never inside operation context.
+    assert.equal(
+      (operation.context as Record<string, unknown>)["transactionId"],
+      undefined
+    );
+    assert.equal(
+      (operation.context as Record<string, unknown>)["recipient"],
+      "did:test:payee"
+    );
+    assert.equal(binding.scheme, "ap2");
+    assert.equal(binding.value, "ab".repeat(32));
+    assert.equal(binding.evidenceRef, "ap2-mandate");
   });
 
   it("webmcp rejects bad names, userinfo origins, and keeps same-origin with grants", () => {

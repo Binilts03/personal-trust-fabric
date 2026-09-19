@@ -200,15 +200,20 @@ describe("AP2 mandate-pair verifier adapter (ptf-v02/03)", () => {
     assert.equal(verified.amountMinor, 4250);
     assert.equal(verified.currency, "INR");
     assert.equal(verified.transactionId.length > 0, true);
-    const { demand, capabilityArgs } = ap2ToDemand(verified, {
-      principal: "did:test:p",
-      agent: "did:test:a",
+    const { operation, binding, capabilityArgs } = ap2ToDemand(verified, {
       purpose: "buy widget",
       resource: "order:1",
     });
-    assert.equal(demand.context["recipient"], "did:test:payee");
-    assert.equal(demand.context["amount"], 4250);
-    assert.equal(demand.context["transactionId"], verified.transactionId);
+    // ADR-0013: identity-free operation; the verified transaction id travels
+    // as a VerifiedExternalBinding for the host to fold into evaluate opts.
+    assert.ok(!("principal" in operation));
+    assert.ok(!("actor" in operation));
+    assert.ok(!("termsDigest" in operation));
+    assert.equal(operation.context["recipient"], "did:test:payee");
+    assert.equal(operation.context["amount"], 4250);
+    assert.equal(operation.context["transactionId"], undefined);
+    assert.equal(binding.scheme, "ap2");
+    assert.equal(binding.value, verified.transactionId);
     assert.deepEqual(capabilityArgs, { amount: 4250, currency: "INR" });
   });
 

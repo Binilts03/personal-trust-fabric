@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -310,6 +310,31 @@ describe("agent data-delivery loop (ptf_present_data)", () => {
           nonce: NONCE,
         }),
       /present supports \/disclose proposals only; pay via ptf_redeem/
+    );
+  });
+
+  it("tampered proposal file fails the digest re-check, not the vault", async () => {
+    const { dir, server } = setup();
+    const req = (await callTool(server, "ptf_request_data", {
+      purpose: "support",
+      resource: "credential:issuer-1",
+      verifier: V,
+      claims: ["email"],
+    })) as { termsDigest?: string };
+    const digest = req.termsDigest as string;
+    const path = join(dir, "proposals", `${digest}.json`);
+    const record = JSON.parse(readFileSync(path, "utf8")) as {
+      demand: { context: { claims: string[] } };
+    };
+    record.demand.context.claims = ["email", "salary"];
+    writeFileSync(path, JSON.stringify(record));
+    await assert.rejects(
+      () =>
+        callTool(server, "ptf_present_data", {
+          termsDigest: digest,
+          nonce: NONCE,
+        }),
+      /proposal terms changed/
     );
   });
 

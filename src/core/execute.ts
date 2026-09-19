@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { canonicalize, sha256Hex } from "./canonical.js";
 import { randomHex } from "./crypto.js";
-import type { AuthorizedOperation } from "./types.js";
+import type { AuthorizedOperation, Redemption } from "./types.js";
 
 /**
  * Protected execution with receipts and secretness audit (ticket 02).
@@ -110,16 +110,19 @@ export function requireBoundOperation(
 export async function executeAndReceipt(
   executor: PaymentExecutor,
   instruction: PaymentInstruction,
-  redemption: {
-    readonly ok: true;
-    readonly chainId: string;
-    readonly operation: AuthorizedOperation;
-  },
+  redemption: Redemption,
   at: number
 ): Promise<Receipt> {
   if (redemption.ok !== true)
     throw new Error("execute: redemption required before execution");
+  // Binding first (nothing bound at all?), then redemption flags (a dry-run
+  // check authorizes nothing executable) — distinct forgeries, distinct errors.
   const op = requireBoundOperation(redemption);
+  if (redemption.consumed !== true || redemption.proofVerified !== true) {
+    throw new Error(
+      "execute: dry-run check cannot execute — redeem with proof first (ADR-0018)"
+    );
+  }
   if (redemption.chainId !== instruction.capabilityId) {
     throw new Error("execute: redemption is not bound to this instruction");
   }

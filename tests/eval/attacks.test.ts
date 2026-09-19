@@ -232,15 +232,23 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
     const parsed = parsePaymentRequired(header);
     const entry = parsed.accepts[0];
     assert.ok(entry);
-    const { demand } = toX402PaymentDemand(entry, {
-      principal: P,
-      agent: A,
+    const { operation } = toX402PaymentDemand(entry, {
       purpose: "p",
       resource: "r",
       currency: "USDC",
     });
-    assert.equal(demand.context["recipient"], X);
-    assert.notEqual(demand.context["recipient"], M);
+    assert.equal(
+      (operation.context as Record<string, unknown>)["recipient"],
+      X
+    );
+    assert.notEqual(
+      (operation.context as Record<string, unknown>)["recipient"],
+      M
+    );
+    assert.equal(
+      (operation as Record<string, unknown>)["principal"],
+      undefined
+    );
 
     const caps = new Capabilities({
       resolveKey: (id) => k.keys.get(id) ?? null,
@@ -270,8 +278,13 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
       [cap],
       {
         cmd: "/pay",
-        args: { amount: demand.context["amount"], currency: "USDC" },
-        recipient: demand.context["recipient"] as string,
+        args: {
+          amount: (operation.context as Record<string, unknown>)["amount"],
+          currency: "USDC",
+        },
+        recipient: (operation.context as Record<string, unknown>)[
+          "recipient"
+        ] as string,
         termsDigest: digest,
       },
       { consume: false }

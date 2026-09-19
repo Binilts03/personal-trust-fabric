@@ -224,12 +224,23 @@ function loadKeysThrowing(file: string): readonly PdpKey[] {
       out.push({ id, key, principal, actor });
     }
   }
-  const seen = new Set<string>();
+  const seenIds = new Set<string>();
+  const seenValues = new Set<string>();
   for (const k of out) {
-    if (seen.has(k.id)) {
+    if (seenIds.has(k.id)) {
       throw new Error(`pdp-server: duplicate key id in keys file: ${k.id}`);
     }
-    seen.add(k.id);
+    seenIds.add(k.id);
+    // Two client ids sharing one bearer secret would make identity
+    // array-order-dependent (first match in findKey wins). Fail the file —
+    // same posture as duplicate IDs and unknown scopes. The message names
+    // only the id, never the secret.
+    if (seenValues.has(k.key)) {
+      throw new Error(
+        `pdp-server: duplicate key value in keys file (id: ${k.id})`
+      );
+    }
+    seenValues.add(k.key);
   }
   return out;
 }

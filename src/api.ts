@@ -117,6 +117,8 @@ export {
   providerAsExecutor,
   executeViaProvider,
   executeActionViaProvider,
+  executeWithCredential,
+  executeProtectedAction,
 } from "./adapters/providers.js";
 export type {
   ProviderKind,

@@ -106,20 +106,21 @@ export type DenyReason =
   | "policy"
   | "forbidden-shape";
 
-export type AuthorizeResult =
+export type AuthorizeResult = CheckResult | RedemptionResult;
+
+/**
+ * Dry-run outcome: the demand verifies against the chain, but nothing is
+ * consumed and no recipient proof is checked. Must NEVER be accepted by an
+ * execute path (ADR-0018: CHECK ≠ REDEEM ≠ EXECUTE).
+ */
+export type CheckResult =
   | {
       readonly ok: true;
       readonly remaining: number;
-      readonly chainId: string;
       /**
-       * The EXACT operation authorize verified (canonical echo of the
-       * demand: cmd, args, recipient, resource, purpose, termsDigest).
-       * Execute paths must deep-compare their instruction against this —
-       * never trust a bare chainId (ADR-0018: authorized_operation ===
-       * executed_operation). In-process forgery by hostile host code is
-       * out of model (the host already owns everything); the enforced
-       * boundary is agent-facing seams, which construct both sides from
-       * the same stored demand.
+       * The EXACT operation that verified (canonical echo of the demand:
+       * cmd, args, recipient, resource, purpose, termsDigest). Informative
+       * only — without consumption and proof it authorizes nothing.
        */
       readonly operation: AuthorizedOperation;
     }
@@ -129,7 +130,32 @@ export type AuthorizeResult =
       readonly detail?: string;
     };
 
-/** Canonical echo of the verified demand. See AuthorizeResult.operation. */
+/**
+ * Redemption outcome: the ONLY value execute paths accept. Proves the
+ * capability was consumed AND the recipient proof verified, and echoes the
+ * exact authorized operation for deep comparison at execution.
+ */
+export type RedemptionResult =
+  | {
+      readonly ok: true;
+      readonly remaining: number;
+      readonly chainId: string;
+      readonly operation: AuthorizedOperation;
+      readonly consumed: true;
+      readonly proofVerified: true;
+      /** Unique per redemption, for audit correlation. */
+      readonly redemptionId: string;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: DenyReason;
+      readonly detail?: string;
+    };
+
+/** The success half of {@link RedemptionResult} — the only executable value. */
+export type Redemption = Extract<RedemptionResult, { readonly ok: true }>;
+
+/** Canonical echo of the verified demand. See Redemption.operation. */
 export interface AuthorizedOperation {
   readonly cmd: Command;
   readonly args: Readonly<Record<string, unknown>>;
