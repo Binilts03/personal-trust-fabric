@@ -2,14 +2,13 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = process.cwd();
-const readmePath = resolve(root, "README.md");
-const readme = readFileSync(readmePath, "utf8");
+const readme = readFileSync(resolve(root, "README.md"), "utf8");
 
 const START = "<!-- PTF-BRAND:START -->";
 const END = "<!-- PTF-BRAND:END -->";
 
 function fail(message) {
-  console.error(`brand check: FAIL — ${message}`);
+  console.error(`brand check: FAIL - ${message}`);
   process.exitCode = 1;
 }
 
@@ -26,53 +25,49 @@ if (start < 0 || end < 0 || start >= end) {
   fail("README brand markers are missing or out of order");
 }
 
-const requiredAssets = [
-  "assets/brand/ptf-mark-dark.svg",
-  "assets/brand/ptf-mark-light.svg",
-  "assets/brand/hero-dark.svg",
-  "assets/brand/hero-light.svg",
-  "assets/brand/architecture-dark.svg",
-  "assets/brand/architecture-light.svg",
-  "assets/brand/authority-trace-dark.svg",
-  "assets/brand/authority-trace-light.svg",
+const required = [
   "assets/brand/social-preview.svg",
   "docs/brand/BRAND.md",
 ];
 
-for (const relative of requiredAssets) {
+for (const relative of required) {
   const path = resolve(root, relative);
   if (!existsSync(path)) {
-    fail(`missing required brand asset: ${relative}`);
+    fail(`missing required brand file: ${relative}`);
     continue;
   }
-  if (statSync(path).size === 0) fail(`empty required brand asset: ${relative}`);
-  if (relative.endsWith(".svg")) {
-    const svg = readFileSync(path, "utf8");
-    if (!svg.includes("<svg") || !svg.includes("</svg>")) {
-      fail(`invalid SVG wrapper: ${relative}`);
-    }
+  if (statSync(path).size === 0) fail(`empty required brand file: ${relative}`);
+}
+
+const socialPath = resolve(root, "assets/brand/social-preview.svg");
+if (existsSync(socialPath)) {
+  const svg = readFileSync(socialPath, "utf8");
+  if (!svg.includes("<svg") || !svg.includes("</svg>")) {
+    fail("social preview is not a complete SVG");
+  }
+  if (!svg.includes('viewBox="0 0 1280 640"')) {
+    fail("social preview must use the 1280x640 canvas");
   }
 }
 
 if (start >= 0 && end > start) {
   const brand = readme.slice(start, end + END.length);
-  const requiredRefs = [
-    "./assets/brand/hero-dark.svg",
-    "./assets/brand/hero-light.svg",
-    "./assets/brand/architecture-dark.svg",
-    "./assets/brand/architecture-light.svg",
-    "./assets/brand/authority-trace-dark.svg",
-    "./assets/brand/authority-trace-light.svg",
+
+  const requiredCopy = [
+    "# Personal Trust Fabric",
+    "Authority should travel. Secrets should not.",
+    "secrets stop here",
+    "decision      ALLOW",
   ];
-  for (const ref of requiredRefs) {
-    if (!brand.includes(ref)) fail(`brand region does not reference ${ref}`);
+  for (const fragment of requiredCopy) {
+    if (!brand.includes(fragment)) fail(`brand region is missing: ${fragment}`);
   }
 
+  if (/<picture\b|<img\b|!\[[^\]]*\]\(/i.test(brand)) {
+    fail("brand region must stay native to GitHub and contain no hero images");
+  }
   if (/\b(?:src|srcset)=["']https?:\/\//i.test(brand)) {
     fail("brand region must not depend on externally hosted images");
-  }
-  if (/!\[[^\]]*\]\(https?:\/\//i.test(brand)) {
-    fail("brand region must not use externally hosted Markdown images");
   }
 }
 
