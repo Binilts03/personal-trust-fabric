@@ -55,6 +55,7 @@
     "dist",
     "!dist/tests/**",
     "!dist/**/*.map",
+    "assets/brand",
     "LICENSE",
     "README.md"
   ],
@@ -74,6 +75,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "check:brand": "node scripts/check-brand.mjs",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/tests/*.test.js\"",
