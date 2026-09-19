@@ -46,12 +46,16 @@ expectations through the code under test.
 - `capability invariants` (fast-check): randomized narrowing trees assert
   child≤parent; revocation cascades; earliest-expiry-wins.
 
-## Evidence
+## Verification evidence
 
-- Live verifier runs are gitignored by design: `evidence/*.log`
-  (e.g. `2026-09-12-security-fixes.log`). To reproduce:
-  `npm run typecheck && npm test && npm run eval`, then drive
-  `src/index.ts` per `verify.md`.
-- `evidence/demo.log`: recorded CLI end-to-end (propose→yes→redeem→receipt,
-  valid chain). Rots if not re-run — re-run per `verify.md`, do not trust
-  stale logs.
+Live verifier output is intentionally not committed. Reproduce the public gate with:
+
+```sh
+npm run check:brand
+npm run typecheck
+npm test
+npm run eval
+bash scripts/harness.sh
+```
+
+Then drive the changed public seam as described in `verify.md`. Pull requests should contain the necessary verification summary, not generated logs or local store contents.

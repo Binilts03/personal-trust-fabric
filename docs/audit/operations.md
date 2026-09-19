@@ -34,11 +34,10 @@ livenessProbe: { httpGet: { path: /healthz, port: 3000, scheme: HTTPS } }
 readinessProbe: { httpGet: { path: /readyz, port: 3000, scheme: HTTPS } }
 ```
 
-`.nvmrc` pins `22` (matches `engines: >=22`); `.dockerignore` keeps
-`.scratch/`, `evidence/`, and the store out of the build context. Record
-the built image digest next to the release that produced it
-(`docs/audit/public-flip.md` §7). Residual: no image signing yet — sign
-with the same Sigstore flow as the release when the owner enables it.
+`.nvmrc` pins `22` (matches `engines: >=22`); `.dockerignore` keeps local
+planning data, verifier output, and the store out of the build context. Record
+the built image digest with the release that produced it. Residual: no image
+signing yet — sign with the same Sigstore flow as the release when enabled.
 
 ## PDP front door (ticket 10) — scopes, rotation, one replica
 
@@ -225,9 +224,7 @@ signs all four; unchecking one blocks the release:
 
 ## Decision-trail visibility (the `.scratch/` question)
 
-`.scratch/` is gitignored by design (local working notes), so a fresh
-clone loses the per-ticket deliberation. Decision: vendor the durable
-part — the auditable record of what was decided and why —
-into `docs/audit/decisions.md` (prod-ready tickets 01–12 with
-commit/PR pointers), linked from `docs/audit/README.md`. Raw scratch
-notes stay local. Revisit if a future audit demands the full threads.
+Local planning and ticket deliberation are intentionally not part of the
+public repository. Durable architecture decisions belong in `docs/adr/`;
+security properties and residuals belong in `THREATMODEL.md` and
+`docs/audit/limits.md`. Git and pull-request history remain the change record.

@@ -171,7 +171,7 @@ PTF's destination is peer-reviewed protected-use infrastructure for agentic syst
 - [ ] **M5 — Normative spec.** An implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY) a second party could build against. _Needs spec authors + reviewers._
 - [ ] **M6 — Conformance suite.** Frozen vectors (digests, chains, disclosure intersections) and fixtures so independent implementations prove compatibility. _Needs a second implementation to validate against._
 - [ ] **M7 — Domain profiles beyond payment.** Travel, email, signing, and identity actions executing over the generic `ExecutionReceipt` — payment as one profile among equals, each with the same authority/consent/receipt contract. _Needs profile authors + one more executing domain to prove generality._
-- [ ] **M8 — Independent audit.** Commissioned third-party review of the trust layer (see `docs/audit/commissioning.md`). _Needs budget and a firm._
+- [ ] **M8 — Independent audit.** Commission a third-party review against the public threat model, known-limits register, verification guide, and tagged release. _Needs budget and a firm._
 - [ ] **M9 — HSM/KMS custody.** Replace the file keystore behind the existing `KeyProvider` seam. _Needs cloud/hardware accounts._
 - [ ] **M10 — Remote ingress + multi-tenant boundaries.** Per-caller authentication, tenant isolation, rate limiting. _Needs a deployment environment._
 - [ ] **M11 — External anchoring.** Witness/remote append-only audit export beyond the local checkpoint file. _Needs infrastructure._
@@ -181,7 +181,7 @@ PTF's destination is peer-reviewed protected-use infrastructure for agentic syst
 
 Reviewers, standards authors, host integrators, and agent builders are all first-class contributors — see `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`. The rules in brief: the gate (`typecheck`, unit, eval) must be green; every change proves itself with a fresh verifier run plus one abuse case (**no proof, no merge**); tests live at public seams (`src/index.ts`); secrets never appear anywhere except the local store (synthetic sentinels only); architecture changes need an ADR; new ceilings go in `docs/audit/limits.md`; user-visible changes go in `CHANGELOG.md`. File bugs and proposals with the issue templates — especially reports where PTF allowed what it should have denied. If you participate through an agent, say which one: agent-tooling confusion is a docs bug worth its own PR.
 
-Docs map: ubiquitous language `CONTEXT.md` · decisions `docs/adr/` · auditor entry `docs/audit/README.md` · protocols `docs/research/` · operations `docs/audit/operations.md` · contribution rules `CONTRIBUTING.md`.
+Docs map: ubiquitous language `CONTEXT.md` · decisions `docs/adr/` · auditor entry `docs/audit/README.md` · operations `docs/audit/operations.md` · contribution rules `CONTRIBUTING.md`.
 
 ## License
 

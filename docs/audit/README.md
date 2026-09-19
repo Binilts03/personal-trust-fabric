@@ -1,51 +1,38 @@
 # PTF audit pack — start here
 
-Zero-archaeology entry for an external reviewer. PTF v0.1 is a user-owned
-trust layer: agents propose, the deterministic core disposes.
+This directory contains the public material needed to review PTF without relying on internal development notes.
 
-## What PTF is (60 seconds)
+## What PTF is
 
-- **Authority plane** (`src/core/`, zero-dep, `node:crypto` only): standing
-  grants + one-time approvals → `Authority.evaluate` (allow-with-citation or
-  deny) → short-lived attenuated capabilities (`ptf/cap@0.1` local-only `@internal` per ADR-0009 — never wire; interop uses the standards edge, Ed25519,
-  child ≤ parent, recipient + termsDigest fixed, expiry + maxUses) →
-  recipient-authenticated redemption → protected execution → secret-free
-  receipt + hash-chained audit.
-- **Edge adapters** (`src/adapters/`): x402 v2, AP2, OpenID4VP, MCP/WebMCP,
-  A2A, JWS, URLs. Evidence in, never authority out (ADR-0005). Every adapter
-  fails closed; subset limits are documented, not silent.
-- **Operator surface** (`src/store/`, `src/cli.ts`, `src/mcp-server.ts`):
-  JSON file stores (atomic writes, revision-CAS single-writer), scrypt+AES-GCM
-  keystore (passphrase from file, TTY prompt, or env legacy), `ptf` CLI (human approval), MCP stdio
-  server (`ptf_propose` / `ptf_check` / `ptf_redeem`, no approve tool).
+- **Authority plane** (`src/core/`): default-deny grants/approvals/policy evaluation, attenuated local capabilities, explicit CHECK → REDEEM → EXECUTE separation, and secret-free receipts.
+- **Edge adapters** (`src/adapters/`): standards/evidence translators. External messages are evidence or requests, never authority.
+- **Protected state** (`src/store/`): local durable authority state, encrypted Personal State, keystore, proposals, backups, and audit support.
+- **Operator surfaces**: CLI, MCP stdio server, and reference PDP.
 
-Golden rules: `AGENTS.md`. Language: `CONTEXT.md`. Decisions: `docs/adr/`.
-Protocols: `docs/research/2026-09-09-deep-*.md`.
+The durable product language is in `CONTEXT.md`; architecture decisions are in `docs/adr/`.
 
-## Map
+## Review map
 
-| Question                                | File                                                       |
-| --------------------------------------- | ---------------------------------------------------------- |
-| How is it built?                        | `architecture.md`                                          |
-| What can go wrong?                      | `../..//THREATMODEL.md`, `../../SECURITY.md`, `threats.md` |
-| What is tested, and where is the proof? | `tests.md`                                                 |
-| What is explicitly NOT claimed?         | `limits.md`                                                |
-| How do I re-verify from scratch?        | `verify.md`                                                |
-| How do we go public / publish?          | `public-flip.md`                                           |
-| How do I run it (image/health/backup)?  | `operations.md`                                            |
-| What did the prod-ready loop decide?    | `decisions.md` (vendored; `.scratch/` is gitignored)       |
-| How do we get an outside audit?         | `commissioning.md` (brief for the owner to send firms)     |
-| How do we pilot before live assets?     | `pilot.md` (owner-run, test rails only)                    |
+| Question | File |
+| --- | --- |
+| How is it built? | `architecture.md` |
+| What can go wrong? | `../../THREATMODEL.md`, `threats.md` |
+| What is tested? | `tests.md` |
+| What is explicitly not claimed? | `limits.md` |
+| How do I reproduce the gate? | `verify.md` |
+| How do I operate the reference implementation? | `operations.md` |
+| How do I report a vulnerability? | `../../SECURITY.md` |
 
-## Verdict shortcut
+## Verification shortcut
 
 ```sh
-npm run typecheck && npm test && npm run eval
+npm ci
+npm run check:brand
+npm run typecheck
+npm test
+npm run eval
+bash scripts/harness.sh
 npm pack --dry-run
 ```
 
-Expected: typecheck clean, 220+ unit green, 9 eval green (CI is the
-source of truth as counts grow), tarball lists
-`dist/` + `LICENSE` + `README.md` only (+ `package.json` always).
-Evidence sample: `evidence/2026-09-12-security-fixes.log` (gitignored live
-runs; committed fixtures in `tests/`).
+CI is the source of truth for suite counts and release gating. Local verification artifacts, stores, logs, credentials, and operator evidence are intentionally not tracked in the repository.

@@ -3,7 +3,7 @@
 # writable. Build: docker build -t ptf:0.1.0 .  Run e.g.:
 # docker run --read-only -v ptf-store:/data ptf:0.1.0 dist/src/cli.js --dir /data audit --verify
 # Record the built digest alongside the release (`docker inspect ptf:0.1.0
-# --format '{{.RepoDigests}}'` → docs/audit/public-flip.md §7). The base tag
+# --format '{{.RepoDigests}}'`). The base tag
 # floats on patch releases by design (debian security rebuilds); the digest
 # recorded at release time is the pin — never retag a released digest.
 # HEALTHCHECK is deliberately host-composed, not baked in: the CLI exits

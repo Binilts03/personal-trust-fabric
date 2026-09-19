@@ -1,7 +1,7 @@
 # Threat pointer (v0.1)
 
 Canonical model: `THREATMODEL.md`. Reporting: `SECURITY.md`.
-Research: `docs/research/2026-09-09-deep-*.md`. ADRs: `docs/adr/0001-0007`.
+Architecture decisions: `docs/adr/`.
 
 ## Attackers in scope → where they die
 

@@ -1,8 +1,6 @@
 name: release
 
 # Tagged releases ship SLSA Build L3 provenance plus a CycloneDX SBOM.
-# First run happens on the first pushed tag (v*); see docs/hygiene.md.
-
 on:
   push:
     tags: ["v*"]
@@ -45,8 +43,6 @@ jobs:
     with:
       base64-subjects: "${{ needs.build.outputs.hashes }}"
       upload-assets: true
-      # Private repository: required for Sigstore signing to work correctly.
-      private-repository: true
 
   github-release:
     needs: [build, provenance]
