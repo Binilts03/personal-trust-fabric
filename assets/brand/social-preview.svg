@@ -13,7 +13,7 @@
     <text x="118" y="430" fill="#8B949E" font-size="22">User-owned authority for interchangeable AI agents.</text>
   </g>
 
-  <g transform="translate(720 124)" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">
+  <g transform="translate(650 124)" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">
     <text x="0" y="0" fill="#8B949E" font-size="17">agent A</text>
     <text x="0" y="72" fill="#8B949E" font-size="17">agent B</text>
     <text x="0" y="144" fill="#8B949E" font-size="17">local</text>
