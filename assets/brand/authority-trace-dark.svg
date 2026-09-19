@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 330" role="img" aria-labelledby="title desc">
-<title id="title">PTF authority trace</title>
+<title id="title">Illustrative PTF authority trace</title>
 <desc id="desc">An example authority trace shows verified actor, bounded action, resource, ceiling, purpose, secret handling and an allow decision with a secret-free receipt.</desc>
 <rect width="1200" height="330" rx="26" fill="#0B0F14"/>
 <rect x="24" y="24" width="1152" height="282" rx="22" fill="none" stroke="#25303C"/>
 <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-<text x="62" y="68" fill="#F4F7FA" font-size="23" font-weight="740">Authority trace</text>
+<text x="62" y="68" fill="#F4F7FA" font-size="23" font-weight="740">Illustrative authority trace</text>
 <text x="62" y="94" fill="#95A1AF" font-size="14">The model proposes. PTF evaluates exact terms. The external effect receives only what was authorized.</text>
 <g transform="translate(62 126)">
   <rect width="770" height="142" rx="18" fill="#111821" stroke="#25303C"/>
