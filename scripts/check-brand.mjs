@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = process.cwd();
@@ -37,6 +37,16 @@ for (const relative of required) {
     continue;
   }
   if (statSync(path).size === 0) fail(`empty required brand file: ${relative}`);
+}
+
+const brandDir = resolve(root, "assets/brand");
+if (existsSync(brandDir)) {
+  const allowedAssets = new Set(["social-preview.svg"]);
+  for (const name of readdirSync(brandDir)) {
+    if (!allowedAssets.has(name)) {
+      fail(`unexpected brand asset: assets/brand/${name}`);
+    }
+  }
 }
 
 const socialPath = resolve(root, "assets/brand/social-preview.svg");
