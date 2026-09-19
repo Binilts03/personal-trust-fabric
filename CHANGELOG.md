@@ -22,6 +22,8 @@ release day. This project adheres to Semantic Versioning.
   resource addresses; `createApproval` folds external bindings;
   authority ids are global and immutable; x402/AP2 translators are
   identity-free; PDP keys reject duplicate secrets.
+- Brand: Authority Manifest v1 (#22, separate session): protected README
+  region + brand assets + `check:brand` gate (docs/brand/BRAND.md).
 - Old-defect fixes: PDP hot-reload retains last-good keys, true IP-pinned
   connects, `expectedNonce` verification, strict exclusive→inclusive
   attenuation, same-type vault ambiguity fails closed, live-grants-only

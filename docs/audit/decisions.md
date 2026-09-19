@@ -20,6 +20,21 @@ deliberation stays in local scratch; this is the durable part.
 | 11  | Pinned fetch path; OIDC cut to `redirect_uri`-only     | working tree (234/234 + 9/9, verifiers 5/5 + 3/3; review follow-ups in) | Egress proxy accepted-risk (single-operator)     |
 | 12  | Operations pack (this loop's close)                    | working tree (see `operations.md`; final gate 234/234)                  | Image unsigned until owner enables Sigstore      |
 
+## Since the loop (2026-09-17/19, PR-gated, no proof no merge)
+
+| PR  | Decision                                                          | Landed    | Gate                                |
+| --- | ----------------------------------------------------------------- | --------- | ----------------------------------- |
+| #15 | Vault, agent contract, provider seams, CLI support                | `fbdd43f` | typecheck + 249/249 unit + 9/9 eval |
+| #16 | Review fixes: gated reads, filtered capabilities, hardened CLI    | `e701c50` | typecheck + 252/252 unit + 9/9 eval |
+| #17 | Encrypted vault (ADR-0016), MCP disclosure delivery, orchestrator | `0807a63` | typecheck + 262/262 unit + 9/9 eval |
+| #18 | Durable proposals via file CAS (ADR-0017, amends 0014)            | `5c05496` | typecheck + 264/264 unit + 9/9 eval |
+| #19 | Backup/restore commands enforcing the runbook                     | `73ca866` | typecheck + 271/271 unit + 9/9 eval |
+| #20 | Inventory fixes, contributor infra, README rewrite                | `10e6118` | typecheck + 271/271 unit + 9/9 eval |
+| #22 | Brand: Authority Manifest v1 (separate session)                   | `0cdbaa9` | brand check + gate                  |
+| #23 | Correction: check/redeem split, exact context, burn-before-effect | `6b32501` | typecheck + 297/297 unit + 9/9 eval |
+
+Counts are point-in-time per merge; CI is the source of truth.
+
 Loop rulebook: `AGENTS.md` golden rules, `CONTEXT.md` language,
 `docs/adr/` (esp. ADR-0009, ADR-0013, ADR-0015), per-area
 `docs/research/2026-09-09-deep-*.md`. Threat posture: `THREATMODEL.md`

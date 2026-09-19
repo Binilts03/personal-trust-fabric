@@ -4,3 +4,17 @@ evidence/*
 !evidence/.gitkeep
 .scratch/
 *.tsbuildinfo
+# Operator artifacts: stores, backups, and secrets must never be committed.
+ptf-store/
+ptf-restored/
+backups/
+*.tgz
+.env
+.env.*
+pdp-keys.json
+tls/
+coverage/
+.vscode/
+.idea/
+.DS_Store
+*.swp
