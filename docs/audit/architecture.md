@@ -1,6 +1,6 @@
 # Architecture brief (v0.1 + prod slice)
 
-PTF is a personal authority and protected-data layer for agentic commerce:
+PTF is a personal authority and protected-use layer for agentic systems:
 a secure vault, authority engine, selective-disclosure broker, and protected
 execution layer that lets agents complete tasks without possessing the user's
 secrets. PTF is the source of truth for a person's authority and protected
@@ -81,9 +81,9 @@ no lateral delegation.
   (`readPassphrase`), rotation via `resealKeystore`/`ptf rekey`,
   best-effort `zeroize` (JS erasure limits documented).
 - `store/vault`: durable Personal State (`personal-state.json`, revision CAS):
-  purpose/agent/expiry/sensitivity-scoped records; `readForPurpose` validates
-  `Authority.evaluate(/disclose)` first, then filters (secret never returned);
-  `useCredential` is the sole use-only path for secrets (receipt-only return).
+  purpose/agent/expiry/sensitivity/resource-scoped records; `disclose` evaluates
+  authority before selecting non-secret claims; protected secret use is available only
+  through the gated use path and store-backed execution orchestration.
 - `profiles/data`: general agent contract (`requestData` for `/disclose`,
   `requestExecution` for actions) — thin over `evaluate` + derived digest +
   `renderProposal`; never mints authority.
@@ -95,8 +95,8 @@ no lateral delegation.
 - `cli.ts`: wiring over tested modules (manual argv, stdin/stdout, `--help`
   / `--version`, unknown-flag rejection, `init` no-overwrite).
 - `mcp-server.ts`: official SDK stdio; `propose` (dry-run, status `pending`),
-  `check` (digest), `redeem` (dry-run → challenge → authorize-first → consume
-  authority → save authority before audit; `/pay`-only) plus the general
+  `check` (digest), `redeem` (check → challenge → proof-verified redeem → persist consumed
+  authority before effect; `/pay`-only) plus the general
   contract (`request_data`/`request_action` dry-runs, `present_data`
   holder-signed delivery, `get_receipt` by digest,
   `list_capabilities` read-only, `revoke` request-only). No approve tool by
