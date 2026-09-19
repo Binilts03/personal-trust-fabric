@@ -19,7 +19,7 @@
     <text x="54" y="20" fill="#95A1AF" font-size="16" font-weight="700" letter-spacing="2.2">PERSONAL TRUST FABRIC</text>
     <text x="0" y="92" fill="#F4F7FA" font-size="42" font-weight="720">Authority belongs to</text>
     <text x="0" y="142" fill="url(#daccent)" font-size="42" font-weight="720">the person. Not the agent.</text>
-    <text x="0" y="194" fill="#95A1AF" font-size="20">User-owned authority and protected use for interchangeable AI agents.</text>
+    <text x="0" y="194" fill="#95A1AF" font-size="20">User-owned authority for interchangeable AI agents.</text>
     <g transform="translate(0 238)" font-size="13" font-weight="700" letter-spacing=".8">
       <rect width="118" height="34" rx="17" fill="#111821" stroke="#25303C"/><text x="18" y="22" fill="#49D7FF">DEFAULT DENY</text>
       <rect x="132" width="124" height="34" rx="17" fill="#111821" stroke="#25303C"/><text x="151" y="22" fill="#62E6A7">EXACT TERMS</text>
