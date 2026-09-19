@@ -1,13 +1,14 @@
 # Contributing to Personal Trust Fabric
 
-PTF is heading for peer review as a standard for agentic commerce. The bar
-is: every change proves itself, documents its boundaries, and never leaks
-secrets. Humans and coding agents follow the same rules.
+PTF is heading for peer review as user-owned authority and protected-use
+infrastructure for agentic systems. The bar is: every change proves itself,
+documents its boundaries, and never leaks secrets. Humans and coding agents
+follow the same rules.
 
 ## The one gate (no exceptions)
 
 ```sh
-npm run typecheck && npm test && npm run eval
+npm run check:brand && npm run typecheck && npm test && npm run eval
 ```
 
 Plus the repo harness (`scripts/harness.sh` where it runs, else its steps):
@@ -48,6 +49,10 @@ with a fresh verifier, include one abuse case, save output to
   in `CHANGELOG.md` (Keep-a-Changelog flow).
 - **Tests at public seams only.** Agree the seam before writing code; see
   `docs/audit/tests.md` for the suite index.
+- **Brand is a protected seam too.** Unrelated changes must not modify
+  `assets/brand/` or the README region between `PTF-BRAND:START` and
+  `PTF-BRAND:END`. Intentional brand work follows `docs/brand/BRAND.md` and
+  must pass `npm run check:brand`.
 
 ## For agent contributors
 
