@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   LedgerSettlementExecutor,
   RecordedSettlementExecutor,
-  FacilitatorSettlementExecutor,
+  X402SettlementExecutor,
 } from "../src/index.js";
 import { StubFacilitator } from "./fakes.js";
 
@@ -67,7 +67,7 @@ describe("real settlement behind the boundary (v04/03)", () => {
     assert.equal(r1.transaction, r2.transaction);
   });
 
-  it("facilitator path verifies then settles (stub, evidence-only)", async () => {
+  it("x402 settlement path verifies then settles through the external facilitator (stub, evidence-only)", async () => {
     const req = {
       scheme: "exact",
       network: "eip155:84532",
@@ -76,7 +76,7 @@ describe("real settlement behind the boundary (v04/03)", () => {
       payTo: "0xshop",
       maxTimeoutSeconds: 60,
     };
-    const ex = new FacilitatorSettlementExecutor(
+    const ex = new X402SettlementExecutor(
       new StubFacilitator(true, "0xfrom"),
       req,
       { x: 1 },
@@ -88,7 +88,7 @@ describe("real settlement behind the boundary (v04/03)", () => {
       }
     );
     assert.equal((await ex.executePayment(INSTR)).transaction, "0xstub");
-    const bad = new FacilitatorSettlementExecutor(
+    const bad = new X402SettlementExecutor(
       new StubFacilitator(false),
       req,
       { x: 1 },

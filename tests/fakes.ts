@@ -9,7 +9,7 @@ import {
   type X402Facilitator,
 } from "../src/index.js";
 
-/** Test stub for the x402 facilitator boundary (moved from adapters/x402.ts). */
+/** Test stub for the EXTERNAL x402 facilitator role (moved from adapters/x402.ts). PTF calls facilitators; it never is one. */
 export class StubFacilitator implements X402Facilitator {
   constructor(
     private readonly valid: boolean,

@@ -31,8 +31,10 @@ packaging (`src/api.ts` + the `exports` map), not by comments.
   canonical/crypto machinery (`canonicalize`, `sha256Hex`, `termsDigestOf`,
   key functions), disclosure internals, and host stores (`store/*`).
 - Custody/execution ownership: the file keystore and the
-  recorded/ledger/facilitator settlement executors are REFERENCE host
-  implementations (dev/test). Production custody is OS keychain / Enclave /
+  recorded/ledger/x402 settlement executors are REFERENCE host
+  implementations (dev/test) — PTF calls external rails, it never
+  facilitates, settles, or moves value itself.
+  Production custody is OS keychain / Enclave /
   1Password / Bitwarden / HSM / KMS behind `KeyProvider` / `Signer`;
   production execution is the host's rail behind `PaymentExecutor` /
   `SigningExecutor` (`PaymentProvider` / `CredentialProvider` supply

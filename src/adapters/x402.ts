@@ -271,7 +271,7 @@ export function checkSettlement(
   return { ok: true };
 }
 
-/** Host-owned facilitator boundary: the external system executes, PTF only verifies results (`checkSettlement`). Production wiring is host-side (out of v0.1); tests use the stub in tests/fakes.ts. */
+/** Host-owned boundary to the EXTERNAL x402 facilitator role: the external system executes, PTF only verifies results (`checkSettlement`). PTF never acts as facilitator. Production wiring is host-side (out of v0.1); tests use the stub in tests/fakes.ts. */
 export interface X402Facilitator {
   verify(
     payload: unknown,

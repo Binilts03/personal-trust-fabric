@@ -13,15 +13,16 @@ import {
 /**
  * Reference host settlement evidence (ticket 09): PTF decides, external
  * systems execute, PTF verifies results via `checkSettlement`.
- * Core is untouched: this adapter turns a recorded facilitator settlement
+ * Core is untouched: this adapter turns a recorded external settlement
  * into the `{transaction}` the receipt needs, enforcing network/payer and
  * opt-in amount/asset expectations via checkSettlement. No live RPC in v04;
- * pass a recorded SettlementResult (facilitator proof) for verifiable demos.
+ * pass a recorded SettlementResult (external attestation) for verifiable demos.
  * CLI/MCP consume the `PaymentExecutor` seam directly (today
  * `FakePaymentExecutor` — no money moves); production hosts supply their own
  * `PaymentExecutor` (e.g. one of the reference executors below) with value
  * movement performed by their own `PaymentProvider` rail and credentials
  * supplied by their own `CredentialProvider` store. Call sites untouched.
+ * PTF never facilitates, settles, or moves value itself.
  */
 
 /**
@@ -84,8 +85,14 @@ export class LedgerSettlementExecutor implements PaymentExecutor {
   }
 }
 
-/** Live-shape facilitator path (still evidence-only): verify then settle, then enforce expectations. */
-export class FacilitatorSettlementExecutor implements PaymentExecutor {
+/**
+ * Settlement through an external x402 facilitator (still evidence-only):
+ * verify with the facilitator, settle through it, then enforce expectations
+ * locally. "Facilitator" here is x402's name for the EXTERNAL verify/settle
+ * service — PTF calls it; PTF never is it. Personal trust fabric does not
+ * facilitate payments.
+ */
+export class X402SettlementExecutor implements PaymentExecutor {
   constructor(
     private readonly facilitator: X402Facilitator,
     private readonly requirements: PaymentRequirement,
@@ -105,7 +112,7 @@ export class FacilitatorSettlementExecutor implements PaymentExecutor {
       this.requirements
     );
     if (!verified.isValid)
-      throw new Error("settlement: facilitator verify failed");
+      throw new Error("settlement: external facilitator verify failed");
     const settled = await this.facilitator.settle(
       this.payload,
       this.requirements

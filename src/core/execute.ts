@@ -29,7 +29,7 @@ export interface PaymentExecutor {
   ): Promise<{ readonly ok: true; readonly transaction: string }>;
 }
 
-/** In-memory stand-in for a PSP/facilitator. Records calls for assertions. No money moves. */
+/** In-memory stand-in for a host-owned rail. Records calls for assertions. No money moves. */
 export class FakePaymentExecutor implements PaymentExecutor {
   readonly calls: PaymentInstruction[] = [];
   async executePayment(

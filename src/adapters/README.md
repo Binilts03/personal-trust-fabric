@@ -11,7 +11,7 @@ Standards edge (ADR-0009, current):
 - `oauth-agent.ts` — RFC8693-style attenuation (`sub` fixed, `act` append-only, scope subset, exp clamp, sender `cnf`).
 - `sd-jwt.ts` — PTF presentation → standard SD-JWT `_sd`/disclosures + KB-JWT claims (evidence-only; issuance host-side).
 - `audit-interop.ts` — `AuditEntry` → interop record (`jti` = hash); unkeyed verify by recompute, keyed opaque.
-- `x402/` — parse v2 `PAYMENT-REQUIRED` headers → PTF payment demand; verify settlement via facilitator/RPC.
+- `x402/` — parse v2 `PAYMENT-REQUIRED` headers → PTF payment demand; verify settlement via the external facilitator/RPC (evidence only — PTF never facilitates).
 - `ap2/` — verify Intent→Cart→Payment SD-JWT chains (`cnf`, `exp`, checkout hash) → demand.
 - `oid4vp/` — DCQL request → disclosure demand (`requested ∩ available ∩ allowed`).
 - `mcp/` + `webmcp/` — origin/audience/scope gate + confirm-mutating-executes.
