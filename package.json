@@ -1,7 +1,7 @@
 {
   "name": "personal-trust-fabric",
   "version": "0.1.0",
-  "description": "User-owned trust and delegated-authority layer for the agentic web (PTF v0.1)",
+  "description": "User-owned authority and protected use for interchangeable AI agents.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/src/api.js",
@@ -43,13 +43,15 @@
     "ptf-pdp-server": "./dist/src/pdp-server.js"
   },
   "keywords": [
-    "trust",
-    "delegation",
-    "capabilities",
     "authorization",
-    "agents",
-    "x402",
-    "ap2"
+    "delegation",
+    "least-privilege",
+    "ai-agents",
+    "agentic-ai",
+    "capabilities",
+    "identity",
+    "mcp",
+    "security"
   ],
   "files": [
     "dist",
