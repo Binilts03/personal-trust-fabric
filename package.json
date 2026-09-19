@@ -86,7 +86,7 @@
     "prepare": "husky || true"
   },
   "devDependencies": {
-    "@types/node": "^26.5.0",
+    "@types/node": "^26.6.1",
     "fast-check": "^4.9.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.5.1",
