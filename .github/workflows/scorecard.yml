@@ -13,8 +13,6 @@ jobs:
     permissions:
       security-events: write
       id-token: write
-      # Recommended reads for private repos (per upstream docs): without these,
-      # GraphQL ListCommits fails with "Resource not accessible by integration".
       contents: read
       issues: read
       pull-requests: read
@@ -38,7 +36,4 @@ jobs:
           name: SARIF file
           path: results.sarif
           retention-days: 5
-      # NOTE: no codeql-action/upload-sarif step — the code-scanning API needs
-      # GitHub Advanced Security, unavailable on private repos without it.
-      # Results live in the run artifacts above. Re-add the upload step if GHAS
-      # is enabled or the repo goes public.
+      # Keep the SARIF as a short-lived workflow artifact; publishing policy can be changed independently.
