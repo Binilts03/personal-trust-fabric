@@ -10,7 +10,7 @@ unit (tests/pass/fail):
 eval:
 ```
 
-Verifier evidence (`evidence/<date>-<slug>.log`, gitignored — paste the 5-line tail + abuse case):
+Verifier summary (paste the relevant output + abuse case; do not commit generated logs):
 
 ```text
 
