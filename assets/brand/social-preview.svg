@@ -22,7 +22,7 @@
     <text x="302" fill="#49D7FF" font-size="14" font-weight="750" letter-spacing="1.2">SECRET-FREE</text>
     <text x="448" fill="#62E6A7" font-size="14" font-weight="750" letter-spacing="1.2">VENDOR-NEUTRAL</text>
   </g>
-  <g transform="translate(855 338)">
+  <g transform="translate(820 160) scale(.75)">
     <g fill="#111821" stroke="#25303C">
       <rect x="0" y="-110" width="104" height="36" rx="10"/><rect x="0" y="-54" width="104" height="36" rx="10"/><rect x="0" y="2" width="104" height="36" rx="10"/>
     </g>
