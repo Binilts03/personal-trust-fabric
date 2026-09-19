@@ -1,35 +1,53 @@
 <!-- PTF-BRAND:START -->
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/hero-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="./assets/brand/hero-light.svg">
-  <img alt="Personal Trust Fabric — Authority belongs to the person, not the agent" src="./assets/brand/hero-light.svg">
-</picture>
+# Personal Trust Fabric
 
-PTF is a **user-owned authority and protected-use control plane for agentic systems**. Interchangeable agents can use precisely bounded pieces of a person's authority, data, and credentials without possessing the underlying secrets. Agents may reason about authority; they are never its source.
+> **Authority should travel. Secrets should not.**
 
-| Without a user-owned trust layer | PTF design principle |
-| --- | --- |
-| Agents receive broad credentials, tokens, or secrets | Authority is scoped to a bounded operation |
-| Sensitive values enter model context or tool calls | Secrets remain behind the protected-use boundary |
-| Permission is recreated inside each agent platform | Authority is modeled independently of the current agent runtime |
-| Protocol messages can be mistaken for permission | External messages are evidence; deterministic authority decides |
+PTF is a user-owned authority and protected-use layer for interchangeable AI agents. An agent can act with precisely bounded authority without receiving the underlying credential, payment instrument, signing key, or unrestricted token.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/architecture-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="./assets/brand/architecture-light.svg">
-  <img alt="PTF conceptual architecture: personal state, authority state and audit feed a deterministic decision engine used by interchangeable agents" src="./assets/brand/architecture-light.svg">
-</picture>
+```text
+                    authority
+person  --------------------------------+
+                                         \
+agent A  -------------------------------> [ PTF ] ---> protected action
+agent B  -------------------------------> [     ] ---> disclosure
+local    -------------------------------> [     ] ---> signature
+                                             |
+personal state -------------------------->  |
+                                      secrets stop here
+                                             |
+                                             v
+                                          receipt
+```
 
-**The invariants are the product:** default deny · Personal State ≠ Authority State · policy narrows but never creates authority · exact terms · use without possession · external messages are evidence, never authority.
+Default deny. Exact terms. Use without possession. External messages are evidence, never authority.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/authority-trace-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="./assets/brand/authority-trace-light.svg">
-  <img alt="Illustrative PTF authority trace showing verified actor, exact action, bound resource, constrained ceiling and secret-free execution" src="./assets/brand/authority-trace-light.svg">
-</picture>
+## Why this exists
 
-> **Scope boundary:** PTF owns authority, policy, protected state, approval, secret mediation, execution authorization, portable semantics, and audit evidence. It does **not** own payment rails, settlement, wallets, merchant acquiring, identity issuance, or external provider systems. Payment is one optional domain profile.
+Agent platforms are getting better at acting for people, but the authority to act is usually trapped inside a specific platform, session, credential store, or provider integration. PTF separates **who may do what** from **who possesses the secret needed to do it**. The agent proposes an operation. PTF evaluates user-owned authority deterministically. Protected state stays behind the boundary. The agent receives only the minimum disclosure or a secret-free receipt.
+
+## An authority decision, not an AI opinion
+
+```text
+request
+  actor       did:agent:travel
+  action      /travel/book
+  resource    flight:AI812
+  purpose     personal-travel
+
+authority
+  source      grant:g-travel
+  ceiling     INR 15,000
+  secret      retained by PTF
+
+decision      ALLOW
+receipt       secret-free
+```
+
+The transcript above is illustrative, not a claim that every domain adapter is production-ready today. Current implementation status and known limits are documented below.
+
+**Boundary:** PTF owns authority semantics, policy, protected state, approval, secret mediation, execution authorization, portable decision semantics, and audit evidence. External systems still own settlement, travel booking, delivery, identity issuance, and other domain-specific rails. Payment is one profile, not the product.
 
 <!-- PTF-BRAND:END -->
 
