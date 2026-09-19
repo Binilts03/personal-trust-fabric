@@ -8,9 +8,9 @@
 
 PTF is a **user-owned authority and protected-use control plane for agentic systems**. Interchangeable agents can use precisely bounded pieces of a person's authority, data, and credentials without possessing the underlying secrets. Agents may reason about authority; they are never its source.
 
-| Without a user-owned trust layer | With PTF |
+| Without a user-owned trust layer | PTF design principle |
 | --- | --- |
-| Agents receive broad credentials, tokens, or secrets | Agents receive only bounded authority for an exact operation |
+| Agents receive broad credentials, tokens, or secrets | Authority is scoped to a bounded operation |
 | Sensitive values enter model context or tool calls | Secrets remain behind the protected-use boundary |
 | Permission is recreated inside each agent platform | Authority is modeled independently of the current agent runtime |
 | Protocol messages can be mistaken for permission | External messages are evidence; deterministic authority decides |
@@ -26,7 +26,7 @@ PTF is a **user-owned authority and protected-use control plane for agentic syst
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/authority-trace-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="./assets/brand/authority-trace-light.svg">
-  <img alt="Example PTF authority trace showing verified actor, exact action, bound resource, constrained ceiling and secret-free execution" src="./assets/brand/authority-trace-light.svg">
+  <img alt="Illustrative PTF authority trace showing verified actor, exact action, bound resource, constrained ceiling and secret-free execution" src="./assets/brand/authority-trace-light.svg">
 </picture>
 
 > **Scope boundary:** PTF owns authority, policy, protected state, approval, secret mediation, execution authorization, portable semantics, and audit evidence. It does **not** own payment rails, settlement, wallets, merchant acquiring, identity issuance, or external provider systems. Payment is one optional domain profile.
