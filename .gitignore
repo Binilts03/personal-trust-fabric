@@ -11,6 +11,16 @@ tmp/
 .tmp/
 .temp/
 
+# Internal notebooks and process artifacts (keep outside the public repo)
+docs/research/
+docs/agents/
+docs/loops.md
+docs/hygiene.md
+docs/audit/commissioning.md
+docs/audit/decisions.md
+docs/audit/pilot.md
+docs/audit/public-flip.md
+
 # Local planning / coding-agent state
 .scratch/
 .claude/
