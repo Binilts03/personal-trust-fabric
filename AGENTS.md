@@ -44,7 +44,7 @@ Skills: `docs/agents/domain.md` is a guide; the consumer contract is `src/index.
 
 ## Brand contract
 
-- `assets/brand/` and the README region between `PTF-BRAND:START` and `PTF-BRAND:END` define **Authority Fabric v1**.
+- `assets/brand/` and the README region between `PTF-BRAND:START` and `PTF-BRAND:END` define **Authority Manifest v1**.
 - Unrelated engineering work MUST NOT modify that directory or protected README region.
 - Stable brand copy describes enduring product invariants only. Volatile status, APIs, protocol versions, test counts, providers, and milestones belong below the protected region.
 - If a product change genuinely invalidates brand copy, flag it for explicit brand review instead of silently rewriting it.
