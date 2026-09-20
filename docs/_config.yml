@@ -1,6 +1,6 @@
 title: Personal Trust Fabric
 description: User-owned trust and delegated-authority layer for the agentic web
-theme: just-the-docs
+remote_theme: just-the-docs/just-the-docs
 
 url: https://binilts03.github.io
 baseurl: /personal-trust-fabric
@@ -20,6 +20,7 @@ aux_links:
 color_scheme: auto
 
 plugins:
+  - jekyll-remote-theme
   - jekyll-include-cache
   - jekyll-sitemap
   - jekyll-seo-tag
