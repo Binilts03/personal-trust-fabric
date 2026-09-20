@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Remove theme SCSS files copied by jekyll-remote-theme
+        run: rm -f docs/assets/css/just-the-docs-*.scss
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
