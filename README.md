@@ -166,20 +166,31 @@ Default-deny with citations: every allow names the grant or approval consumed. P
 
 ## Roadmap
 
-PTF's destination is peer-reviewed protected-use infrastructure for agentic systems. The code items below are ordered; the human/world items need owners with accounts, budgets, or authority — **if you can unblock one, that is the highest-leverage contribution you can make.**
+PTF's destination is peer-reviewed protected-use infrastructure for agentic systems. The milestones are grouped by what peer review actually requires: a normative spec, a conformance suite, and proof that the abstraction generalizes beyond one domain. Production hardening (HSM custody, multi-tenant ingress, external anchoring) follows after review, not before.
 
-- [x] **M1 — Authority kernel.** Default-deny engine, attenuation, exact-term approvals, receipts, audit. (Done, tested.)
-- [x] **M2 — Personal vault.** Encrypted durable state, purpose/agent scoping, evaluate-first reads, receipt-only secret use. (Done, tested.)
-- [x] **M3 — Agent loop.** Propose→present/redeem→receipt for disclosure and payment over MCP, filtered capabilities, request-only revocation, durable proposals. (Done, tested.)
-- [x] **M4 — Operability.** Backup/restore commands, rotation, health signals, container image. (Done, tested.)
-- [ ] **M5 — Normative spec.** An implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY) a second party could build against. _Needs spec authors + reviewers._
-- [ ] **M6 — Conformance suite.** Frozen vectors (digests, chains, disclosure intersections) and fixtures so independent implementations prove compatibility. _Needs a second implementation to validate against._
-- [ ] **M7 — Domain profiles beyond payment.** Travel, email, signing, and identity actions executing over the generic `ExecutionReceipt` — payment as one profile among equals, each with the same authority/consent/receipt contract. _Needs profile authors + one more executing domain to prove generality._
-- [ ] **M8 — Independent audit.** Commission a third-party review against the public threat model, known-limits register, verification guide, and tagged release. _Needs budget and a firm._
-- [ ] **M9 — HSM/KMS custody.** Replace the file keystore behind the existing `KeyProvider` seam. _Needs cloud/hardware accounts._
-- [ ] **M10 — Remote ingress + multi-tenant boundaries.** Per-caller authentication, tenant isolation, rate limiting. _Needs a deployment environment._
-- [ ] **M11 — External anchoring.** Witness/remote append-only audit export beyond the local checkpoint file. _Needs infrastructure._
-- [ ] **M12 — Publish + govern.** npm Trusted Publisher release, version coherence, governance charter, conduct process, liaison with OIDF/FIDO/IETF. _Needs owner sessions and community._
+### Phase 1 — Make it reviewable
+
+- [x] **M1 — Authority kernel.** Default-deny engine, attenuation, exact-term approvals, receipts, audit.
+- [x] **M2 — Personal vault.** Encrypted durable state, purpose/agent scoping, evaluate-first reads, receipt-only secret use.
+- [x] **M3 — Agent loop.** Propose→present/redeem→receipt for disclosure and payment over MCP, filtered capabilities, request-only revocation, durable proposals.
+- [x] **M4 — Operability.** Backup/restore commands, rotation, health signals, container image.
+- [ ] **M5 — Normative spec.** An implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY) a second party could build against. _This is the highest-leverage remaining work — without it, nothing is interoperable._
+- [ ] **M6 — Conformance suite.** Frozen vectors (digests, chains, disclosure intersections) and fixtures so independent implementations prove compatibility.
+- [ ] **M7 — One more domain.** Travel or email executing over the generic `ExecutionReceipt` — proves the abstraction generalizes beyond payment. _One domain suffices; four is scope creep._
+
+### Phase 2 — Make it credible
+
+- [ ] **M8 — Independent audit.** Commission a third-party review against the public threat model, known-limits register, and verification guide. _Helpful but not blocking — the threat model and limits register are already thorough._
+- [ ] **M9 — Publish.** npm Trusted Publisher release, version coherence, installable package.
+
+### Phase 3 — Make it production-ready (after peer review)
+
+These are deployment engineering concerns, not trust architecture. They follow from adoption, not precede it.
+
+- [ ] **M10 — HSM/KMS custody.** Replace the file keystore behind the existing `KeyProvider` seam. _Host duty — the seam exists._
+- [ ] **M11 — Remote ingress + multi-tenant.** Per-caller authentication, tenant isolation, rate limiting. _The PDP bin already demonstrates per-caller auth._
+- [ ] **M12 — External anchoring.** Witness/remote append-only audit export beyond the local checkpoint file. _ADR-0006 explicitly defers this._
+- [ ] **M13 — Governance.** Governance charter, conduct process, liaison with OIDF/FIDO/IETF. _Long-term community concern._
 
 ## Contributing
 

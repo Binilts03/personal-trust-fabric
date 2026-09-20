@@ -117,18 +117,27 @@ Full model, threats, and honest limits: [THREATMODEL.md](https://github.com/Bini
 
 ## Roadmap
 
+### Phase 1 — Make it reviewable
+
 - [x] **M1 — Authority kernel.** Default-deny engine, attenuation, exact-term approvals, receipts, audit.
 - [x] **M2 — Personal vault.** Encrypted durable state, purpose/agent scoping, evaluate-first reads, receipt-only secret use.
 - [x] **M3 — Agent loop.** Propose→present/redeem→receipt for disclosure and payment over MCP.
 - [x] **M4 — Operability.** Backup/restore commands, rotation, health signals, container image.
-- [ ] **M5 — Normative spec.** Implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY).
+- [ ] **M5 — Normative spec.** Implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY). Highest-leverage remaining work.
 - [ ] **M6 — Conformance suite.** Frozen vectors and fixtures for independent implementations.
-- [ ] **M7 — Domain profiles beyond payment.** Travel, email, signing, identity actions.
+- [ ] **M7 — One more domain.** Travel or email over the generic `ExecutionReceipt` — proves generality beyond payment.
+
+### Phase 2 — Make it credible
+
 - [ ] **M8 — Independent audit.** Third-party review against public threat model.
-- [ ] **M9 — HSM/KMS custody.** Replace file keystore behind existing `KeyProvider` seam.
-- [ ] **M10 — Remote ingress + multi-tenant.** Per-caller auth, tenant isolation, rate limiting.
-- [ ] **M11 — External anchoring.** Witness/remote append-only audit export.
-- [ ] **M12 — Publish + govern.** npm Trusted Publisher, governance charter, OIDF/FIDO/IETF liaison.
+- [ ] **M9 — Publish.** npm Trusted Publisher release, installable package.
+
+### Phase 3 — Make it production-ready (after peer review)
+
+- [ ] **M10 — HSM/KMS custody.** Replace file keystore behind existing `KeyProvider` seam.
+- [ ] **M11 — Remote ingress + multi-tenant.** Per-caller auth, tenant isolation, rate limiting.
+- [ ] **M12 — External anchoring.** Witness/remote append-only audit export.
+- [ ] **M13 — Governance.** Governance charter, conduct process, OIDF/FIDO/IETF liaison.
 
 ---
 
