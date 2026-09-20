@@ -27,6 +27,10 @@ jobs:
           ruby-version: "3.3"
           bundler-cache: true
           working-directory: docs
+      - name: Remove theme SCSS files copied by jekyll-remote-theme
+        run: |
+          rm -f docs/assets/css/just-the-docs-*.scss
+        working-directory: .
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Build with Jekyll
