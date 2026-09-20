@@ -53,13 +53,15 @@ The transcript above is illustrative, not a claim that every domain adapter is p
 
 ## Status
 
-This is a working, tested reference implementation on the road to peer review — not a finished product. What CI proves on every merge: strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning. See `docs/audit/verify.md` to reproduce from scratch.
+This is a working, tested reference implementation on the road to peer review — not a finished product.
 
-What it **is** today: a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
+**What CI proves on every merge:** strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning. See `docs/audit/verify.md` to reproduce from scratch.
 
-What it **is not** yet: a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in `docs/audit/limits.md` — the file lists what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
+**What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
 
-## For humans: run it in 60 seconds
+**What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in `docs/audit/limits.md` — the file lists what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
+
+## Try it in 60 seconds
 
 Requires Node 22+.
 
@@ -104,7 +106,7 @@ if (!decision.allow) throw new Error("denied");
 // Every allow cites its grant: decision.citations[0].authorityId === "groceries"
 ```
 
-## Operator quickstart (real use)
+## Operator quickstart
 
 ```sh
 export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase" && chmod 600 "$HOME/.ptf/passphrase"
@@ -122,7 +124,18 @@ node dist/src/cli.js --help
 
 One CLI/MCP writer per store (optimistic revision control fails closed instead of last-write-wins). Vault records persist AES-256-GCM-encrypted under a keystore DEK with freshness binding; proposals persist per termsDigest file (restart-safe, idempotent); backups are one unit plus an anchor checkpoint and refuse to merge vintages. See `docs/audit/operations.md` for the container image, health signals, rotation, and restore drills.
 
-## For agents and agent builders: the MCP contract
+## Architecture (four planes)
+
+| Plane               | Location                                           | Responsibility                                                            |
+| ------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
+| Personal State      | `src/store/vault.ts`                               | Encrypted, purpose/agent/expiry/sensitivity-scoped records                |
+| Authority           | `src/core/`                                        | Zero-dependency deterministic: grants + digest-bound approvals            |
+| Protected Execution | `src/core/execute.ts`, `src/adapters/providers.ts` | Credentials used inside PTF; outward go sanitized instructions + receipts |
+| Protocol Edge       | `src/adapters/`                                    | AP2, x402, OAuth-agent, OpenID4VP/SD-JWT, MCP/WebMCP, A2A, AuthZEN PDP    |
+
+Three flows cover everything: **disclose** (agent asks, PTF returns the minimal approved claim), **execute** (agent asks, PTF acts internally, agent gets a receipt), **approve** (agent proposes exact terms, the person approves or denies, any change needs a new approval).
+
+## MCP contract
 
 The server speaks for ONE fixed identity pinned at startup — tool schemas carry no identity fields, so callers can never self-certify.
 
@@ -147,20 +160,11 @@ The server speaks for ONE fixed identity pinned at startup — tool schemas carr
 
 Tools: `ptf_propose` (dry-run, exact terms + digest), `ptf_check` (status), `ptf_redeem` (`/pay` challenge→proof→receipt), `ptf_request_data` (propose a disclosure) → `ptf_present_data` (holder-signed presentation, nonce-bound, single-present, consumes one use), `ptf_request_action` (propose any `/-path` except `/disclose*`), `ptf_get_receipt`, `ptf_list_capabilities` (this identity's live grants only), `ptf_revoke` (request-only). There is deliberately **no approve tool**: humans approve in the CLI, or standing grants cover the demand. The server only ever spends what already exists. See `examples/mcp-client-config.json` and `examples/vault-protected-action.mjs` for the full loop.
 
-## How it works (four planes)
-
-- **Personal State plane** (`src/store/vault.ts`) — encrypted, purpose/agent/expiry/sensitivity-scoped records. No generic read exists: every access is a constrained, audited request.
-- **Authority plane** (`src/core/`) — zero-dependency, deterministic: standing grants + digest-bound one-time approvals, narrowed-only by policy, attenuated capabilities (`child ≤ parent`), recipient authentication before execution.
-- **Protected execution plane** (`src/core/execute.ts`, `src/adapters/providers.ts`) — credentials and instruments are used inside PTF; outward go only sanitized instructions and secret-free receipts.
-- **Protocol edge** (`src/adapters/`) — AP2, x402, OAuth-agent, OpenID4VP/SD-JWT, MCP/WebMCP, A2A, AuthZEN PDP: external messages are **evidence, never authority**.
-
-Three flows cover everything: **disclose** (agent asks, PTF returns the minimal approved claim), **execute** (agent asks, PTF acts internally, agent gets a receipt), **approve** (agent proposes exact terms, the person approves or denies, any change needs a new approval).
-
-## Security model in one paragraph
+## Security model
 
 Default-deny with citations: every allow names the grant or approval consumed. Policies narrow; learning never mints power. Capabilities attenuate monotonically, bind recipient + terms digest + expiry + uses, and redeem only against a live recipient key proof. Disclosure is `requested ∩ available ∩ allowed`, holder-bound. The vault is AES-256-GCM under a keystore DEK with freshness binding; the audit is hash-chained (optionally HMAC-keyed) and never carries secrets. External protocol messages are untrusted evidence re-validated locally. Full model, threats, and honest limits: `THREATMODEL.md`, `SECURITY.md`, `docs/audit/`.
 
-## Roadmap: milestones to peer-reviewed infrastructure
+## Roadmap
 
 PTF's destination is peer-reviewed protected-use infrastructure for agentic systems. The code items below are ordered; the human/world items need owners with accounts, budgets, or authority — **if you can unblock one, that is the highest-leverage contribution you can make.**
 
@@ -177,7 +181,7 @@ PTF's destination is peer-reviewed protected-use infrastructure for agentic syst
 - [ ] **M11 — External anchoring.** Witness/remote append-only audit export beyond the local checkpoint file. _Needs infrastructure._
 - [ ] **M12 — Publish + govern.** npm Trusted Publisher release, version coherence, governance charter, conduct process, liaison with OIDF/FIDO/IETF. _Needs owner sessions and community._
 
-## Contributing (humans and bots welcome)
+## Contributing
 
 Reviewers, standards authors, host integrators, and agent builders are all first-class contributors — see `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`. The rules in brief: the gate (`typecheck`, unit, eval) must be green; every change proves itself with a fresh verifier run plus one abuse case (**no proof, no merge**); tests live at public seams (`src/index.ts`); secrets never appear anywhere except the local store (synthetic sentinels only); architecture changes need an ADR; new ceilings go in `docs/audit/limits.md`; user-visible changes go in `CHANGELOG.md`. File bugs and proposals with the issue templates — especially reports where PTF allowed what it should have denied. If you participate through an agent, say which one: agent-tooling confusion is a docs bug worth its own PR.
 
