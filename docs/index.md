@@ -12,7 +12,7 @@ permalink: /
 PTF is a user-owned authority and protected-use layer for interchangeable AI agents. An agent can act with precisely bounded authority without receiving the underlying credential, payment instrument, signing key, or unrestricted token.
 
 ```text
-                     authority
+                    authority
 person  --------------------------------+
                                          \
 agent A  -------------------------------> [ PTF ] ---> protected action
@@ -49,17 +49,15 @@ Default deny. Exact terms. Use without possession. External messages are evidenc
 
 This is a working, tested reference implementation on the road to peer review — not a finished product.
 
-**What CI proves on every merge:** strict TypeScript, full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning.
+**What CI proves on every merge:** strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning.
 
-**What it is today:** strong local authority engine, encrypted personal-state vault, propose→present/redeem→receipt agent loop for disclosure and payment, domain-neutral provider seam with payment as one profile, hash-chained audit.
+**What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
 
-**What it is not yet:** live execution platform, multi-user service, HSM-backed custodian, published npm package.
-
-Every ceiling is documented in [docs/audit/limits.md](audit/limits) — the file lists what PTF _cannot_ do more carefully than what it can.
+**What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in [docs/audit/limits.md](audit/limits) — the file lists what PTF _cannot_ do more carefully than what it can.
 
 ---
 
-## For Humans: Run in 60 Seconds
+## Try it in 60 seconds
 
 Requires Node 22+.
 
@@ -70,7 +68,22 @@ npm run typecheck && npm test && npm run eval
 
 ---
 
-## For Agents: MCP Contract
+## Architecture (four planes)
+
+| Plane                   | Location                                           | Responsibility                                                            |
+| ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
+| **Personal State**      | `src/store/vault.ts`                               | Encrypted, purpose/agent/expiry/sensitivity-scoped records                |
+| **Authority**           | `src/core/`                                        | Zero-dependency deterministic: grants + digest-bound approvals            |
+| **Protected Execution** | `src/core/execute.ts`, `src/adapters/providers.ts` | Credentials used inside PTF; outward go sanitized instructions + receipts |
+| **Protocol Edge**       | `src/adapters/`                                    | AP2, x402, OAuth-agent, OpenID4VP/SD-JWT, MCP/WebMCP, A2A, AuthZEN PDP    |
+
+Three flows cover everything: **disclose** (agent asks, PTF returns the minimal approved claim), **execute** (agent asks, PTF acts internally, agent gets a receipt), **approve** (agent proposes exact terms, the person approves or denies, any change needs a new approval).
+
+---
+
+## MCP contract
+
+The server speaks for ONE fixed identity pinned at startup — tool schemas carry no identity fields, so callers can never self-certify.
 
 ```json
 {
@@ -90,35 +103,32 @@ npm run typecheck && npm test && npm run eval
 }
 ```
 
-Tools: `ptf_propose` (dry-run), `ptf_check` (status), `ptf_redeem` (challenge→proof→receipt), `ptf_request_data` → `ptf_present_data` (holder-signed presentation), `ptf_request_action`, `ptf_get_receipt`, `ptf_list_capabilities`, `ptf_revoke` (request-only). No approve tool — humans approve in CLI or standing grants cover demand.
+Tools: `ptf_propose` (dry-run, exact terms + digest), `ptf_check` (status), `ptf_redeem` (`/pay` challenge→proof→receipt), `ptf_request_data` → `ptf_present_data` (holder-signed presentation, nonce-bound, single-present), `ptf_request_action` (propose any `/-path` except `/disclose*`), `ptf_get_receipt`, `ptf_list_capabilities` (this identity's live grants only), `ptf_revoke` (request-only). There is deliberately **no approve tool**: humans approve in the CLI, or standing grants cover the demand.
 
 ---
 
-## Four Planes
+## Security model
 
-| Plane                   | Location                                           | Responsibility                                                            |
-| ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
-| **Personal State**      | `src/store/vault.ts`                               | Encrypted, purpose/agent/expiry/sensitivity-scoped records                |
-| **Authority**           | `src/core/`                                        | Zero-dependency deterministic: grants + digest-bound approvals            |
-| **Protected Execution** | `src/core/execute.ts`, `src/adapters/providers.ts` | Credentials used inside PTF; outward go sanitized instructions + receipts |
-| **Protocol Edge**       | `src/adapters/`                                    | AP2, x402, OAuth-agent, OpenID4VP/SD-JWT, MCP/WebMCP, A2A, AuthZEN PDP    |
+Default-deny with citations: every allow names the grant or approval consumed. Policies narrow; learning never mints power. Capabilities attenuate monotonically, bind recipient + terms digest + expiry + uses, and redeem only against a live recipient key proof. Disclosure is `requested ∩ available ∩ allowed`, holder-bound. The vault is AES-256-GCM under a keystore DEK with freshness binding; the audit is hash-chained (optionally HMAC-keyed) and never carries secrets. External protocol messages are untrusted evidence re-validated locally.
+
+Full model, threats, and honest limits: [THREATMODEL.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/THREATMODEL.md), [SECURITY.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/SECURITY.md), [docs/audit/](audit).
 
 ---
 
 ## Roadmap
 
-- [x] M1 — Authority kernel
-- [x] M2 — Personal vault
-- [x] M3 — Agent loop
-- [x] M4 — Operability
-- [ ] M5 — Normative spec
-- [ ] M6 — Conformance suite
-- [ ] M7 — Domain profiles beyond payment
-- [ ] M8 — Independent audit
-- [ ] M9 — HSM/KMS custody
-- [ ] M10 — Remote ingress + multi-tenant
-- [ ] M11 — External anchoring
-- [ ] M12 — Publish + govern
+- [x] **M1 — Authority kernel.** Default-deny engine, attenuation, exact-term approvals, receipts, audit.
+- [x] **M2 — Personal vault.** Encrypted durable state, purpose/agent scoping, evaluate-first reads, receipt-only secret use.
+- [x] **M3 — Agent loop.** Propose→present/redeem→receipt for disclosure and payment over MCP.
+- [x] **M4 — Operability.** Backup/restore commands, rotation, health signals, container image.
+- [ ] **M5 — Normative spec.** Implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY).
+- [ ] **M6 — Conformance suite.** Frozen vectors and fixtures for independent implementations.
+- [ ] **M7 — Domain profiles beyond payment.** Travel, email, signing, identity actions.
+- [ ] **M8 — Independent audit.** Third-party review against public threat model.
+- [ ] **M9 — HSM/KMS custody.** Replace file keystore behind existing `KeyProvider` seam.
+- [ ] **M10 — Remote ingress + multi-tenant.** Per-caller auth, tenant isolation, rate limiting.
+- [ ] **M11 — External anchoring.** Witness/remote append-only audit export.
+- [ ] **M12 — Publish + govern.** npm Trusted Publisher, governance charter, OIDF/FIDO/IETF liaison.
 
 ---
 
@@ -126,7 +136,7 @@ Tools: `ptf_propose` (dry-run), `ptf_check` (status), `ptf_redeem` (challenge→
 
 Reviewers, standards authors, host integrators, and agent builders welcome — see [CONTRIBUTING.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/CODE_OF_CONDUCT.md).
 
-**Gate:** `typecheck`, unit, eval must be green; every change proves itself with fresh verifier run + one abuse case.
+**Gate:** `typecheck`, unit, eval must be green; every change proves itself with fresh verifier run + one abuse case. Tests live at public seams (`src/index.ts`). Secrets never appear anywhere except the local store. Architecture changes need an ADR.
 
 ---
 
