@@ -30,6 +30,10 @@ github:
   repo: "Binilts03/personal-trust-fabric"
   repository_url: "https://github.com/Binilts03/personal-trust-fabric"
 
+# Exclude theme's internal SCSS files from Jekyll's Sass converter
+exclude:
+  - assets/css/just-the-docs-*.scss
+
 # Restrict Sass load paths to prevent theme's internal SCSS from being compiled
 sass:
   load_paths:
