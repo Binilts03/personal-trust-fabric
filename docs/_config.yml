@@ -17,7 +17,7 @@ aux_links:
   "Discussions":
     - "https://github.com/Binilts03/personal-trust-fabric/discussions"
 
-color_scheme: auto
+color_scheme: dark
 
 plugins:
   - jekyll-include-cache
