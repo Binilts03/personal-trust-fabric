@@ -25,8 +25,11 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
-          bundler-cache: true
+          bundler-cache: false
           working-directory: docs
+      - name: Install gems
+        run: bundle install
+        working-directory: docs
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Build with Jekyll
