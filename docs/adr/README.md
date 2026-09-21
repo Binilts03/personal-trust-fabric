@@ -21,3 +21,4 @@
 | [0018](0018-exact-operation-authorization.md)   | Exact-operation authorization, consume semantics, generic receipt; payment as profile                          | accepted | 2026-09-18 |
 | [0019](0019-p3p-interop-spike.md)                 | P3P interop as thin evidence adapter (M5A spike)                                                               | accepted | 2026-09-21 |
 | [0020](0020-travel-domain-profile.md)             | Travel as a second domain profile (M7)                                                                         | accepted | 2026-09-21 |
+| [0021](0021-production-architecture-v1.md)        | PTF Production Architecture v1 (Personal Authority Node)                                                       | accepted | 2026-09-21 |

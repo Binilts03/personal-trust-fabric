@@ -13,6 +13,21 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Durable replay store (Phase 11): `src/store/replay.ts` (`NonceStore`
+  extends `Set<string>`, so it plugs directly into
+  `Disclose.verify({ usedNonces })`) — file persistence with revision CAS,
+  TTL prune (TTL must exceed verifier `maxAgeSec`), corrupt/CAS fail-closed.
+  Proof: `tests/replay.test.ts` (restart replay DENY, durable consumption,
+  prune, CAS).
+- Production architecture ADR (Phase 1, ADR-0021): nine components with
+  enforced dependency direction for the Personal Authority Node profile.
+- Durable execution journal (Phase 3, ADR-0021): `src/store/execution.ts`
+  (`ExecutionJournal` + `runExecution`) — PREPARED → AUTHORIZED →
+  SUBMITTING → SUCCEEDED / FAILED_FINAL, with SUBMITTED_UNKNOWN +
+  reconcile (effect / no-effect-same-key-retry / failed / quarantine /
+  manual) instead of blind retry; revision-CAS file backend, terminal
+  immutability, fixed record schema. Proof: `tests/execution.test.ts`
+  (8 crash/reconcile/CAS tests).
 - Normative spec (M5): implementation-agnostic `docs/spec/` (RFC-2119
   MUST/SHOULD/MAY across authority, capability, disclosure, execution,
   adapters incl. P3P, store, conformance claims + known limits).
