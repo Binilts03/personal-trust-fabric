@@ -13,12 +13,6 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
-- Authenticated agent ingress (Phase 5): `src/store/agents.ts`
-  (`AgentDirectory` + `AgentAuthenticator`) — registered-key
-  challenge-response yielding key-bound `VerifiedIdentity`; durable
-  registry with CAS; immediate permanent revocation; single-use TTL
-  challenges. Proof: `tests/agents.test.ts` (A-removal/B-onboarding under
-  one unchanged grant, full deny matrix).
 - Production v1 readiness plan: `docs/roadmap/production-v1.md` — gap
   classification per limit (BLOCKS-NODE / BLOCKS-HOSTED / RESIDUAL /
   RESOLVED / EXPERIMENT) plus the Personal Authority Node phase plan and
