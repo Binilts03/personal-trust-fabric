@@ -17,6 +17,7 @@ notebooks were deliberately removed from the public repository
 | ----------------------------- | ---------------------------- | ----------------------------------------------- |
 | `src/adapters/x402.ts`        | x402 (402 Payment Required)  | Evidence translator → local execution           |
 | `src/adapters/ap2.ts`         | AP2 (Agent Payment Protocol) | Evidence translator → local execution           |
+| `src/adapters/p3p.ts`         | P3P (Pine Labs protocol)     | Evidence translator → local execution           |
 | `src/adapters/oauth-agent.ts` | OAuth 2.0 + RAR for agents   | Token exchange evidence                         |
 | `src/adapters/openid4vp.ts`   | OpenID4VP / SD-JWT VC        | Presentation verification                       |
 | `src/adapters/mcp.ts`         | MCP / WebMCP                 | Tool transport (server speaks for one identity) |

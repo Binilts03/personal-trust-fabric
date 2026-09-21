@@ -13,6 +13,14 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- P3P evidence-only adapter (ADR-0020, Phase 2): `src/adapters/p3p.ts`
+  normalizes SDK-decoded challenges (paise amounts, route-path resources,
+  `RESERVE_PAY`/`OTM`/`CARD`), maps them to identity-free `/pay` demands
+  with challenge+method digest binding, and verifies `Payment-Receipt`
+  bindings with replay/staleness guards; credentials stay behind the
+  host's `P3pProtectedExecutor` (official SDK, trusted env only), proven
+  by sentinel canary tests; full denial matrix green; live UAT runs are
+  env-gated, never in CI.
 - Production Architecture v1 ADR (ADR-0019, Phase 1): Personal Authority
   Node target with nine components (authority engine, protected state,
   ingress authentication, execution orchestrator, protocol adapters,

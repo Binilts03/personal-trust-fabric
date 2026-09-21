@@ -73,6 +73,17 @@ tested at the boundary.
   Production: implemented — evidence-only parsing + digest folding, no
   network fetch in this adapter (proof: `tests/x402.test.ts`,
   `tests/settlement.test.ts`).
+- P3P: paise-integer amounts, `currency` 3-letter, route-path resources,
+  `methods ⊆ {RESERVE_PAY, OTM, CARD}`; `p3pChallengeId`/`p3pMethod` folded
+  into the caller's `termsDigest` (challenge/resource/currency/merchant/
+  method mismatches throw before authority). The adapter normalizes
+  host/SDK-decoded challenges only — challenge signing, token creation,
+  capture, and receipt issuance stay in the official Pine Labs SDK behind
+  the host's `P3pProtectedExecutor` (client secret, API keys, grant
+  tokens, one-time credentials, PANs never enter PTF inputs/outputs;
+  canary-tested). CI runs synthetic challenges + the full denial matrix
+  only; live UAT round-trips are env-gated host runs
+  (`PTF_P3P_LIVE=1`), never implicit (proof: `tests/p3p.test.ts`).
 - AP2: known open-constraint shapes enforced (`amount_range`,
   `allowed_payees`, `allowed_merchants`); any other constraint fails closed
   as `unresolved_constraint` → fall back to human-present. `checkout_jwt`

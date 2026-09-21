@@ -11,6 +11,7 @@ export * from "./core/approve.js";
 export * from "./core/persona.js";
 export * from "./core/signing.js";
 export * from "./adapters/x402.js";
+export * from "./adapters/p3p.js";
 export * from "./adapters/settlement.js";
 export * from "./adapters/ap2.js";
 export * from "./adapters/urls.js";
