@@ -30,6 +30,8 @@ export * from "./store/keystore.js";
 export * from "./store/challenges.js";
 export * from "./store/anchor.js";
 export * from "./store/vault.js";
+export * from "./store/execution.js";
+export * from "./store/replay.js";
 export * from "./profiles/data.js";
 export * from "./profiles/travel.js";
 export * from "./adapters/providers.js";

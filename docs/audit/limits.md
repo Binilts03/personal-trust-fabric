@@ -28,8 +28,22 @@ tested at the boundary.
 - `executeAndReceipt` cannot prove freshness — consumption persists BEFORE
   executing in both bins (ticket 05), so a crash or failing rail between
   persist and execute burns a use without a receipt (safe direction: the
-  retry denies `uses-exhausted`, it never double-spends). Redeem
-  immediately before executing all the same; live rails stay host duty.
+   retry denies `uses-exhausted`, it never double-spends). Redeem
+   immediately before executing all the same; live rails stay host duty.
+   For consequential actions use the durable journal instead
+   (`src/store/execution.ts`): `runExecution` persists SUBMITTING under a
+   stable idempotency key and a throw persists SUBMITTED_UNKNOWN, so
+   restart + provider reconcile decides (effect / no-effect retry with the
+   same key / quarantine) instead of burning authority on an unknown
+   outcome (proof: `tests/execution.test.ts`). Bare `executeAndReceipt`
+   remains the reference path with the burn-a-use residual above.
+   Journal review findings: a persisted SUBMITTING reloads as
+   SUBMITTED_UNKNOWN (a crash between persist and submit is
+   indistinguishable from a crash mid-submit); terminal records never
+   prune themselves — operators prune them on a schedule
+   (`pruneTerminal`; the audit log is the permanent history); `error` /
+   `note` / `providerRef` are host-supplied free text (keep them
+   secret-free, same duty as audit `detail`).
 - Exact-operation binding (ADR-0018): `authorize` echoes the verified
   demand and every execute path deep-compares its instruction against the
   echo — bare `{ok, chainId}` redemptions fail closed, as does any mutated
@@ -105,7 +119,9 @@ tested at the boundary.
   crypto deferred); `response_mode ∈ {fragment, direct_post}`; nonce min 16;
   top-level DCQL paths only; `claim_sets` rejected; mdoc rejected;
   `transaction_data_hashes` equality only when `expectedTransactionData`
-  supplied; replay store is host-owned (nonces checked for equality here).
+   supplied; replay store is host-owned (nonces checked for equality here —
+   use the durable `NonceStore` in `src/store/replay.ts`, not a bare
+   `Set`, or restart resets protection; proof: `tests/replay.test.ts`).
   Production: CUT to `redirect_uri`-only by default in
   `requestToDisclosureDemand` — x509/DID/attestation/federation fail
   closed unless the host passes `allowUnverifiedClientIdPrefixes` with

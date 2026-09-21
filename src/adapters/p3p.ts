@@ -103,13 +103,32 @@ function checkPaymentMethod(v: unknown): P3PPaymentMethod {
 }
 
 /**
+ * Resolve a primary field against its legacy alias. Both present with
+ * different values fails closed (ambiguous challenge); identical duplicates
+ * are harmless and resolve to the primary. One present resolves normally.
+ */
+function aliased(
+  record: Record<string, unknown>,
+  primary: string,
+  alias: string,
+  what: string
+): unknown {
+  const a = record[primary];
+  const b = record[alias];
+  if (a !== undefined && b !== undefined && a !== b) {
+    throw new P3PError(`${what} conflicts with its alias ${alias}`);
+  }
+  return a ?? b;
+}
+
+/**
  * Validate a host-decoded challenge object. Throws before touching
  * authority. Unknown fields are ignored; known fields fail closed.
  */
 export function parseP3PChallenge(value: unknown): P3PChallenge {
   if (!isRecord(value)) throw new P3PError("challenge must be an object");
   const amountPaise = reqString(
-    value["amountPaise"] ?? value["amount"],
+    aliased(value, "amountPaise", "amount", "amountPaise"),
     "p3p: missing/invalid amountPaise"
   );
   try {
@@ -121,10 +140,13 @@ export function parseP3PChallenge(value: unknown): P3PChallenge {
   }
   const currency = reqString(value["currency"], "p3p: missing/invalid currency");
   const resource = checkResource(value["resource"]);
-  const recipient = reqString(value["recipient"] ?? value["payee"], "p3p: missing/invalid recipient");
-  const expiresAt = checkExpiresAt(value["expiresAt"] ?? value["exp"]);
+  const recipient = reqString(
+    aliased(value, "recipient", "payee", "recipient"),
+    "p3p: missing/invalid recipient"
+  );
+  const expiresAt = checkExpiresAt(aliased(value, "expiresAt", "exp", "expiresAt"));
   const paymentMethod = checkPaymentMethod(
-    value["paymentMethod"] ?? value["method"]
+    aliased(value, "paymentMethod", "method", "paymentMethod")
   );
   const mandateRaw = value["mandateRef"];
   const idemRaw = value["idempotencyKey"];
