@@ -14,6 +14,13 @@ bash scripts/harness.sh
 npm pack --dry-run
 ```
 
+Docs changes must also keep the site build green (same steps as the
+required `docs` CI job; needs Ruby 3.3 + bundler):
+
+```sh
+(cd docs && bundle install && bundle exec jekyll build --destination _site)
+```
+
 Do not rely on a pinned test count in documentation. The current GitHub Actions run is the source of truth.
 
 ## Exercise the authority seam
