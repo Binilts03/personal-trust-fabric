@@ -55,9 +55,9 @@ The transcript above is illustrative, not a claim that every domain adapter is p
 
 This is a working, tested reference implementation on the road to peer review — not a finished product.
 
-**What CI proves on every merge:** strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning. See `docs/audit/verify.md` to reproduce from scratch.
+**What CI proves on every merge:** strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning, and the docs site build. See `docs/audit/verify.md` to reproduce from scratch.
 
-**What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
+**What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment, a domain-neutral provider seam with payment + travel profiles (further actions via `executeActionViaProvider`), a normative spec with a conformance suite, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
 
 **What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in `docs/audit/limits.md` — the file lists what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
 

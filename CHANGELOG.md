@@ -84,6 +84,13 @@ release day. This project adheres to Semantic Versioning.
   (`makeFakeProviders`, move nothing) plus `providerAsExecutor` /
   `executeViaProvider` with `chainId === capabilityId` and `termsDigest`
   binding; rail results stay evidence via the `x402`/`ap2` verifiers.
+- Docs CI stabilization (Phase 0): removed the custom
+  `docs/assets/css/just-the-docs*.scss` cycle residue (theme default +
+  `color_scheme: dark` is now the single stable docs configuration);
+  dropped the dead `research` Jekyll collection and the removed-notebook
+  links from `docs/research.md`; normalized the docs product description;
+  added a required `docs` CI job (`bundle exec jekyll build`) so
+  docs-touching changes cannot merge on a broken site build.
 - Durable proposals (ADR-0017, amends ADR-0014): one file per termsDigest
   under `proposals/` (O_EXCL create, TTL GC, last-writer-wins transitions
   under single-writer topology) — restart preserves pending/denied/executed;

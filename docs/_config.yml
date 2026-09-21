@@ -1,5 +1,5 @@
 title: Personal Trust Fabric
-description: User-owned trust and delegated-authority layer for the agentic web
+description: User-owned authority and protected use for interchangeable AI agents.
 theme: just-the-docs
 
 url: https://binilts03.github.io
@@ -36,9 +36,6 @@ collections:
   audit:
     output: true
     permalink: /audit/:name/
-  research:
-    output: true
-    permalink: /research/:name/
   profiles:
     output: true
     permalink: /profiles/:name/
@@ -56,12 +53,6 @@ defaults:
     values:
       layout: "default"
       nav_order: 2
-  - scope:
-      path: ""
-      type: "research"
-    values:
-      layout: "default"
-      nav_order: 3
   - scope:
       path: ""
       type: "profiles"
