@@ -197,8 +197,18 @@ describe("p3p adapter as evidence (M5A spike)", () => {
       checkP3PReceipt(good, { paymentMethod: "CARD" }).ok,
       false
     );
-    // Expectations are opt-in: network/payer-style mandatory fields do not
-    // exist here beyond success + transaction; unset expectations pass.
+    // A receipt that OMITS a set expectation fails: absence proves nothing
+    // (same semantics as x402 checkSettlement).
+    const { amountPaise: _dropped, ...noAmount } = good;
+    void _dropped;
+    assert.equal(checkP3PReceipt(noAmount, { amountPaise: "10000" }).ok, false);
+    const { idempotencyKey: _droppedIdem, ...noIdem } = good;
+    void _droppedIdem;
+    assert.equal(
+      checkP3PReceipt(noIdem, { idempotencyKey: "idem-1" }).ok,
+      false
+    );
+    // Unset expectations are not checked.
     assert.equal(checkP3PReceipt(good, {}).ok, true);
   });
 
@@ -741,10 +751,14 @@ describe("p3p denial matrix + secret boundary (prod)", () => {
         assert.ok(!text.includes(s), `canary leaked into error: ${s}`);
       }
     }
-    try {
-      grantexScopeAllows(["mpp:payment:initiate"], 10000);
-    } catch {
-      // evidence helper returns ok:false rather than throwing; no branch leaks.
+    // The evidence helper answers ok:false (never throws); its fixed
+    // reason strings carry no caller data by construction.
+    const scoped = grantexScopeAllows(["mpp:payment:initiate"], 10000);
+    assert.equal(scoped.ok, false);
+    if (!scoped.ok) {
+      for (const s of SENTINELS) {
+        assert.ok(!scoped.reason.includes(s));
+      }
     }
   });
 });

@@ -296,8 +296,10 @@ export interface P3PReceipt {
 }
 
 /**
- * Evidence-only receipt check, mirroring `checkSettlement`: success must be
- * true, transaction non-empty, opt-in expectations enforced when supplied.
+ * Evidence-only receipt check with `checkSettlement` semantics: success must
+ * be true, transaction non-empty, and every SET expectation must match
+ * exactly — a receipt that omits an expected field fails (an absent field
+ * proves nothing). Unset expectations are not checked.
  * `provider.verify` stays provider-attested — independent Pine debit-status
  * confirmation (`getDebitStatus` until terminal SUCCESS/FAILED) remains host
  * duty before trusting `transaction` for value movement (ADR-0005).
@@ -322,28 +324,24 @@ export function checkP3PReceipt(
   }
   if (
     expected.amountPaise !== undefined &&
-    result.amountPaise !== undefined &&
     result.amountPaise !== expected.amountPaise
   ) {
     return { ok: false, reason: "amount mismatch" };
   }
   if (
     expected.currency !== undefined &&
-    result.currency !== undefined &&
     result.currency !== expected.currency
   ) {
     return { ok: false, reason: "currency mismatch" };
   }
   if (
     expected.paymentMethod !== undefined &&
-    result.paymentMethod !== undefined &&
     result.paymentMethod !== expected.paymentMethod
   ) {
     return { ok: false, reason: "paymentMethod mismatch" };
   }
   if (
     expected.idempotencyKey !== undefined &&
-    result.idempotencyKey !== undefined &&
     result.idempotencyKey !== expected.idempotencyKey
   ) {
     return { ok: false, reason: "idempotencyKey mismatch" };
