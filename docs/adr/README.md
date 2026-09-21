@@ -19,3 +19,4 @@
 | [0016](0016-vault-encryption.md)                | Vault encryption at rest (DEK in keystore, AEAD envelope, plaintext refused)                                   | accepted | 2026-09-17 |
 | [0017](0017-durable-proposals.md)               | Durable proposals via file CAS, challenges stay in-memory (amends 0014)                                        | accepted | 2026-09-18 |
 | [0018](0018-exact-operation-authorization.md)   | Exact-operation authorization, consume semantics, generic receipt; payment as profile                          | accepted | 2026-09-18 |
+| [0019](0019-production-architecture-v1.md)      | PTF Production Architecture v1: Personal Authority Node, nine components, core-ignorant edge                   | accepted | 2026-09-21 |
