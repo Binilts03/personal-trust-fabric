@@ -13,6 +13,12 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Normative spec (M5): implementation-agnostic `docs/spec/` (RFC-2119
+  MUST/SHOULD/MAY across authority, capability, disclosure, execution,
+  adapters incl. P3P, store, conformance claims + known limits).
+- Conformance suite (M6): `tests/conformance.test.ts` — 27 normative
+  checks over the public seam (authority, capability, disclosure,
+  execution, adapter invariants, digest vectors).
 - Travel domain profile (M7, ADR-0020): `src/profiles/travel.ts`
   (`travelBounds` + `/travel/book` conventions over
   `executeActionViaProvider`, domain-neutral receipts; exact-date only —
