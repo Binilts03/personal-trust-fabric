@@ -13,6 +13,7 @@ Standards edge (ADR-0009, current):
 - `audit-interop.ts` — `AuditEntry` → interop record (`jti` = hash); unkeyed verify by recompute, keyed opaque.
 - `x402/` — parse v2 `PAYMENT-REQUIRED` headers → PTF payment demand; verify settlement via facilitator/RPC.
 - `ap2/` — verify Intent→Cart→Payment SD-JWT chains (`cnf`, `exp`, checkout hash) → demand.
+- `p3p/` — normalize host-decoded P3P challenges (paise amounts, INR, RESERVE_PAY/OTM/CARD) → `/pay` demand; Grantex scopes as evidence-only citation; verify recorded receipts. No SDK, no network in-adapter (ADR-0019).
 - `oid4vp/` — DCQL request → disclosure demand (`requested ∩ available ∩ allowed`).
 - `mcp/` + `webmcp/` — origin/audience/scope gate + confirm-mutating-executes.
 - `a2a/` — signed AgentCard check + per-skill least-privilege tasks.

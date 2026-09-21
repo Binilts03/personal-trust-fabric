@@ -13,6 +13,16 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- P3P interop (M5A, ADR-0019): thin `src/adapters/p3p.ts`
+  evidence translator (host-decoded challenge → identity-free `/pay`
+  demand in paise; challenge expiry enforced at mapping with required
+  `nowSec`; Grantex scopes as citation-only evidence; recorded
+  receipt check). No SDK dependency, no network in-adapter, no core
+  change; live sandbox capture + `402` retry benchmark stay host duty.
+  Full denial matrix (over-grant, expired grant/challenge, wrong agent,
+  revoked, mutated terms, CHECK-misuse, credential replay, tampered
+  challenge, inconsistent receipt) plus secret-canary boundary tests.
+  Proof: `tests/p3p.test.ts` (13 tests).
 - Public-surface minimization: removed internal research notebooks, vendor-specific coding-agent skills, local ticket/loop documentation, and internal audit/project journals; hardened ignore rules for operator state, credentials, generated evidence, and editor/agent state; public verification and audit docs are self-contained.
 
 - Exact-operation authorization, hardened (ADR-0018): CHECK ≠ REDEEM ≠

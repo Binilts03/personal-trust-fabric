@@ -80,6 +80,19 @@ tested at the boundary.
   `typ:kb+jwt` + `iat`.
   Production: implemented — fail-closed shapes, keys via explicit params,
   nothing fetched or resolved (proof: `tests/ap2.test.ts`).
+- P3P (M5A spike, ADR-0019): `paymentMethod ∈ {RESERVE_PAY, OTM, CARD}`,
+  paise integer-string amounts, `/`-path or http(s) resource, INR (or other
+  caller-pinned currency — demand must equal challenge currency).
+  Challenge expiry enforced at mapping (`nowSec` required, skew-bounded).
+  Host decodes the `WWW-Authenticate` challenge object (no header-string
+  parser in-adapter); Grantex scopes are citation-only (`grantexScopeAllows`
+  requires `mpp:payment:initiate` + a concrete `max_txn_paise` cap ≥ amount,
+  PTF grant still required); receipts are recorded-only (`checkP3PReceipt`
+  needs success + transaction, rest opt-in — independent `getDebitStatus`
+  until terminal SUCCESS/FAILED stays host duty). No SDK dependency, no
+  network fetch, no sandbox capture, no `402` retry benchmark in this spike.
+  Production: spike only — evidence-only parsing + demand folding via
+  `FakeProvider("payment")` (proof: `tests/p3p.test.ts`).
 - OpenID4VP: `client_id` prefixes shape-checked only (x509/DID/attestation
   crypto deferred); `response_mode ∈ {fragment, direct_post}`; nonce min 16;
   top-level DCQL paths only; `claim_sets` rejected; mdoc rejected;
