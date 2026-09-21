@@ -24,10 +24,13 @@ import { parseAtomicAmount } from "./x402.js";
  * `grantexScopeAllows` is a citation helper only. A PTF Standing Grant is
  * still required — external scopes never mint local authority.
  *
- * Wire note (spike limit): the exact `WWW-Authenticate` challenge encoding
- * is host-parsed (server SDK `decidePayment` problemDetails or the host's
- * own header parser). Hosts pass the decoded challenge OBJECT to
- * `parseP3PChallenge`; this adapter does not guess header string formats.
+ * Wire note (verified 2026-09-21, P3P quickstart): unpaid requests return
+ * `402` + `WWW-Authenticate: Payment <challenge>` (`application/problem+json`,
+ * `Cache-Control: no-store`); retries carry `P3P-Credential: Payment`;
+ * success returns the resource plus a `Payment-Receipt` header; grants ride
+ * `X-Grantex-Token`. The host parses these headers (or reads server-SDK
+ * `decidePayment` problemDetails) and passes the decoded challenge OBJECT
+ * to `parseP3PChallenge`; this adapter does not guess string encodings.
  */
 
 export type P3PPaymentMethod = "RESERVE_PAY" | "OTM" | "CARD";
