@@ -13,6 +13,14 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Docs build stabilization (Phase 0): removed the custom
+  `docs/assets/css/just-the-docs*.scss` cycle residue — the single stable
+  docs configuration is now the `just-the-docs` theme gem with
+  `color_scheme: dark` and no custom SCSS; dropped the dead `research`
+  Jekyll collection and the removed-notebook links from `docs/research.md`
+  and `docs/_data/navigation.yml`; normalized the docs product description;
+  added a required `docs` CI job (`bundle exec jekyll build`) so
+  docs-touching changes cannot merge on a broken site build.
 - Public-surface minimization: removed internal research notebooks, vendor-specific coding-agent skills, local ticket/loop documentation, and internal audit/project journals; hardened ignore rules for operator state, credentials, generated evidence, and editor/agent state; public verification and audit docs are self-contained.
 
 - Exact-operation authorization, hardened (ADR-0018): CHECK ≠ REDEEM ≠

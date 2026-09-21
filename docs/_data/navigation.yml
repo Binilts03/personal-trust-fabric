@@ -26,20 +26,4 @@ main:
       - title: Threats
         url: /audit/threats/
   - title: Research
-    children:
-      - title: Overview
-        url: /research/
-      - title: Agentic Commerce Protocols
-        url: /research/2026-09-08-agentic-commerce-protocols/
-      - title: Deep Delegation Policy
-        url: /research/2026-09-09-deep-delegation-policy/
-      - title: Deep Identity (OpenID4VP/SD-JWT)
-        url: /research/2026-09-09-deep-identity-openid4vp-sdjwt/
-      - title: Deep Interop (MCP/WebMCP/A2A)
-        url: /research/2026-09-09-deep-interop-mcp-webmcp-a2a/
-      - title: Deep Payments (x402/AP2)
-        url: /research/2026-09-09-deep-payments-x402-ap2/
-      - title: AuthZEN PDP Transport
-        url: /research/2026-09-13-authzen-pdp-transport/
-      - title: Cross-Vendor Proof
-        url: /research/2026-09-13-cross-vendor-proof/
+    url: /research/
