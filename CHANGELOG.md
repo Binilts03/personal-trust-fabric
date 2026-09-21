@@ -13,6 +13,11 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Travel domain profile (M7, ADR-0020): `src/profiles/travel.ts`
+  (`travelBounds` + `/travel/book` conventions over
+  `executeActionViaProvider`, domain-neutral receipts; exact-date only —
+  string ranges would never match numeric `<=`). Exported at
+  `personal-trust-fabric/profiles/travel`. Proof: `tests/travel.test.ts`.
 - P3P interop (M5A, ADR-0019): thin `src/adapters/p3p.ts`
   evidence translator (host-decoded challenge → identity-free `/pay`
   demand in paise; challenge expiry enforced at mapping with required

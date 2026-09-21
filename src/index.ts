@@ -31,4 +31,5 @@ export * from "./store/challenges.js";
 export * from "./store/anchor.js";
 export * from "./store/vault.js";
 export * from "./profiles/data.js";
+export * from "./profiles/travel.js";
 export * from "./adapters/providers.js";

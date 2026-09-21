@@ -74,5 +74,8 @@ describe("packaged export surface (npm-consumer view)", () => {
       "recipientBounds",
       "personal-trust-fabric/profiles/payment"
     );
+
+    const travel = packaged("personal-trust-fabric/profiles/travel");
+    callable(travel, "travelBounds", "personal-trust-fabric/profiles/travel");
   });
 });

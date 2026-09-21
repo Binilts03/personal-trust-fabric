@@ -78,6 +78,7 @@ PTF separates **who may do what** from **who possesses the secret needed to do i
 | `src/store/proposals.ts`  | Durable proposals via file CAS                  |
 | `src/store/audit.ts`      | Hash-chained audit log                          |
 | `src/profiles/payment.ts` | Payment-specific bounds, recipients             |
+| `src/profiles/travel.ts`  | Travel booking bounds (`/travel/book` conventions, M7) |
 | `src/adapters/p3p.ts`     | P3P challenge → `/pay` demand, receipt check (spike, M5A) |
 | `src/profiles/data.ts`    | Data disclosure profiles                        |
 

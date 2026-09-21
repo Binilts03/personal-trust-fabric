@@ -51,7 +51,7 @@ This is a working, tested reference implementation on the road to peer review �
 
 **What CI proves on every merge:** strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning.
 
-**What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
+**What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment, a domain-neutral provider seam with payment + travel profiles (further actions via `executeActionViaProvider`), and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
 
 **What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in [docs/audit/limits.md](audit/limits) — the file lists what PTF _cannot_ do more carefully than what it can.
 
@@ -125,7 +125,7 @@ Full model, threats, and honest limits: [THREATMODEL.md](https://github.com/Bini
 - [x] **M4 — Operability.** Backup/restore commands, rotation, health signals, container image.
 - [ ] **M5 — Normative spec.** Implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY). Highest-leverage remaining work.
 - [ ] **M6 — Conformance suite.** Frozen vectors and fixtures for independent implementations.
-- [ ] **M7 — One more domain.** Travel or email over the generic `ExecutionReceipt` — proves generality beyond payment.
+- [x] **M7 — One more domain.** Travel (`src/profiles/travel.ts`) over the generic `ExecutionReceipt` — proves generality beyond payment.
 
 ### Phase 2 — Make it credible
 

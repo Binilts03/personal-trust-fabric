@@ -15,14 +15,8 @@ import {
   paymentBounds,
   signBytes,
   toP3PPaymentDemand,
+  recipientBounds,
 } from "../src/index.js";
-
-// Sliced PR note: `recipientBounds` reaches the barrel via the travel profile
-// (next slice); until then the identical bound is inlined so this test stays
-// on the public seam.
-function recipientIn(recipients: readonly string[]) {
-  return [{ path: ".context.recipient", op: "in" as const, value: [...recipients] }];
-}
 
 const NOW = 1_700_000_000;
 const P = "did:test:principal";
@@ -242,7 +236,7 @@ describe("p3p adapter as evidence (M5A spike)", () => {
       action: { name: "/pay" },
       bounds: [
         ...paymentBounds({ amountMax: 50000, currency: "INR" }),
-        ...recipientIn([M]),
+        ...recipientBounds([M]),
       ],
       exp: NOW + 3600,
       maxUses: 1,
@@ -423,7 +417,7 @@ function grantAuth(now: number = NOW) {
     action: { name: "/pay" },
     bounds: [
       ...paymentBounds({ amountMax: 50000, currency: "INR" }),
-      ...recipientIn([M]),
+      ...recipientBounds([M]),
     ],
     exp: NOW + 3600,
     maxUses: 1,
