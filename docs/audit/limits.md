@@ -62,6 +62,14 @@ tested at the boundary.
   but host-supplied `detail`/context strings can leak into backups/logs.
 - PDP keys hot-reload retains last-good on malformed rewrite (availability); the broken file fails the next deploy instead of killing the process — startup `loadKeys` still exits 2 (proof: `src/pdp-server.ts:160`, `tests/pdp-fronting.test.ts:258`).
 - Policy attenuation is strict on exclusive→inclusive bounds: parent `x < v` + child `x <= w` narrows only when `w < v` (equal admits `v` on the child side); all other `<`/`<=` combos keep `w <= v` (proof: `src/core/policy.ts:198`, `tests/authority.test.ts:529`).
+- Travel profile (M7): single-leg exact-date only (`departDate ==`; no
+  window search — `<=`/`>=` apply to numbers only and a string range bound
+  would never match). Multi-leg, availability, and fare honesty stay
+  provider-side evidence; `notes` free text is authorized-exact like all
+  context (host must review it as non-effectful, same class as `metadata`).
+  Proof: `tests/travel.test.ts`. `travelBounds({})` is intentionally allowed
+  (explicit open grant, audit-visible like `{ kind: "any" }` actors) — do not
+  mistake an empty bounds list for a missing check.
 
 ## Adapters (evidence-only subsets)
 
