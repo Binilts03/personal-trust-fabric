@@ -67,7 +67,9 @@ tested at the boundary.
   would never match). Multi-leg, availability, and fare honesty stay
   provider-side evidence; `notes` free text is authorized-exact like all
   context (host must review it as non-effectful, same class as `metadata`).
-  Proof: `tests/travel.test.ts`.
+  Proof: `tests/travel.test.ts`. `travelBounds({})` is intentionally allowed
+  (explicit open grant, audit-visible like `{ kind: "any" }` actors) — do not
+  mistake an empty bounds list for a missing check.
 
 ## Adapters (evidence-only subsets)
 
