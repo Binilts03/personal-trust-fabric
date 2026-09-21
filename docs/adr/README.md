@@ -20,3 +20,4 @@
 | [0017](0017-durable-proposals.md)               | Durable proposals via file CAS, challenges stay in-memory (amends 0014)                                        | accepted | 2026-09-18 |
 | [0018](0018-exact-operation-authorization.md)   | Exact-operation authorization, consume semantics, generic receipt; payment as profile                          | accepted | 2026-09-18 |
 | [0019](0019-production-architecture-v1.md)      | PTF Production Architecture v1: Personal Authority Node, nine components, core-ignorant edge                   | accepted | 2026-09-21 |
+| [0020](0020-p3p-evidence-adapter.md)            | P3P evidence-only adapter (ADR-0019 edge): normalize + demand + receipt verify, SDK-agnostic, sandbox first    | accepted | 2026-09-21 |
