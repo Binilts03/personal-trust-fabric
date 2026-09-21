@@ -76,6 +76,16 @@ tested at the boundary.
   but host-supplied `detail`/context strings can leak into backups/logs.
 - PDP keys hot-reload retains last-good on malformed rewrite (availability); the broken file fails the next deploy instead of killing the process — startup `loadKeys` still exits 2 (proof: `src/pdp-server.ts:160`, `tests/pdp-fronting.test.ts:258`).
 - Policy attenuation is strict on exclusive→inclusive bounds: parent `x < v` + child `x <= w` narrows only when `w < v` (equal admits `v` on the child side); all other `<`/`<=` combos keep `w <= v` (proof: `src/core/policy.ts:198`, `tests/authority.test.ts:529`).
+- Agent ingress (Phase 5): registered Ed25519 key + single-use 120s
+  challenge-response (`src/store/agents.ts`). The actor derives from the
+  verified key — request fields carry no identity. Registry
+  (`agents.json`) is durable with revision CAS; retired aliases stay
+  retired; revocation is immediate. Challenges are in-memory with a
+  100-pending anti-fill cap (restart loses them: fail-closed, challenge
+  again). The fixed stdio identity stays the local reference (the MCP spec
+  directs stdio servers to environment credentials, not OAuth).
+  Proof: `tests/agents.test.ts` (key-bound actor, A/B handoff, deny
+  matrix, durability, CAS).
 - Travel profile (M7): single-leg exact-date only (`departDate ==`; no
   window search — `<=`/`>=` apply to numbers only and a string range bound
   would never match). Multi-leg, availability, and fare honesty stay
