@@ -37,6 +37,13 @@ tested at the boundary.
    same key / quarantine) instead of burning authority on an unknown
    outcome (proof: `tests/execution.test.ts`). Bare `executeAndReceipt`
    remains the reference path with the burn-a-use residual above.
+   Journal review findings: a persisted SUBMITTING reloads as
+   SUBMITTED_UNKNOWN (a crash between persist and submit is
+   indistinguishable from a crash mid-submit); terminal records never
+   prune themselves — operators prune them on a schedule
+   (`pruneTerminal`; the audit log is the permanent history); `error` /
+   `note` / `providerRef` are host-supplied free text (keep them
+   secret-free, same duty as audit `detail`).
 - Exact-operation binding (ADR-0018): `authorize` echoes the verified
   demand and every execute path deep-compares its instruction against the
   echo — bare `{ok, chainId}` redemptions fail closed, as does any mutated

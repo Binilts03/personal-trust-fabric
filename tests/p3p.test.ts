@@ -83,6 +83,29 @@ describe("p3p adapter as evidence (M5A spike)", () => {
     assert.throws(() => parseP3PChallenge(challenge({ currency: "" })));
   });
 
+  it("conflicting field aliases fail closed; identical duplicates pass", () => {
+    assert.throws(() =>
+      parseP3PChallenge(challenge({ amountPaise: "10000", amount: "9999" }))
+    );
+    assert.throws(() =>
+      parseP3PChallenge(challenge({ expiresAt: NOW + 300, exp: NOW + 1 }))
+    );
+    assert.throws(() =>
+      parseP3PChallenge(
+        challenge({ paymentMethod: "RESERVE_PAY", method: "CARD" })
+      )
+    );
+    assert.throws(() =>
+      parseP3PChallenge(challenge({ recipient: M, payee: "did:test:other" }))
+    );
+    // Identical duplicates are harmless and accepted.
+    assert.equal(
+      parseP3PChallenge(challenge({ amountPaise: "10000", amount: "10000" }))
+        .amountPaise,
+      "10000"
+    );
+  });
+
   it("grantex scopes are evidence-only: initiate + concrete cap required", () => {
     assert.equal(
       grantexScopeAllows(

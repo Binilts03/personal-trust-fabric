@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -121,6 +121,23 @@ describe("durable replay protection (prod)", () => {
     aged.save(d);
     const reloaded = NonceStore.load(d, { nowSec: () => NOW + 3600, ttlSec: 600 });
     assert.equal(reloaded.has("fresh-nonce"), true);
+  });
+
+  it("save prunes expired entries so the file cannot grow unbounded", () => {
+    const d = dir();
+    let t = NOW;
+    const store = NonceStore.load(d, { nowSec: () => t, ttlSec: 600 });
+    store.add("old-nonce");
+    store.save(d);
+    // Advance past TTL with no reload in between: save itself must drop the
+    // expired entry instead of writing it back.
+    t += 3600;
+    store.add("fresh-nonce");
+    store.save(d);
+    const raw = JSON.parse(readFileSync(join(d, "nonces.json"), "utf8")) as {
+      nonces: Record<string, number>;
+    };
+    assert.deepEqual(Object.keys(raw.nonces), ["fresh-nonce"]);
   });
 
   it("corrupt files and CAS conflicts fail closed", () => {

@@ -171,6 +171,51 @@ describe("durable execution journal (prod)", () => {
     assert.throws(() => r.authorize("exe-1"));
   });
 
+  it("reloaded SUBMITTING becomes SUBMITTED_UNKNOWN (crash before submit)", async () => {
+    const d = dir();
+    const j = ExecutionJournal.load(d, () => NOW);
+    j.prepare(base());
+    j.authorize("exe-1");
+    j.beginSubmit("exe-1");
+    j.save(d);
+
+    // Crash between persist(SUBMITTING) and the submit call: reload must
+    // treat the effect as possible, not as retryable, not as stuck.
+    const r = ExecutionJournal.load(d, () => NOW + 5);
+    assert.equal(r.get("exe-1")?.state, "SUBMITTED_UNKNOWN");
+    await assert.rejects(
+      () => runExecution(r, () => r.save(d), "exe-1", async () => "x"),
+      /reconcile/i
+    );
+    r.reconcile("exe-1", "no-effect", "provider: nothing received");
+    assert.equal(r.get("exe-1")?.state, "AUTHORIZED");
+  });
+
+  it("pruneTerminal drops old terminals, keeps unknown and fresh", () => {
+    const d = dir();
+    const j = ExecutionJournal.load(d, () => NOW);
+    j.prepare(base());
+    j.authorize("exe-1");
+    j.beginSubmit("exe-1");
+    j.succeed("exe-1", "ref-1");
+    j.prepare({ ...base(), executionId: "exe-2", idempotencyKey: "idem-2" });
+    j.authorize("exe-2");
+    j.beginSubmit("exe-2");
+    j.save(d);
+
+    // Crash a second record mid-submit, then age the journal out.
+    const aged = ExecutionJournal.load(d, () => NOW + 10_000);
+    assert.equal(aged.get("exe-2")?.state, "SUBMITTED_UNKNOWN");
+    const dropped = aged.pruneTerminal(NOW + 10_000, 3600);
+    assert.equal(dropped, 1);
+    assert.equal(aged.get("exe-1"), undefined);
+    assert.equal(aged.get("exe-2")?.state, "SUBMITTED_UNKNOWN");
+    aged.save(d);
+    const reloaded = ExecutionJournal.load(d, () => NOW + 10_000);
+    assert.equal(reloaded.get("exe-1"), undefined);
+    assert.equal(reloaded.get("exe-2")?.state, "SUBMITTED_UNKNOWN");
+  });
+
   it("invalid transitions and duplicate ids fail closed", () => {
     const d = dir();
     const j = ExecutionJournal.load(d, () => NOW);

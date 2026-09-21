@@ -166,7 +166,14 @@ export class ExecutionJournal {
       if ((rec as ExecutionRecord).executionId !== id) {
         throw new Error(`execution: store corrupt: ${path} (id mismatch)`);
       }
-      j.records.set(id, { ...(rec as ExecutionRecord) });
+      const copy = { ...(rec as ExecutionRecord) };
+      if (copy.state === "SUBMITTING") {
+        // Crash between persist(SUBMITTING) and the submit call: the effect
+        // may or may not have happened. Reload as unknown so reconcile (not
+        // retry, not silence) decides. Never auto-advance on load otherwise.
+        copy.state = "SUBMITTED_UNKNOWN";
+      }
+      j.records.set(id, copy);
     }
     j.loadedRev = rev;
     j.pristine = false;
@@ -214,6 +221,35 @@ export class ExecutionJournal {
     return [...this.records.values()]
       .filter((r) => r.state === "SUBMITTED_UNKNOWN")
       .map((r) => ({ ...r }));
+  }
+
+  /**
+   * Drop terminal records (SUCCEEDED / FAILED_FINAL / RECONCILED) last
+   * updated more than `olderThanSec` ago. Returns the dropped count.
+   * Non-terminal records are never pruned — an unknown outcome stays until
+   * reconciled. The audit log remains the permanent history; the journal is
+   * live state, so operators prune terminals on a schedule (otherwise the
+   * file grows without bound). Unknown-field and bad-arg inputs throw.
+   */
+  pruneTerminal(nowSec: number, olderThanSec: number): number {
+    if (!Number.isSafeInteger(nowSec) || nowSec < 0) {
+      throw new Error("execution: nowSec must be a non-negative epoch integer");
+    }
+    if (!Number.isSafeInteger(olderThanSec) || olderThanSec < 0) {
+      throw new Error("execution: olderThanSec must be a non-negative integer");
+    }
+    let dropped = 0;
+    for (const [id, rec] of this.records) {
+      if (
+        (TERMINAL as readonly string[]).includes(rec.state) &&
+        rec.updatedAt <= nowSec &&
+        nowSec - rec.updatedAt > olderThanSec
+      ) {
+        this.records.delete(id);
+        dropped += 1;
+      }
+    }
+    return dropped;
   }
 
   prepare(input: {
@@ -404,7 +440,7 @@ export async function runExecution(
   }
   if (rec.state !== "AUTHORIZED") {
     throw new Error(
-      `execution: ${executionId} is ${rec.state} — authorize (persist consumption) first`
+      `execution: ${executionId} is ${rec.state} — reload from disk (a persisted SUBMITTING loads as SUBMITTED_UNKNOWN) and reconcile; never submit from a stale handle`
     );
   }
   journal.beginSubmit(executionId);

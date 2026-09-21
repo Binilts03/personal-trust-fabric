@@ -16,7 +16,10 @@ release day. This project adheres to Semantic Versioning.
 - Durable replay store (Phase 11): `src/store/replay.ts` (`NonceStore`
   extends `Set<string>`, so it plugs directly into
   `Disclose.verify({ usedNonces })`) — file persistence with revision CAS,
-  TTL prune (TTL must exceed verifier `maxAgeSec`), corrupt/CAS fail-closed.
+  TTL prune (TTL must exceed verifier `maxAgeSec`, enforced on save too),
+  corrupt/CAS fail-closed. P3P alias conflicts fail closed. Journal review
+  fixes: persisted SUBMITTING reloads as SUBMITTED_UNKNOWN; `pruneTerminal`
+  bounds journal growth (audit stays permanent).
   Proof: `tests/replay.test.ts` (restart replay DENY, durable consumption,
   prune, CAS).
 - Production architecture ADR (Phase 1, ADR-0021): nine components with

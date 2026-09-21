@@ -80,6 +80,8 @@ export class NonceStore extends Set<string> {
   }
 
   save(dir: string): void {
+    // Bound the file on every write: expired entries never round-trip.
+    this.prune(this.nowSec(), this.ttlSec);
     const path = join(dir, FILE);
     const body = {
       revision: 0,
