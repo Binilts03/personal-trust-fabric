@@ -13,6 +13,12 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Production Architecture v1 ADR (ADR-0019, Phase 1): Personal Authority
+  Node target with nine components (authority engine, protected state,
+  ingress authentication, execution orchestrator, protocol adapters,
+  provider connectors, audit/receipts, key provider, trusted human
+  surface); core-ignorant edge, evidence-only adapters, verified-transport
+  ingress, journal-before-rail ordering; SaaS explicitly deferred.
 - Docs build stabilization (Phase 0): removed the custom
   `docs/assets/css/just-the-docs*.scss` cycle residue — the single stable
   docs configuration is now the `just-the-docs` theme gem with
