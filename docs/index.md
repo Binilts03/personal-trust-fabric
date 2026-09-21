@@ -123,7 +123,7 @@ Full model, threats, and honest limits: [THREATMODEL.md](https://github.com/Bini
 - [x] **M2 — Personal vault.** Encrypted durable state, purpose/agent scoping, evaluate-first reads, receipt-only secret use.
 - [x] **M3 — Agent loop.** Propose→present/redeem→receipt for disclosure and payment over MCP.
 - [x] **M4 — Operability.** Backup/restore commands, rotation, health signals, container image.
-- [x] **M5 — Normative spec.** Implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY).
+- [x] **M5 — Normative spec draft.** Implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY); final revision after interop experiments.
 - [x] **M6 — Conformance suite.** `tests/conformance.test.ts` (27 normative checks over the public seam).
 - [x] **M7 — One more domain.** Travel (`src/profiles/travel.ts`) over the generic `ExecutionReceipt` — proves generality beyond payment.
 

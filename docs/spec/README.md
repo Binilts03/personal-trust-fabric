@@ -1,6 +1,8 @@
 # PTF Normative Specification v0.1
 
-Status: **Accepted (M5, Phase 1 reviewable)**
+Status: **Draft (M5) — final revision follows the P3P-sandbox and
+real-second-domain experiments (phase 8). Do not implement against this
+text as if it were frozen.**
 Date: 2026-09-21
 
 This document is the implementation-agnostic normative specification for the Personal Trust Fabric (PTF) authority and protected-use layer. A conformant implementation MUST satisfy all MUST/SHOULD/MAY obligations defined herein.
