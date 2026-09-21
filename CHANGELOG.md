@@ -13,6 +13,10 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Production v1 readiness plan: `docs/roadmap/production-v1.md` — gap
+  classification per limit (BLOCKS-NODE / BLOCKS-HOSTED / RESIDUAL /
+  RESOLVED / EXPERIMENT) plus the Personal Authority Node phase plan and
+  go-live gate.
 - Durable replay store (Phase 11): `src/store/replay.ts` (`NonceStore`
   extends `Set<string>`, so it plugs directly into
   `Disclose.verify({ usedNonces })`) — file persistence with revision CAS,
