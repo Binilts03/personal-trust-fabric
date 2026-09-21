@@ -147,6 +147,23 @@ describe("durable replay protection (prod)", () => {
     store.save(d);
     writeFileSync(join(d, "nonces.json"), "{broken", "utf8");
     assert.throws(() => NonceStore.load(d, { nowSec: () => NOW }), /corrupt/i);
+    writeFileSync(
+      join(d, "nonces.json"),
+      JSON.stringify({ revision: -1, nonces: {} }),
+      "utf8"
+    );
+    assert.throws(() => NonceStore.load(d, { nowSec: () => NOW }), /corrupt/i);
+
+    const d3 = dir();
+    const h = NonceStore.load(d3, { nowSec: () => NOW });
+    h.add("n-9");
+    h.save(d3);
+    writeFileSync(
+      join(d3, "nonces.json"),
+      JSON.stringify({ revision: -1, nonces: {} }),
+      "utf8"
+    );
+    assert.throws(() => h.save(d3), /corrupt/i);
 
     const d2 = dir();
     const a = NonceStore.load(d2, { nowSec: () => NOW });

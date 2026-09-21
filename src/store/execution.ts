@@ -199,9 +199,12 @@ export class ExecutionJournal {
       throw new Error(`execution: store corrupt: ${path}`);
     }
     const rev = (parsed as { revision?: unknown })["revision"];
-    if (typeof rev !== "number" || rev !== this.loadedRev) {
+    if (typeof rev !== "number" || !Number.isInteger(rev) || rev < 0) {
+      throw new Error(`execution: store corrupt: ${path} (bad revision)`);
+    }
+    if (rev !== this.loadedRev) {
       throw new Error(
-        `execution: store changed under us (file revision ${String(rev)}, loaded ${this.loadedRev}) — reload and retry, never overwrite`
+        `execution: store changed under us (file revision ${rev}, loaded ${this.loadedRev}) — reload and retry, never overwrite`
       );
     }
     atomicWrite(

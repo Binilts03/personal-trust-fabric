@@ -222,7 +222,8 @@ describe("durable execution journal (prod)", () => {
     j.prepare(base());
     assert.throws(() => j.prepare(base()), /duplicate|exists/i);
     assert.throws(() => j.succeed("exe-1", "x"), /transition/i);
-    assert.throws(() => j.get("nope") === undefined && j.authorize("nope"), /unknown/i);
+    assert.equal(j.get("nope"), undefined);
+    assert.throws(() => j.authorize("nope"), /unknown/i);
     assert.throws(
       () =>
         j.prepare({ ...base(), executionId: "" }),
@@ -241,6 +242,25 @@ describe("durable execution journal (prod)", () => {
     j.save(d);
     writeFileSync(join(d, "executions.json"), "{broken", "utf8");
     assert.throws(() => ExecutionJournal.load(d, () => NOW), /corrupt/i);
+    writeFileSync(
+      join(d, "executions.json"),
+      JSON.stringify({ revision: "seven", records: {} }),
+      "utf8"
+    );
+    assert.throws(() => ExecutionJournal.load(d, () => NOW), /corrupt/i);
+
+    // A well-formed handle that finds a revision-mangled file at save time
+    // reports corruption, not a CAS conflict.
+    const d3 = dir();
+    const h = ExecutionJournal.load(d3, () => NOW);
+    h.prepare(base());
+    h.save(d3);
+    writeFileSync(
+      join(d3, "executions.json"),
+      JSON.stringify({ revision: "seven", records: {} }),
+      "utf8"
+    );
+    assert.throws(() => h.save(d3), /corrupt/i);
 
     const d2 = dir();
     const a = ExecutionJournal.load(d2, () => NOW);
