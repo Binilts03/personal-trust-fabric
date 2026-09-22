@@ -41,9 +41,11 @@ is validated; SUBMITTING persists BEFORE the provider call.)
   `providerIdempotencyKey` derived from `(termsDigest, provider scope)` —
   never caller-supplied and deliberately NOT bound to the capability id,
   so a reminted capability for the same proposal reconciles instead of
-  forking a second key. The capability id stays in the record as binding
-  evidence only. Stable across retries, replays, and remints of the same
-  authorized terms; different provider scopes get different keys.
+  forking a second key. Scope defaults to the provider kind; multi-rail
+  hosts set distinct namespaces. The capability id stays in the record
+  as binding evidence only. Stable across retries, replays, and remints
+  of the same authorized terms; different provider scopes get different
+  keys.
 - **Submit path**: `AUTHORIZED → SUBMITTING` (attempts+1, durable) →
   provider call carrying the idempotency key in the non-effectful
   `metadata` bag → provider `verify` → `SUCCEEDED` (external ref +
