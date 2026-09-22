@@ -91,7 +91,9 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   O(n) key lookup on files; single-writer topology —
   cross-process same-key races and read-then-write transitions rely on
   the single-writer backstop; `RECONCILED` needs a host provider query
-  (which MUST be read-only) plus manual completion; reconcile adoption
+  (which MUST be read-only — PTF calls it at most once per resume and
+  never submits on effected/unknown paths, but cannot constrain what
+  host code does inside it) plus manual completion; reconcile adoption
   trusts `provider.verify` — a verify that attests fiction adopts fiction,
   so production verifies must check rail evidence (signatures, ledger),
   never echo ids; hosts running multiple rails of one kind against one

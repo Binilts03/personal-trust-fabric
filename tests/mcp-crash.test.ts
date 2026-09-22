@@ -227,10 +227,22 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
       assert.equal(stored.state, "executed");
       stored.state = "pending";
       writeFileSync(proposalPath, JSON.stringify(stored));
-      // Restart remints a fresh challenge; reusable authority covers it.
-      const tx2 = await redeemOnce(rpc, digest, recipient);
-      // Must reconcile to the SAME effect, never submit a second one.
-      assert.equal(tx2, tx1);
+      // Restart onto the crash-equivalent state (pending proposal +
+      // SUCCEEDED journal): the remint must reconcile, never resubmit.
+      // State surgery produces exactly the on-disk state a real crash
+      // leaves; the process itself is fresh.
+      rpc.close();
+      await new Promise((r) => setTimeout(r, 500));
+      const rpc2 = launch(dir);
+      let tx2 = "";
+      try {
+        await init(rpc2);
+        tx2 = await redeemOnce(rpc2, digest, recipient);
+        // Must reconcile to the SAME effect, never submit a second one.
+        assert.equal(tx2, tx1);
+      } finally {
+        rpc2.close();
+      }
       // The returned amount must equal the journaled authorized terms —
       // the receipt projects stored terms, never live values.
       const execNames = readdirSync(join(dir, "executions")).filter((n) =>
@@ -242,6 +254,12 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
       ) as { context: { amount: number; currency: string } };
       assert.equal(journaled.context.amount, 4250);
       assert.equal(journaled.context.currency, "INR");
+      const finalProposal = JSON.parse(readFileSync(proposalPath, "utf8")) as {
+        receipt: { amount: number; currency: string; transaction: string };
+      };
+      assert.equal(finalProposal.receipt.amount, journaled.context.amount);
+      assert.equal(finalProposal.receipt.currency, journaled.context.currency);
+      assert.equal(finalProposal.receipt.transaction, tx2);
       // Secret-freedom across every new surface: both keystore private
       // keys (real keystore material, DER-hex and base64 forms) must
       // appear in no journal record, proposal, receipt, or audit line.
@@ -253,6 +271,9 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
       ).toString("hex");
       const privB64 = Buffer.from(
         recipient.privateKey.export({ format: "der", type: "pkcs8" })
+      ).toString("base64");
+      const ownerB64 = Buffer.from(
+        principal.privateKey.export({ format: "der", type: "pkcs8" })
       ).toString("base64");
       const blobs: string[] = [
         readFileSync(proposalPath, "utf8"),
@@ -267,6 +288,7 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
         assert.ok(!blob.includes(privHex));
         assert.ok(!blob.includes(ownerHex));
         assert.ok(!blob.includes(privB64));
+        assert.ok(!blob.includes(ownerB64));
       }
     } finally {
       rpc.close();

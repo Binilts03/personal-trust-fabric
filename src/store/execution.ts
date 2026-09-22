@@ -256,22 +256,9 @@ export function createExecution(
   mkdirSync(dirOf(storeDir), { recursive: true });
   // Single scan serves duplicate detection and the capacity bound
   // together: per-create cost stays one pass, not two.
-  let byKey: ExecutionRecord | null = null;
-  let count = 0;
-  for (const name of readdirSync(dirOf(storeDir))) {
-    if (!name.endsWith(".json") || name.includes(".tmp-")) continue;
-    count += 1;
-    if (byKey !== null) continue;
-    let rec: ExecutionRecord;
-    try {
-      rec = readRecord(join(dirOf(storeDir), name));
-    } catch {
-      throw new ExecutionError(`journal corrupt: ${name}`);
-    }
-    if (rec.idempotencyKey === input.idempotencyKey) byKey = rec;
-  }
-  if (byKey !== null) return byKey;
-  if (count >= MAX_EXECUTION_RECORDS) {
+  const scanned = scanExecutions(storeDir, input.idempotencyKey);
+  if (scanned.match !== null) return scanned.match;
+  if (scanned.count >= MAX_EXECUTION_RECORDS) {
     throw journalFullError();
   }
   const record: ExecutionRecord = {
@@ -370,6 +357,33 @@ export function transitionExecution(
 }
 
 /**
+ * Single directory scan serving duplicate detection, capacity counting,
+ * and key lookup together — one pass per create instead of three.
+ * Corrupt files throw (fail-closed); callers never silently skip.
+ */
+function scanExecutions(
+  storeDir: string,
+  idempotencyKey: string
+): { match: ExecutionRecord | null; count: number } {
+  let match: ExecutionRecord | null = null;
+  let count = 0;
+  let names: string[];
+  try {
+    names = readdirSync(dirOf(storeDir));
+  } catch {
+    return { match, count };
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json") || name.includes(".tmp-")) continue;
+    count += 1;
+    if (match !== null) continue;
+    const rec = readRecord(join(dirOf(storeDir), name));
+    if (rec.idempotencyKey === idempotencyKey) match = rec;
+  }
+  return { match, count };
+}
+
+/**
  * Find a record by idempotency key (O(n) scan; indexed backends come with
  * Phase 4). Corrupt files throw — same as listExecutions: tamper must
  * never silently hide a live record from dedupe and fork a second effect.
@@ -378,18 +392,7 @@ export function findByIdempotencyKey(
   storeDir: string,
   idempotencyKey: string
 ): ExecutionRecord | null {
-  let names: string[];
-  try {
-    names = readdirSync(dirOf(storeDir));
-  } catch {
-    return null;
-  }
-  for (const name of names) {
-    if (!name.endsWith(".json") || name.includes(".tmp-")) continue;
-    const rec = readRecord(join(dirOf(storeDir), name));
-    if (rec.idempotencyKey === idempotencyKey) return rec;
-  }
-  return null;
+  return scanExecutions(storeDir, idempotencyKey).match;
 }
 
 /** All records (corrupt files throw — inspection duty, never silent skip at this layer). */
