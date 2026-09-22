@@ -142,6 +142,19 @@ function readRecord(path: string): ExecutionRecord {
   } catch {
     throw new ExecutionError(`journal corrupt: ${path}`);
   }
+  return validateExecutionRecord(raw, path);
+}
+
+/**
+ * Shape validation shared by every backend (file + SQLite): corrupt or
+ * illegal-state payloads throw identically, so tamper fails closed the
+ * same way everywhere. Backends must validate through this, never a
+ * subset.
+ */
+export function validateExecutionRecord(
+  raw: unknown,
+  what: string
+): ExecutionRecord {
   if (
     typeof raw !== "object" ||
     raw === null ||
@@ -164,7 +177,7 @@ function readRecord(path: string): ExecutionRecord {
     typeof (raw as Record<string, unknown>)["attempts"] !== "number" ||
     typeof (raw as Record<string, unknown>)["maxAttempts"] !== "number"
   ) {
-    throw new ExecutionError(`journal corrupt: ${path}`);
+    throw new ExecutionError(`journal corrupt: ${what}`);
   }
   return raw as ExecutionRecord;
 }
@@ -293,7 +306,10 @@ export function transitionExecution(
       `journal: illegal transition ${current.state} → ${to}`
     );
   }
-  if (patch.lastError !== undefined && patch.lastError.length > 256) {
+  if (
+    patch.lastError !== undefined &&
+    (typeof patch.lastError !== "string" || patch.lastError.length > 256)
+  ) {
     throw new ExecutionError("journal: lastError exceeds 256 chars");
   }
   const next: ExecutionRecord = {
@@ -388,6 +404,14 @@ export function isTerminal(record: ExecutionRecord): boolean {
   return (TERMINAL as readonly ExecutionState[]).includes(record.state);
 }
 
+/** Whether a (from → to) transition is legal. Backends enforce the same map. */
+export function canTransition(
+  from: ExecutionState,
+  to: ExecutionState
+): boolean {
+  return (TRANSITIONS[from] as readonly ExecutionState[]).includes(to);
+}
+
 /**
  * Explicit host abort (freeze/cancel path): PREPARED or AUTHORIZED records
  * that must never submit transition to FAILED_FINAL. Never touches live or
@@ -399,6 +423,9 @@ export function abortExecution(
   reason: "cancelled" | "frozen" = "cancelled",
   nowSec: number = Math.floor(Date.now() / 1000)
 ): ExecutionRecord {
+  if (reason !== "cancelled" && reason !== "frozen") {
+    throw new ExecutionError("journal: unknown abort reason");
+  }
   const current = loadExecution(storeDir, executionId);
   if (current.state !== "PREPARED" && current.state !== "AUTHORIZED") {
     throw new ExecutionError(

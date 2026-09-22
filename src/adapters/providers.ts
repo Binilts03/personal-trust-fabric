@@ -18,14 +18,14 @@ import {
   AmbiguousExecutionError,
   ExecutionError,
   assertExternalRef,
-  createExecution,
   deriveIdempotencyKey,
-  findByIdempotencyKey,
   isTerminal,
-  loadExecution,
-  transitionExecution,
   type ExecutionRecord,
 } from "../store/execution.js";
+import {
+  FileExecutions,
+  type ExecutionRepository,
+} from "../store/repositories.js";
 
 /**
  * Protected provider seam (P0 slice 3).
@@ -673,12 +673,16 @@ export async function executeWithJournal(opts: {
   readonly req: ProviderRequest;
   readonly redemption: Redemption;
   readonly query?: ExecutionQuery;
+  readonly journal?: ExecutionRepository;
   readonly maxAttempts?: number;
   readonly nowSec?: number;
   readonly at?: number;
 }): Promise<ExecutionReceipt> {
   const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
   const at = opts.at ?? nowSec;
+  // Repository seam (ADR-0022): file backend by default; SQLite (or any
+  // conforming store) opt-in. Same state machine either way.
+  const J = opts.journal ?? FileExecutions;
   checkRequest(opts.req);
   const op = requireRedemption(opts.redemption);
   if (opts.redemption.chainId !== opts.req.capabilityId) {
@@ -692,7 +696,7 @@ export async function executeWithJournal(opts: {
     opts.redemption.chainId
   );
 
-  let rec = findByIdempotencyKey(opts.dir, key);
+  let rec = J.findByIdempotencyKey(opts.dir, key);
   if (rec !== null) {
     if (rec.state === "SUCCEEDED") return receiptFromRecord(rec);
     if (rec.state === "FAILED_FINAL") {
@@ -707,9 +711,9 @@ export async function executeWithJournal(opts: {
       );
     }
     // Resume a live record from disk (fresh handle, never a stale copy).
-    rec = loadExecution(opts.dir, rec.executionId);
+    rec = J.load(opts.dir, rec.executionId);
   } else {
-    rec = createExecution(
+    rec = J.create(
       opts.dir,
       {
         idempotencyKey: key,
@@ -729,18 +733,12 @@ export async function executeWithJournal(opts: {
   }
 
   if (rec.state === "PREPARED") {
-    rec = transitionExecution(
-      opts.dir,
-      rec.executionId,
-      "AUTHORIZED",
-      {},
-      nowSec
-    );
+    rec = J.transition(opts.dir, rec.executionId, "AUTHORIZED", {}, nowSec);
   }
   if (rec.state === "SUBMITTING") {
     // Crash leftover: the provider may have been called with no persisted
     // result. Normalize to unknown before any further step.
-    rec = transitionExecution(
+    rec = J.transition(
       opts.dir,
       rec.executionId,
       "SUBMITTED_UNKNOWN",
@@ -767,7 +765,7 @@ export async function executeWithJournal(opts: {
       } catch {
         throw new ExecutionError("journal: query returned malformed ref");
       }
-      rec = transitionExecution(
+      rec = J.transition(
         opts.dir,
         rec.executionId,
         "SUCCEEDED",
@@ -781,7 +779,7 @@ export async function executeWithJournal(opts: {
       return receiptFromRecord(rec);
     }
     if (outcome.state === "unknown") {
-      rec = transitionExecution(
+      rec = J.transition(
         opts.dir,
         rec.executionId,
         "RECONCILED",
@@ -799,7 +797,7 @@ export async function executeWithJournal(opts: {
     // Confirmed absent: exactly one safe retry, same key, budget fixed
     // at create (resume cannot re-arm it).
     if (rec.attempts >= rec.maxAttempts) {
-      rec = transitionExecution(
+      rec = J.transition(
         opts.dir,
         rec.executionId,
         "RECONCILED",
@@ -820,13 +818,7 @@ export async function executeWithJournal(opts: {
     throw new ExecutionError("journal: unexpected terminal record on resume");
   }
 
-  rec = transitionExecution(
-    opts.dir,
-    rec.executionId,
-    "SUBMITTING",
-    {},
-    nowSec
-  );
+  rec = J.transition(opts.dir, rec.executionId, "SUBMITTING", {}, nowSec);
   const reqWithKey: ProviderRequest = {
     ...opts.req,
     metadata: { ...(opts.req.metadata ?? {}), idempotencyKey: key },
@@ -838,7 +830,7 @@ export async function executeWithJournal(opts: {
     // Ambiguous: the call may or may not have taken effect server-side.
     // Persist unknown and surface the execution id — the caller reconciles,
     // never blind-retries. Fixed vocabulary: provider detail stays out.
-    rec = transitionExecution(
+    rec = J.transition(
       opts.dir,
       rec.executionId,
       "SUBMITTED_UNKNOWN",
@@ -858,7 +850,7 @@ export async function executeWithJournal(opts: {
     // Attestation failure is NOT proof of no-effect: the rail may have
     // executed and only the confirmation is bad. Route to reconcile
     // (query decides), never to a terminal failure that would hide the ref.
-    rec = transitionExecution(
+    rec = J.transition(
       opts.dir,
       rec.executionId,
       "SUBMITTED_UNKNOWN",
@@ -874,7 +866,7 @@ export async function executeWithJournal(opts: {
   try {
     externalRef = assertExternalRef(sub.externalRef);
   } catch {
-    rec = transitionExecution(
+    rec = J.transition(
       opts.dir,
       rec.executionId,
       "SUBMITTED_UNKNOWN",
@@ -886,7 +878,7 @@ export async function executeWithJournal(opts: {
       "journal: submission unverified — reconcile required"
     );
   }
-  rec = transitionExecution(
+  rec = J.transition(
     opts.dir,
     rec.executionId,
     "SUCCEEDED",

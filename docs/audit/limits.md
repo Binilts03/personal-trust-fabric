@@ -3,6 +3,26 @@
 These are deliberate v0.1 ceilings, not bugs. Each is documented in code and
 tested at the boundary.
 
+## Persistence (ADR-0022)
+
+- File backend stays the default for every surface. SQLite WAL
+  (`node:sqlite`, `<storeDir>/ptf.sqlite`) backs the execution journal
+  only, opt-in, proven by a parity suite plus a loss-free migration
+  round-trip — not by assertion. `node:sqlite` is experimental in
+  Node 22 (warning noise, API-drift risk); mitigations are the parity
+  suite, the retained file backend, and no core contact (store-only).
+- SQLite ceilings: per-op open/close (no pooled handles — crash-safe but
+  not high-throughput); O(n) key scans unchanged on files;
+  cross-process same-key races and read-then-write transitions rely on
+  the single-writer backstop on both backends; WAL+shm travel with the
+  db file in backups (checkpoint-on-close keeps the unit coherent);
+  no GC on either journal (archive with backups); encrypted payloads
+  declined (journal payloads are handles-only; vault stays file-based).
+- Migration never discards: file→SQLite is one transaction
+  (all-or-nothing, existing rows win); SQLite→file stages then atomically
+  renames and refuses non-empty targets; sources are never deleted by
+  the migrator — operators remove them only after verifying parity.
+
 ## Authority / execution
 
 - `FakePaymentExecutor` moves no money. Real PSP wiring is out of scope.
