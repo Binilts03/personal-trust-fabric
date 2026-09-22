@@ -13,7 +13,9 @@ import {
   RecipientRegistry,
   canonicalize,
   executeAndReceipt,
+  issueAgentChallenge,
   leafCidHex,
+  loadAgents,
   loadAuthority,
   loadRegistry,
   loadVault,
@@ -26,6 +28,8 @@ import {
   renderProposal,
   saveAuthority,
   digestForOperation,
+  verifyAgentChallengeSignature,
+  type AgentChallenge,
 } from "./index.js";
 import { readFileSync } from "node:fs";
 import { requestData, requestExecution } from "./profiles/data.js";
@@ -72,8 +76,8 @@ import type {
  * capabilities that must never touch disk. Receipts additionally survive
  * in audit.jsonl.
  *
- * IDENTITY (ADR-0013): the server speaks for ONE fixed identity — principal
- * + actor are pinned at instantiation (`PtfServerOptions`, from
+ * IDENTITY (ADR-0013, ADR-0023): fixed mode speaks for ONE identity —
+ * principal + actor pinned at instantiation (`PtfServerOptions`, from
  * `PTF_MCP_PRINCIPAL` / `PTF_MCP_ACTOR` in `main`) and bound as the verified
  * ingress for every evaluation. Tool inputs carry NO identity fields: a
  * caller choosing its own principal/agent would be self-certification.
@@ -82,6 +86,15 @@ import type {
  * REMOTE / MULTI-TENANT hosts must NOT reuse this binding: derive a
  * per-caller ingress from a verified token (OAuth/DPoP/mTLS) and pass it to
  * `Authority.evaluate` — that mapping is host duty, not this file's.
+ *
+ * REGISTRY MODE (ADR-0023): when `agents.json` exists in the store, every
+ * evaluation binds a registry member instead. A launcher-asserted
+ * `PTF_MCP_ACTOR` must be registered + active (rechecked from disk per
+ * tool call, so removal takes effect immediately); without it, the
+ * session starts unauthenticated and `ptf_authenticate` (challenge →
+ * registry-key signature → bound session) is required before any other
+ * tool. Session challenges are in-memory, single-use, short-TTL —
+ * live material that must never touch disk (same rule as ADR-0017).
  */
 
 export interface PtfServerOptions {
@@ -159,7 +172,7 @@ function resolveKeyWithLocalFallback(
 }
 
 /**
- * Grant visibility for one fixed ingress: the principal must match and the
+ * Grant visibility for one verified ingress: the principal must match and the
  * actor selector must cover the agent. The explicit `{ kind: "any" }`
  * wildcard is audit-visible by design, so it stays listed. Revoked,
  * not-yet-valid, expired, and uses-exhausted grants are excluded — listing
@@ -197,14 +210,86 @@ function grantVisible(
 export function createPtfServer(opts: PtfServerOptions): McpServer {
   const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
   if (opts.principal.length === 0) fail("server principal is required");
-  if (opts.actor.length === 0) fail("server actor is required");
+  if (opts.actor.length === 0 && !existsSync(join(opts.dir, "agents.json"))) {
+    fail(
+      "server actor is required unless agents.json exists (registry session mode)"
+    );
+  }
   const executor = opts.executor ?? new FakePaymentExecutor();
   // Fixed verified ingress: stdio is local-only (see module header).
-  const ingress: VerifiedIdentity = {
+  // In registry mode this is only the launcher-asserted fallback — every
+  // evaluation re-resolves through resolveIngress() below.
+  const fixedIngress: VerifiedIdentity = {
     id: opts.actor,
     principal: opts.principal,
     source: "local-registration",
     proofRef: `stdio:${opts.dir}`,
+  };
+
+  // Session authentication (ADR-0023 registry mode): at most one bound
+  // agent per stdio process, plus single-use auth challenges. The mode is
+  // captured at startup: a fixed-mode server never consults the registry
+  // (registry created later activates on restart), and a registry-mode
+  // server fails closed if the registry disappears (no silent downgrade).
+  const registryMode = existsSync(join(opts.dir, "agents.json"));
+  let sessionAgent: string | null = null;
+  let sessionKeyHex: string | null = null;
+  const authChallenges = new Map<
+    string,
+    { challenge: AgentChallenge; until: number }
+  >();
+  const pruneAuthChallenges = (): void => {
+    for (const [id, c] of authChallenges) {
+      if (now() > c.until) authChallenges.delete(id);
+    }
+  };
+
+  /**
+   * Verified ingress for this tool call — never from request JSON.
+   * Registry mode (agents.json present): session-bound agent if
+   * authenticated (rechecked active every call), else the
+   * launcher-asserted env actor if registered + active; otherwise fail
+   * closed. Fixed mode: the pinned env identity, unchanged.
+   */
+  const resolveIngress = (): VerifiedIdentity => {
+    if (!registryMode) {
+      if (opts.actor.length === 0) fail("server actor is required");
+      return fixedIngress;
+    }
+    if (!existsSync(join(opts.dir, "agents.json"))) {
+      fail(
+        "agent registry missing: restart the server after registering agents"
+      );
+    }
+    const agents = loadAgents(opts.dir);
+    if (sessionAgent !== null) {
+      const live = agents.get(sessionAgent);
+      if (
+        live === null ||
+        live.status !== "active" ||
+        live.publicKeyHex === undefined ||
+        live.publicKeyHex !== sessionKeyHex
+      ) {
+        // Removed, rotated, or tampered binding: drop the session and
+        // fail. Never fall back to another identity for this session.
+        sessionAgent = null;
+        sessionKeyHex = null;
+        fail("agent session invalid: authenticate again");
+      }
+      return {
+        id: sessionAgent,
+        principal: opts.principal,
+        source: "local-registration",
+        proofRef: `stdio:${opts.dir}#${sessionAgent}`,
+      };
+    }
+    if (opts.actor.length > 0) {
+      if (!agents.isActive(opts.actor)) {
+        fail("agent not registered or removed");
+      }
+      return fixedIngress;
+    }
+    fail("authentication required: call ptf_authenticate first");
   };
 
   const load = (): {
@@ -429,6 +514,110 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
   };
 
   server.registerTool(
+    "ptf_authenticate",
+    {
+      description:
+        "Authenticate this session as a registered agent (registry mode only). Call with no arguments for a challenge; then call again with agentId, challengeId, and the registry-key signature over the challenge. Binds the session — consumes no authority.",
+      inputSchema: z.object({
+        agentId: z.string().min(1).max(256).optional(),
+        challengeId: z.string().min(1).max(128).optional(),
+        sigHex: z.string().min(1).max(512).optional(),
+      }),
+    },
+    async (args) => {
+      pruneAuthChallenges();
+      if (
+        args.agentId === undefined &&
+        args.challengeId === undefined &&
+        args.sigHex === undefined
+      ) {
+        if (!registryMode || !existsSync(join(opts.dir, "agents.json"))) {
+          fail(
+            "agent registry missing: fixed-identity server needs no authentication"
+          );
+        }
+        if (authChallenges.size >= 128) {
+          fail("authentication busy: try again");
+        }
+        const challenge = issueAgentChallenge(now());
+        authChallenges.set(challenge.challengeId, {
+          challenge,
+          until: challenge.expiresAt,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  challengeId: challenge.challengeId,
+                  nonceHex: challenge.nonceHex,
+                  expiresAt: challenge.expiresAt,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+      if (
+        args.agentId === undefined ||
+        args.challengeId === undefined ||
+        args.sigHex === undefined
+      ) {
+        fail(
+          "authenticate with agentId, challengeId and sigHex together, or with nothing"
+        );
+      }
+      const pending = authChallenges.get(args.challengeId as string);
+      authChallenges.delete(args.challengeId as string);
+      // Single fixed failure: unknown/expired challenges, unknown agents,
+      // missing keys, and bad signatures are indistinguishable (no oracle).
+      let bound: string | null = null;
+      if (pending !== undefined && now() <= pending.until && registryMode) {
+        try {
+          const agents = loadAgents(opts.dir);
+          const key = agents.publicKeyRaw(args.agentId as string);
+          if (
+            key !== null &&
+            verifyAgentChallengeSignature({
+              challenge: pending.challenge,
+              agentId: args.agentId as string,
+              publicKeyRaw: key,
+              sigHex: args.sigHex as string,
+              nowSec: now(),
+            })
+          ) {
+            bound = args.agentId as string;
+            sessionKeyHex = Buffer.from(key).toString("hex");
+          }
+        } catch {
+          bound = null;
+        }
+      }
+      if (bound === null) {
+        fail("authentication failed");
+      }
+      sessionAgent = bound;
+      const { audit } = load();
+      audit.append({ actor: sessionAgent as string, action: "authenticate" });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              { authenticated: true, agent: sessionAgent },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
     "ptf_propose",
     {
       description:
@@ -437,9 +626,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     },
     async (args) => {
       const { auth } = load();
+      const ingress = resolveIngress();
       prunePending();
       // Binding is derived server-side from the normalized operation +
-      // the fixed verified ingress: untrusted callers supply neither
+      // the verified ingress: untrusted callers supply neither
       // identity nor digest, so the schema takes neither. Payment/disclosure
       // attributes ride in the context bag.
       const op: AuthorityOperation = {
@@ -552,8 +742,18 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         fail("proposal denied: propose again");
       }
       const { auth, reg, audit, keys } = load();
+      const ingress = resolveIngress();
       const demand = { ...proposal.demand, termsDigest: args.termsDigest };
-      // Re-evaluate under the fixed ingress: strip the stored bound form
+      // Identity re-assert (ADR-0023): the stored demand must belong to
+      // this verified ingress — no cross-agent redemption, and the audit
+      // trail attributes the actor that was actually evaluated.
+      if (
+        demand.principal !== ingress.principal ||
+        demand.actor !== ingress.id
+      ) {
+        fail("proposal identity mismatch: propose again");
+      }
+      // Re-evaluate under the verified ingress: strip the stored bound form
       // back to the identity-free operation and let the engine rebind.
       const {
         termsDigest: _storedDigest,
@@ -566,6 +766,14 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       void _storedPrincipal;
       void _storedActor;
       void _storedChain;
+      // Tamper re-derivation (ADR-0018, same as present): the file must
+      // still describe the exact terms its key claims. Recomputed over the
+      // stored bound form verbatim, exactly as propose stored it.
+      const { termsDigest: _fileDigest, ...fileBound } = demand;
+      void _fileDigest;
+      if (digestForOperation(fileBound) !== args.termsDigest) {
+        fail("proposal terms changed: propose again");
+      }
       if (demand.action.name !== "/pay") {
         fail(
           "redeem supports /pay demands only in v1 (present disclosures via the CLI)"
@@ -770,6 +978,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     },
     async (args) => {
       const { auth } = load();
+      const ingress = resolveIngress();
       let out: ReturnType<typeof requestData>;
       try {
         out = requestData(
@@ -846,9 +1055,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         fail("present supports /disclose proposals only; pay via ptf_redeem");
       }
       const { auth, keys, audit } = load();
+      const ingress = resolveIngress();
       const demand = { ...proposal.demand, termsDigest: args.termsDigest };
-      // Defense in depth: proposals are bound at propose time to this fixed
-      // ingress, but re-assert before touching vault or keys.
+      // Defense in depth: proposals are bound at propose time to the
+      // verified ingress, but re-assert before touching vault or keys.
       if (
         demand.principal !== ingress.principal ||
         demand.actor !== ingress.id
@@ -975,6 +1185,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     },
     async (args) => {
       const { auth } = load();
+      const ingress = resolveIngress();
       // Caller-supplied context passes through untouched; the top-level
       // convenience fields below only fill ABSENT keys so explicit caller
       // handles are never clobbered.
@@ -1077,11 +1288,12 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_list_capabilities",
     {
       description:
-        "List grant projections visible to this fixed agent identity (read-only, no keys or capability envelopes). Only live grants are shown: other principals, other agents, revoked, not-yet-valid, expired, and uses-exhausted grants are excluded.",
+        "List grant projections visible to this verified agent identity (read-only, no keys or capability envelopes). Only live grants are shown: other principals, other agents, revoked, not-yet-valid, expired, and uses-exhausted grants are excluded.",
       inputSchema: z.object({}),
     },
     async () => {
       const { auth } = load();
+      const ingress = resolveIngress();
       const snap = auth.snapshot();
       const revokedIds = new Set(snap.revoked.map(([id]) => id));
       const usedCounts = new Map(snap.used);
@@ -1158,9 +1370,12 @@ async function main(): Promise<void> {
   const env: Record<string, string | undefined> = { ...process.env };
   const principal = env["PTF_MCP_PRINCIPAL"] ?? "";
   const actor = env["PTF_MCP_ACTOR"] ?? "";
-  if (principal.length === 0 || actor.length === 0) {
+  if (principal.length === 0) {
+    throw new Error("mcp-server: PTF_MCP_PRINCIPAL is required");
+  }
+  if (actor.length === 0 && !existsSync(join(dir, "agents.json"))) {
     throw new Error(
-      "mcp-server: PTF_MCP_PRINCIPAL and PTF_MCP_ACTOR are required (fixed server identity)"
+      "mcp-server: PTF_MCP_ACTOR is required unless agents.json exists (registry session mode)"
     );
   }
   const server = createPtfServer({ dir, env, principal, actor });

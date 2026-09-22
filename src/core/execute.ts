@@ -181,6 +181,7 @@ export interface AuditEvent {
   readonly authorityRev?: number;
   readonly registryRev?: number;
   readonly vaultRev?: number;
+  readonly agentRev?: number;
 }
 
 export interface AuditEntry extends Required<
@@ -192,6 +193,7 @@ export interface AuditEntry extends Required<
   readonly authorityRev?: number;
   readonly registryRev?: number;
   readonly vaultRev?: number;
+  readonly agentRev?: number;
   readonly seq: number;
   readonly prevHash: string;
   readonly hash: string;

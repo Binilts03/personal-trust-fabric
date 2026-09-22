@@ -23,6 +23,32 @@ tested at the boundary.
   renames and refuses non-empty targets; sources are never deleted by
   the migrator — operators remove them only after verifying parity.
 
+## Identity / ingress (ADR-0023)
+
+- MCP fixed mode is unchanged (one env-pinned identity, schemas carry no
+  identity fields). Registry mode binds evaluations to registry members:
+  launcher-asserted env actors must be registered + active (rechecked per
+  call) — membership proof, not possession proof: even a keyed agent in
+  env mode never proves key possession; only `ptf_authenticate` sessions
+  do. Keyless entries rely on launcher trust — spec-blessed for stdio,
+  but a compromised local launcher can assert any registered keyless id
+  (remote/multi-tenant hosts must use verified tokens instead — host
+  duty, PDP Bearer keys are the reference).
+- `ptf_authenticate` failures share one fixed message (no oracle);
+  challenges are claimant-bound, single-use, 120s TTL, in-memory, capped
+  at 128 pending (restart re-authenticates); rotation invalidates live
+  sessions via key-equality recheck. Redeem re-asserts proposal identity
+  and re-derives the terms digest (no cross-agent redemption, tampered
+  files fail closed like present).
+- Mode is fixed at server startup: a registry created later activates on
+  restart; a deleted registry fails closed rather than downgrading.
+  Removal/rotation take effect on the next tool call (per-call reload),
+  not mid-call — operator-scale granularity by design.
+- Agent ids are global + immutable; removal retires permanently
+  (re-registering a retired id throws — use a new id, keeping citations
+  unambiguous). Backup unit now covers agents/nonces/executions/SQLite
+  with the same one-unit/never-merge/anchor rules.
+
 ## Authority / execution
 
 - `FakePaymentExecutor` moves no money. Real PSP wiring is out of scope.

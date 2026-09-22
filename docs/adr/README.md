@@ -23,3 +23,4 @@
 | [0020](0020-p3p-evidence-adapter.md)            | P3P evidence-only adapter (ADR-0019 edge): normalize + demand + receipt verify, SDK-agnostic, sandbox first    | accepted | 2026-09-21 |
 | [0021](0021-execution-journal.md)               | Durable execution journal: outcome states, derived idempotency keys, query-first reconcile, explicit abort     | accepted | 2026-09-22 |
 | [0022](0022-sqlite-wal-decision.md)             | Transactional persistence: SQLite WAL chosen, file retained; repository seams; bounded execution experiment    | accepted | 2026-09-22 |
+| [0023](0023-agent-ingress.md)                   | Authenticated multi-agent ingress: registry + session proof, fixed mode preserved, replaceability proof        | accepted | 2026-09-22 |

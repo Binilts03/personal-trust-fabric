@@ -16,6 +16,7 @@ import {
   executeAndReceipt,
   generateEd25519Keypair,
   leafCidHex,
+  loadAgents,
   loadAuthority,
   loadRegistry,
   loadVault,
@@ -34,6 +35,7 @@ import {
   rotateVaultDek,
   saveAuthority,
   saveRegistry,
+  saveAgents,
   sealKeystore,
   signBytes,
   VAULT_DEK_ALIAS,
@@ -102,6 +104,7 @@ const COMMANDS = [
   "keygen",
   "rekey",
   "recipient",
+  "agent",
   "grant",
   "pay",
   "disclose",
@@ -120,6 +123,7 @@ const COMMANDS = [
 const BOOLEAN_FLAGS = new Set([
   "yes",
   "verify",
+  "list",
   "help",
   "version",
   "any-agent",
@@ -138,6 +142,10 @@ export function helpText(): string {
     "  keygen --alias NAME                    generate Ed25519 key into encrypted keystore",
     "  rekey                                  rotate the keystore passphrase (old via PTF_PASSPHRASE(_FILE), new via PTF_NEW_PASSPHRASE(_FILE) or prompt)",
     "  recipient --alias NAME --key HEX       register 32-byte recipient key",
+    "  agent --register ID [--key HEX]      register agent (key optional: keyless agents use launcher-asserted identity)",
+    "  agent --remove ID                    retire agent permanently (takes effect on next tool call)",
+    "  agent --rotate ID --key HEX          swap an agent's registry key (sessions re-authenticate)",
+    "  agent --list                         list registered agents and status",
     "  grant --id ID --principal P --cmd /pay (--agent A | --actor-set a,b | --any-agent) [--amount-max N] [--currency C] [--allowed-claims a,b] [--exp-in S] [--max-uses N] [--purpose T] [--resource R] [--resource-type T] [--recipient R]",
     "         --any-agent is an explicit wildcard (audited, deliberate) — prefer --agent / --actor-set",
     "  pay --principal P --agent A --recipient R --amount N --currency C --resource R [--purpose T] [--yes]",
@@ -198,7 +206,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = tokens;
   if (command === undefined) {
     throw new Error(
-      "usage: ptf [--dir D] <init|keygen|rekey|recipient|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|revoke|help|version> ..."
+      "usage: ptf [--dir D] <init|keygen|rekey|recipient|agent|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|revoke|help|version> ..."
     );
   }
   if (!(COMMANDS as readonly string[]).includes(command)) {
@@ -241,6 +249,7 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
   keygen: new Set(["alias"]),
   rekey: new Set([]),
   recipient: new Set(["alias", "key"]),
+  agent: new Set(["register", "remove", "rotate", "list", "key"]),
   grant: new Set([
     "id",
     "principal",
@@ -463,7 +472,7 @@ export async function run(
         : {}),
     });
     io.print(
-      `backup: ${summary.files.length} files + ${summary.proposals} proposals → ${summary.destDir}`
+      `backup: ${summary.files.length} files + ${summary.proposals} proposals + ${summary.executions} executions → ${summary.destDir}`
     );
     io.print(
       `anchor: root=${summary.anchor.root === "" ? "(empty log)" : summary.anchor.root} count=${summary.anchor.count}`
@@ -611,6 +620,83 @@ export async function run(
       registryRev: ctx.reg.loadedRevision(),
     });
     io.print(`registered ${alias}`);
+    return 0;
+  }
+
+  if (command === "agent") {
+    // Exactly one action: register (id [+ key]), remove (id), rotate
+    // (id + key), or list. Registry mutations are audit-appended with the
+    // post-save revision so rollback past them alarms at load.
+    const registerId = opt(flags, "register");
+    const removeId = opt(flags, "remove");
+    const rotateId = opt(flags, "rotate");
+    const listAll = flags["list"] === true;
+    const keyHex = opt(flags, "key");
+    const given = [
+      registerId !== undefined,
+      removeId !== undefined,
+      rotateId !== undefined,
+      listAll,
+    ].filter((v) => v).length;
+    if (given !== 1) {
+      throw new Error(
+        "usage: agent needs exactly one of --register ID [--key HEX] | --remove ID | --rotate ID --key HEX | --list"
+      );
+    }
+    if (listAll) {
+      const agents = loadAgents(dir);
+      for (const id of agents.ids()) {
+        const rec = agents.get(id);
+        io.print(
+          `${id} ${rec?.status}${rec?.publicKeyHex !== undefined ? " keyed" : " keyless"}`
+        );
+      }
+      return 0;
+    }
+    const agents = loadAgents(dir);
+    if (registerId !== undefined) {
+      agents.register(registerId, keyHex, now());
+      saveAgents(dir, agents);
+      ctx.audit.append({
+        actor: "operator",
+        action: "agent-register",
+        detail: registerId,
+        authorityRev: ctx.auth.loadedRevision(),
+        registryRev: ctx.reg.loadedRevision(),
+        agentRev: agents.loadedRevision(),
+      });
+      io.print(`registered agent ${registerId}`);
+      return 0;
+    }
+    if (rotateId !== undefined) {
+      if (keyHex === undefined) {
+        throw new Error("usage: agent --rotate ID needs --key HEX");
+      }
+      agents.rotate(rotateId, keyHex);
+      saveAgents(dir, agents);
+      ctx.audit.append({
+        actor: "operator",
+        action: "agent-rotate",
+        detail: rotateId,
+        authorityRev: ctx.auth.loadedRevision(),
+        registryRev: ctx.reg.loadedRevision(),
+        agentRev: agents.loadedRevision(),
+      });
+      io.print(`rotated agent key ${rotateId}`);
+      return 0;
+    }
+    // removeId is defined (exactly-one check above).
+    agents.remove(removeId as string, now());
+    saveAgents(dir, agents);
+    ctx.audit.append({
+      actor: "operator",
+      action: "agent-remove",
+      detail: removeId as string,
+      authorityRev: ctx.auth.loadedRevision(),
+      registryRev: ctx.reg.loadedRevision(),
+      agentRev: agents.loadedRevision(),
+    });
+    io.print(`removed agent ${removeId}`);
     return 0;
   }
 

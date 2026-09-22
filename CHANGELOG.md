@@ -13,6 +13,17 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Authenticated multi-agent ingress (ADR-0023, Phase 5): operator-managed
+  agent registry (`agents.json`, CAS-guarded, `ptf agent` CLI) plus
+  claimant-bound challenge/response session proof (`ptf_authenticate`
+  tool); MCP server keeps fixed-identity mode and adds registry mode
+  (env actor verified against the registry, or signature-bound sessions
+  with rotation-invalidating key pins; removal effective on the next
+  call); redeem re-asserts proposal identity and re-derives the digest
+  (no cross-agent redemption); replaceability proven over stdio (Agent B
+  inherits the same grant after Agent A is removed, authority never
+  copied); backup unit extended to agents/nonces/executions/SQLite;
+  adversarial review findings fixed before merge.
 - Transactional persistence decision (ADR-0022, Phase 4):
   `src/store/repositories.ts` (Authority/Proposal/Execution/Replay/Audit
   seams, file behavior as the shape contract) plus a bounded SQLite WAL

@@ -176,7 +176,7 @@ export function loadRegistry(
  */
 export function checkFreshness(
   dir: string,
-  what: "authority" | "registry" | "vault",
+  what: "authority" | "registry" | "vault" | "agents",
   fileRev: number
 ): void {
   const field =
@@ -184,7 +184,9 @@ export function checkFreshness(
       ? "authorityRev"
       : what === "registry"
         ? "registryRev"
-        : "vaultRev";
+        : what === "vault"
+          ? "vaultRev"
+          : "agentRev";
   const path = join(dir, "audit.jsonl");
   if (!existsSync(path)) return;
   let maxRef: number | null = null;
