@@ -83,6 +83,12 @@ export interface ProviderSubmission {
 
 export interface ProtectedProvider {
   readonly kind: ProviderKind;
+  /**
+   * Rail identity for journal scoping. Defaults to `kind`; hosts running
+   * multiple rails of one kind against one store MUST set distinct
+   * namespaces, or one rail's outcome satisfies another's terms.
+   */
+  readonly namespace?: string;
   submit(req: ProviderRequest): Promise<ProviderSubmission>;
   verify(
     sub: ProviderSubmission,
@@ -760,8 +766,11 @@ export async function executeWithJournal(opts: {
   // Derived, never caller-supplied: same authorized terms in the same
   // provider scope always map to the same key, so no caller can fork two
   // effects from one terms set — and a reminted capability reconciles
-  // instead of forking.
-  const key = deriveIdempotencyKey(opts.req.termsDigest, opts.provider.kind);
+  // instead of forking. Scope is the rail namespace (kind by default).
+  const key = deriveIdempotencyKey(
+    opts.req.termsDigest,
+    opts.provider.namespace ?? opts.provider.kind
+  );
 
   let rec = J.findByIdempotencyKey(opts.dir, key);
   if (rec !== null) {

@@ -91,7 +91,12 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   O(n) key lookup on files; single-writer topology —
   cross-process same-key races and read-then-write transitions rely on
   the single-writer backstop; `RECONCILED` needs a host provider query
-  (which MUST be read-only) plus manual completion; `metadata`
+  (which MUST be read-only) plus manual completion; reconcile adoption
+  trusts `provider.verify` — a verify that attests fiction adopts fiction,
+  so production verifies must check rail evidence (signatures, ledger),
+  never echo ids; hosts running multiple rails of one kind against one
+  store MUST set distinct provider namespaces or one rail's outcome
+  satisfies another's terms; `metadata`
   idempotency carriage and context secret-freedom stay host-reviewed
   conventions like the rest of the provider seam.
 - Exact-operation binding (ADR-0018): `authorize` echoes the verified

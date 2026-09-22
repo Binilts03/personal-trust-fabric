@@ -130,20 +130,21 @@ function pathOf(storeDir: string, executionId: string): string {
 
 /**
  * Deterministic provider idempotency key for one authorized terms set in
- * one provider scope. Same (termsDigest, scope) → same key across retries,
- * replays, and capability remints; different terms or scopes → different
- * keys. Capability identity is deliberately NOT part of the key (a remint
- * must reconcile, never fork); it stays in the record as binding evidence.
+ * one provider scope. Same (termsDigest, providerScope) → same key across
+ * retries, replays, and capability remints; different terms or scopes →
+ * different keys. Capability identity is deliberately NOT part of the key
+ * (a remint must reconcile, never fork); it stays in the record as
+ * binding evidence.
  */
 export function deriveIdempotencyKey(
   termsDigest: string,
-  scope: string
+  providerScope: string
 ): string {
   if (!/^[0-9a-f]{16,128}$/.test(termsDigest))
     throw new ExecutionError("malformed termsDigest");
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(scope))
-    throw new ExecutionError("malformed scope");
-  return `ptf-${termsDigest}-${scope}`;
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(providerScope))
+    throw new ExecutionError("malformed providerScope");
+  return `ptf-${termsDigest}-${providerScope}`;
 }
 
 /** External refs are provider-controlled evidence: bounded, non-empty. */

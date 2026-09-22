@@ -71,7 +71,11 @@ function connect(env: Record<string, string>): RpcClient {
       });
     },
     close(): void {
-      child.kill();
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        child.kill();
+      }
     },
   };
 }
@@ -93,6 +97,7 @@ function failed(response: Record<string, unknown>): boolean {
 
 function seedStore(maxUses: number): {
   dir: string;
+  principal: ReturnType<typeof generateEd25519Keypair>;
   recipient: ReturnType<typeof generateEd25519Keypair>;
 } {
   const liveNow = Math.floor(Date.now() / 1000);
@@ -131,7 +136,7 @@ function seedStore(maxUses: number): {
     )}\n`,
     "utf8"
   );
-  return { dir, recipient };
+  return { dir, principal, recipient };
 }
 
 async function propose(
@@ -207,7 +212,7 @@ async function init(rpc: RpcClient): Promise<void> {
 
 describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
   it("crash after provider effect, before proposal transition, reconciles", async () => {
-    const { dir, recipient } = seedStore(2);
+    const { dir, principal, recipient } = seedStore(2);
     const rpc = launch(dir);
     try {
       await init(rpc);
@@ -226,12 +231,29 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
       const tx2 = await redeemOnce(rpc, digest, recipient);
       // Must reconcile to the SAME effect, never submit a second one.
       assert.equal(tx2, tx1);
-      // Secret-freedom across every new surface: the recipient private
-      // key (real keystore material) must appear in no journal record,
-      // proposal, receipt, or audit line.
+      // The returned amount must equal the journaled authorized terms —
+      // the receipt projects stored terms, never live values.
+      const execNames = readdirSync(join(dir, "executions")).filter((n) =>
+        n.endsWith(".json")
+      );
+      assert.equal(execNames.length, 1);
+      const journaled = JSON.parse(
+        readFileSync(join(dir, "executions", execNames[0] as string), "utf8")
+      ) as { context: { amount: number; currency: string } };
+      assert.equal(journaled.context.amount, 4250);
+      assert.equal(journaled.context.currency, "INR");
+      // Secret-freedom across every new surface: both keystore private
+      // keys (real keystore material, DER-hex and base64 forms) must
+      // appear in no journal record, proposal, receipt, or audit line.
       const privHex = Buffer.from(
         recipient.privateKey.export({ format: "der", type: "pkcs8" })
       ).toString("hex");
+      const ownerHex = Buffer.from(
+        principal.privateKey.export({ format: "der", type: "pkcs8" })
+      ).toString("hex");
+      const privB64 = Buffer.from(
+        recipient.privateKey.export({ format: "der", type: "pkcs8" })
+      ).toString("base64");
       const blobs: string[] = [
         readFileSync(proposalPath, "utf8"),
         readFileSync(join(dir, "audit.jsonl"), "utf8"),
@@ -243,6 +265,8 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
       }
       for (const blob of blobs) {
         assert.ok(!blob.includes(privHex));
+        assert.ok(!blob.includes(ownerHex));
+        assert.ok(!blob.includes(privB64));
       }
     } finally {
       rpc.close();

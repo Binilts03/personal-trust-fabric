@@ -577,6 +577,45 @@ describe("durable execution journal (phase 3)", () => {
     assert.equal(queries, 1);
   });
 
+  it("distinct rail namespaces isolate identical terms", async () => {
+    const d = dir();
+    const { principal, recipient, caps } = setup();
+    const digest = "99".repeat(32);
+    const { redemption, chainId } = issueRedeem(
+      caps,
+      principal,
+      recipient,
+      digest
+    );
+    const fakes = makeFakeProviders({ nowSec: () => NOW });
+    const first = await executeWithJournal({
+      dir: d,
+      provider: fakes.email,
+      req: reqFor(chainId, digest),
+      redemption,
+      nowSec: NOW,
+      at: NOW,
+    });
+    // Same terms, second rail of the same kind: must execute independently,
+    // never adopt the first rail's receipt.
+    const railB: ProtectedProvider = {
+      kind: "email",
+      namespace: "email-b",
+      submit: async (req) => fakes.email.submit(req),
+      verify: (sub, exp) => fakes.email.verify(sub, exp),
+    };
+    const second = await executeWithJournal({
+      dir: d,
+      provider: railB,
+      req: reqFor(chainId, digest),
+      redemption,
+      nowSec: NOW,
+      at: NOW,
+    });
+    assert.notEqual(second.transaction, first.transaction);
+    assert.equal(fakes.email.calls.length, 2);
+  });
+
   it("reconcile absent retries with the SAME idempotency key, then succeeds", async () => {
     const d = dir();
     const { principal, recipient, caps } = setup();
