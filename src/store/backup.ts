@@ -9,7 +9,13 @@ import {
 import { join, relative, resolve } from "node:path";
 import { checkpoint } from "./anchor.js";
 import { gcChallenges } from "./challenges.js";
-import { FileAuditLog, loadAuthority, loadRegistry } from "./files.js";
+import {
+  FileAuditLog,
+  checkFreshness,
+  loadAuthority,
+  loadRegistry,
+} from "./files.js";
+import { loadAgents } from "./agents.js";
 import { loadVault } from "./vault.js";
 
 /**
@@ -17,7 +23,9 @@ import { loadVault } from "./vault.js";
  *
  * A store is backed up and restored as ONE unit — authority.json,
  * registry.json, personal-state.json + keystore.json + audit.jsonl when
- * present, plus the proposals/ directory — never merged across vintages.
+ * present, agents.json + nonces.json when present, plus the proposals/
+ * and executions/ directories and the ptf.sqlite family (db + wal + shm)
+ * when present — never merged across vintages.
  * Every backup carries an `anchor.json` checkpoint (Merkle root + line
  * count over audit.jsonl); restore recomputes it and refuses mismatch, so
  * partial rollbacks, mixed vintages, and tamper are caught. Honest scope:
@@ -41,6 +49,15 @@ const STORE_FILES = [
   "personal-state.json",
   "keystore.json",
   "audit.jsonl",
+  "agents.json",
+  "nonces.json",
+] as const;
+
+/** SQLite family: all three travel together or the copy is incoherent. */
+const SQLITE_FILES = [
+  "ptf.sqlite",
+  "ptf.sqlite-wal",
+  "ptf.sqlite-shm",
 ] as const;
 
 function isNonEmptyDir(path: string): boolean {
@@ -76,6 +93,7 @@ export interface BackupSummary {
   readonly destDir: string;
   readonly files: readonly string[];
   readonly proposals: number;
+  readonly executions: number;
   readonly anchor: { readonly root: string; readonly count: number };
 }
 
@@ -135,6 +153,26 @@ export function backupStore(
       proposals = 0;
     }
   }
+  let executions = 0;
+  if (existsSync(join(srcDir, "executions"))) {
+    cpSync(join(srcDir, "executions"), join(destDir, "executions"), {
+      recursive: true,
+    });
+    try {
+      executions = readdirSync(join(destDir, "executions")).filter((n) =>
+        n.endsWith(".json")
+      ).length;
+    } catch {
+      executions = 0;
+    }
+  }
+  for (const name of SQLITE_FILES) {
+    const from = join(srcDir, name);
+    if (existsSync(from)) {
+      writeFileSync(join(destDir, name), readFileSync(from), { mode: 0o600 });
+      files.push(name);
+    }
+  }
   // Validate the chain before checkpointing: never anchor a broken log.
   if (existsSync(join(srcDir, "audit.jsonl"))) {
     FileAuditLog.open(join(srcDir, "audit.jsonl"), now);
@@ -144,7 +182,7 @@ export function backupStore(
   writeFileSync(join(destDir, "anchor.json"), `${JSON.stringify(anchor)}\n`, {
     mode: 0o600,
   });
-  return { destDir, files, proposals, anchor };
+  return { destDir, files, proposals, executions, anchor };
 }
 
 export interface RestoreSummary {
@@ -189,6 +227,19 @@ export function restoreStore(
     });
     files.push("proposals/");
   }
+  if (existsSync(join(backupDir, "executions"))) {
+    cpSync(join(backupDir, "executions"), join(destDir, "executions"), {
+      recursive: true,
+    });
+    files.push("executions/");
+  }
+  for (const name of SQLITE_FILES) {
+    const from = join(backupDir, name);
+    if (existsSync(from)) {
+      writeFileSync(join(destDir, name), readFileSync(from), { mode: 0o600 });
+      files.push(name);
+    }
+  }
   // Verify the restored unit: chain valid, stores load (freshness enforced
   // by the loaders — mixed vintages fail closed here), vault needs keys.
   const audit = FileAuditLog.open(join(destDir, "audit.jsonl"), now);
@@ -197,6 +248,10 @@ export function restoreStore(
   }
   loadAuthority(destDir, { nowSec: now });
   loadRegistry(destDir, now);
+  if (existsSync(join(destDir, "agents.json"))) {
+    const restoredAgents = loadAgents(destDir);
+    checkFreshness(destDir, "agents", restoredAgents.loadedRevision());
+  }
   if (existsSync(join(destDir, "personal-state.json"))) {
     if (opts.keys === undefined) {
       throw new Error(

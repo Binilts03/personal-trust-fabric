@@ -7,7 +7,18 @@ permalink: /mcp-contract/
 
 # MCP Contract
 
-The server speaks for **ONE fixed identity pinned at startup** — tool schemas carry no identity fields, so callers can never self-certify.
+Two ingress modes, one invariant: verified identity binds the actor —
+request JSON never carries identity (ADR-0013, ADR-0023).
+
+- **Fixed mode** (no `agents.json` in the store): the server speaks for
+  **ONE fixed identity pinned at startup** — tool schemas carry no
+  identity fields, so callers can never self-certify.
+- **Registry mode** (`agents.json` present): every evaluation binds a
+  registry member. A launcher-asserted `PTF_MCP_ACTOR` must be registered
+  - active (rechecked from disk per tool call); otherwise the session
+    starts unauthenticated and `ptf_authenticate` (challenge → registry-key
+    signature → bound session) is required first. Keyless entries cover
+    plain LLM clients via launcher assertion + membership check.
 
 ## Server Config
 
@@ -35,6 +46,7 @@ The server speaks for **ONE fixed identity pinned at startup** — tool schemas 
 
 | Tool                    | Purpose                                                 | Consumes Authority? |
 | ----------------------- | ------------------------------------------------------- | ------------------- |
+| `ptf_authenticate`      | Registry mode: challenge, then signature-bound session  | No                  |
 | `ptf_propose`           | Dry-run: exact terms + digest                           | No (CHECK)          |
 | `ptf_check`             | Status of a proposal                                    | No                  |
 | `ptf_redeem`            | `/pay` challenge → proof → receipt                      | **Yes** (REDEEM)    |
@@ -53,7 +65,11 @@ See `examples/vault-protected-action.mjs` and `examples/mcp-client-config.json`.
 
 ## Identity Pinning
 
-- `PTF_MCP_PRINCIPAL` — the human (DID)
-- `PTF_MCP_ACTOR` — the agent (DID)
+- `PTF_MCP_PRINCIPAL` — the human (DID), always required
+- `PTF_MCP_ACTOR` — the agent (DID): required in fixed mode; optional in
+  registry mode (unset → `ptf_authenticate` session required)
 - Both verified OUT-OF-BAND by host — never from request body
+- Registry members are operator-managed (`ptf agent --register/--remove/
+--rotate/--list`); removal and rotation take effect on the next tool
+  call; `ptf_authenticate` challenges are single-use, 120s TTL, in-memory
 - Server rejects any tool call with mismatched identity
