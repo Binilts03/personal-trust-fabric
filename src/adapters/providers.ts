@@ -14,6 +14,18 @@ import type { FileAuditLog } from "../store/files.js";
 import { loadAuthority, saveAuthority } from "../store/files.js";
 import type { SecretInstruction, VaultStore } from "../store/vault.js";
 import { useCredential } from "../store/vault.js";
+import {
+  AmbiguousExecutionError,
+  ExecutionError,
+  assertExternalRef,
+  createExecution,
+  deriveIdempotencyKey,
+  findByIdempotencyKey,
+  isTerminal,
+  loadExecution,
+  transitionExecution,
+  type ExecutionRecord,
+} from "../store/execution.js";
 
 /**
  * Protected provider seam (P0 slice 3).
@@ -598,4 +610,292 @@ export async function executeProtectedAction(opts: {
     throw new Error("provider: orchestrator produced no receipt");
   }
   return captured;
+}
+
+/**
+ * Provider outcome query for reconcile (ADR-0021): implemented by the host
+ * rail (order lookup by idempotency key, receipt poll, ledger read). Fakes
+ * in tests. "effected" carries the external ref as evidence; "absent"
+ * permits exactly one safe retry with the same key; "unknown" quarantines.
+ */
+export interface ExecutionQuery {
+  query(input: {
+    readonly idempotencyKey: string;
+    readonly capabilityId: string;
+    readonly termsDigest: string;
+  }): Promise<
+    | { readonly state: "effected"; readonly externalRef: string }
+    | { readonly state: "absent" }
+    | { readonly state: "unknown" }
+  >;
+}
+
+function receiptFromRecord(rec: ExecutionRecord): ExecutionReceipt {
+  if (
+    rec.state !== "SUCCEEDED" ||
+    rec.receiptId === undefined ||
+    rec.receiptAt === undefined ||
+    rec.externalRef === undefined
+  ) {
+    throw new ExecutionError("journal: no succeeded receipt to return");
+  }
+  return {
+    receiptId: rec.receiptId,
+    capabilityId: rec.capabilityId,
+    recipient: rec.recipient,
+    resource: rec.resource,
+    purpose: rec.purpose,
+    transaction: rec.externalRef,
+    at: rec.receiptAt,
+    termsDigest: rec.termsDigest,
+  };
+}
+
+/**
+ * Journaled protected execution (ADR-0021, roadmap G3): every effectful run
+ * persists an execution record before the provider call and reconciles
+ * unknown outcomes via provider query instead of blind retry.
+ *
+ * Re-entrant by idempotency key: re-running identical terms returns the
+ * stored SUCCEEDED receipt without touching the provider; FAILED_FINAL /
+ * RECONCILED re-runs throw without touching the provider. Resume of an
+ * unknown outcome REQUIRES the query result — without it, throws
+ * `reconcile required` rather than guessing. Retries after a confirmed
+ * absent outcome reuse the SAME derived key (budget fixed at create, then
+ * quarantine). Authority consumption persistence stays the caller's duty
+ * (see executeProtectedAction); the journal covers outcome safety. Note on
+ * naming: journal AUTHORIZED means "validated redemption, cleared to
+ * submit" — it is NOT the authority burn itself.
+ */
+export async function executeWithJournal(opts: {
+  readonly dir: string;
+  readonly provider: ProtectedProvider;
+  readonly req: ProviderRequest;
+  readonly redemption: Redemption;
+  readonly query?: ExecutionQuery;
+  readonly maxAttempts?: number;
+  readonly nowSec?: number;
+  readonly at?: number;
+}): Promise<ExecutionReceipt> {
+  const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
+  const at = opts.at ?? nowSec;
+  checkRequest(opts.req);
+  const op = requireRedemption(opts.redemption);
+  if (opts.redemption.chainId !== opts.req.capabilityId) {
+    throw new Error("provider: redemption is not bound to this request");
+  }
+  authorizedTermsCover(op, opts.req);
+  // Derived, never caller-supplied: same authorized terms always map to
+  // the same key, so no caller can fork two effects from one terms set.
+  const key = deriveIdempotencyKey(
+    opts.req.termsDigest,
+    opts.redemption.chainId
+  );
+
+  let rec = findByIdempotencyKey(opts.dir, key);
+  if (rec !== null) {
+    if (rec.state === "SUCCEEDED") return receiptFromRecord(rec);
+    if (rec.state === "FAILED_FINAL") {
+      throw new ExecutionError(
+        "journal: execution already failed — new terms required"
+      );
+    }
+    if (rec.state === "RECONCILED") {
+      throw new AmbiguousExecutionError(
+        rec.executionId,
+        "journal: execution quarantined — manual reconciliation required"
+      );
+    }
+    // Resume a live record from disk (fresh handle, never a stale copy).
+    rec = loadExecution(opts.dir, rec.executionId);
+  } else {
+    rec = createExecution(
+      opts.dir,
+      {
+        idempotencyKey: key,
+        capabilityId: opts.redemption.chainId,
+        termsDigest: opts.req.termsDigest,
+        action: opts.req.action,
+        recipient: opts.req.recipient,
+        resource: opts.req.resource,
+        purpose: opts.req.purpose,
+        context: opts.req.context,
+        ...(opts.maxAttempts !== undefined
+          ? { maxAttempts: opts.maxAttempts }
+          : {}),
+      },
+      nowSec
+    );
+  }
+
+  if (rec.state === "PREPARED") {
+    rec = transitionExecution(
+      opts.dir,
+      rec.executionId,
+      "AUTHORIZED",
+      {},
+      nowSec
+    );
+  }
+  if (rec.state === "SUBMITTING") {
+    // Crash leftover: the provider may have been called with no persisted
+    // result. Normalize to unknown before any further step.
+    rec = transitionExecution(
+      opts.dir,
+      rec.executionId,
+      "SUBMITTED_UNKNOWN",
+      { lastError: "resume found submitting record: effect unknown" },
+      nowSec
+    );
+  }
+  if (rec.state === "SUBMITTED_UNKNOWN") {
+    if (opts.query === undefined) {
+      throw new AmbiguousExecutionError(
+        rec.executionId,
+        "journal: reconcile required — unknown outcome, query missing"
+      );
+    }
+    const outcome = await opts.query.query({
+      idempotencyKey: key,
+      capabilityId: opts.redemption.chainId,
+      termsDigest: opts.req.termsDigest,
+    });
+    if (outcome.state === "effected") {
+      let externalRef: string;
+      try {
+        externalRef = assertExternalRef(outcome.externalRef);
+      } catch {
+        throw new ExecutionError("journal: query returned malformed ref");
+      }
+      rec = transitionExecution(
+        opts.dir,
+        rec.executionId,
+        "SUCCEEDED",
+        {
+          externalRef,
+          receiptId: `rcpt-${randomHex(8)}`,
+          receiptAt: at,
+        },
+        nowSec
+      );
+      return receiptFromRecord(rec);
+    }
+    if (outcome.state === "unknown") {
+      rec = transitionExecution(
+        opts.dir,
+        rec.executionId,
+        "RECONCILED",
+        {
+          lastError: "reconcile: provider state unknowable",
+          reconciledAt: nowSec,
+        },
+        nowSec
+      );
+      throw new AmbiguousExecutionError(
+        rec.executionId,
+        "journal: execution quarantined — manual reconciliation required"
+      );
+    }
+    // Confirmed absent: exactly one safe retry, same key, budget fixed
+    // at create (resume cannot re-arm it).
+    if (rec.attempts >= rec.maxAttempts) {
+      rec = transitionExecution(
+        opts.dir,
+        rec.executionId,
+        "RECONCILED",
+        {
+          lastError: "reconcile: attempt budget exhausted",
+          reconciledAt: nowSec,
+        },
+        nowSec
+      );
+      throw new AmbiguousExecutionError(
+        rec.executionId,
+        "journal: execution quarantined — manual reconciliation required"
+      );
+    }
+    // Fall through to submit below with the same key.
+  }
+  if (isTerminal(rec)) {
+    throw new ExecutionError("journal: unexpected terminal record on resume");
+  }
+
+  rec = transitionExecution(
+    opts.dir,
+    rec.executionId,
+    "SUBMITTING",
+    {},
+    nowSec
+  );
+  const reqWithKey: ProviderRequest = {
+    ...opts.req,
+    metadata: { ...(opts.req.metadata ?? {}), idempotencyKey: key },
+  };
+  let sub: ProviderSubmission;
+  try {
+    sub = await opts.provider.submit(reqWithKey);
+  } catch {
+    // Ambiguous: the call may or may not have taken effect server-side.
+    // Persist unknown and surface the execution id — the caller reconciles,
+    // never blind-retries. Fixed vocabulary: provider detail stays out.
+    rec = transitionExecution(
+      opts.dir,
+      rec.executionId,
+      "SUBMITTED_UNKNOWN",
+      { lastError: "provider submission failed ambiguously" },
+      nowSec
+    );
+    throw new AmbiguousExecutionError(
+      rec.executionId,
+      "journal: submission outcome unknown — reconcile required"
+    );
+  }
+  const checked = opts.provider.verify(sub, {
+    capabilityId: opts.req.capabilityId,
+    termsDigest: opts.req.termsDigest,
+  });
+  if (!checked.ok) {
+    // Attestation failure is NOT proof of no-effect: the rail may have
+    // executed and only the confirmation is bad. Route to reconcile
+    // (query decides), never to a terminal failure that would hide the ref.
+    rec = transitionExecution(
+      opts.dir,
+      rec.executionId,
+      "SUBMITTED_UNKNOWN",
+      { lastError: "provider attestation failed" },
+      nowSec
+    );
+    throw new AmbiguousExecutionError(
+      rec.executionId,
+      "journal: submission unverified — reconcile required"
+    );
+  }
+  let externalRef: string;
+  try {
+    externalRef = assertExternalRef(sub.externalRef);
+  } catch {
+    rec = transitionExecution(
+      opts.dir,
+      rec.executionId,
+      "SUBMITTED_UNKNOWN",
+      { lastError: "provider returned malformed ref" },
+      nowSec
+    );
+    throw new AmbiguousExecutionError(
+      rec.executionId,
+      "journal: submission unverified — reconcile required"
+    );
+  }
+  rec = transitionExecution(
+    opts.dir,
+    rec.executionId,
+    "SUCCEEDED",
+    {
+      externalRef,
+      receiptId: `rcpt-${randomHex(8)}`,
+      receiptAt: at,
+    },
+    nowSec
+  );
+  return receiptFromRecord(rec);
 }

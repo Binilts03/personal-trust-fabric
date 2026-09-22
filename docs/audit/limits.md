@@ -30,6 +30,19 @@ tested at the boundary.
   persist and execute burns a use without a receipt (safe direction: the
   retry denies `uses-exhausted`, it never double-spends). Redeem
   immediately before executing all the same; live rails stay host duty.
+  The journaled path (`executeWithJournal`, ADR-0021) keeps the burn but
+  records the outcome lifecycle (`PREPARED → … → SUCCEEDED /
+SUBMITTED_UNKNOWN / RECONCILED`) with derived idempotency keys and
+  query-first reconcile instead of blind retry; attestation failures
+  route to reconcile (an effected rail with a bad confirmation must not
+  hide behind a terminal state). Journal ceilings: one file per
+  execution, no GC (archive with backups); O(n) key lookup (indexed
+  backends await the Phase-4 decision); single-writer topology —
+  cross-process same-key races and read-then-write transitions rely on
+  the single-writer backstop; `RECONCILED` needs a host provider query
+  plus manual completion; `metadata` idempotency carriage and context
+  secret-freedom stay host-reviewed conventions like the rest of the
+  provider seam.
 - Exact-operation binding (ADR-0018): `authorize` echoes the verified
   demand and every execute path deep-compares its instruction against the
   echo — bare `{ok, chainId}` redemptions fail closed, as does any mutated
