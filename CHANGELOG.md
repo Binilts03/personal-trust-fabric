@@ -13,6 +13,17 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- P3P review hardening: challenge expiry is now digest-bound
+  (`p3pExpiresAt` in operation context) and re-enforced at demand mapping
+  and receipt verification; adapter error strings and receipt failure
+  reasons use fixed vocabulary (no caller-input echo, no exception-text
+  sink); canaries extended to mutate-after-CHECK authorize denials and a
+  full redeem→receipt→audit round-trip scanned for sentinels; Research
+  navigation fully removed (page stays unlisted); host reference
+  `examples/p3p-sandbox-host.mjs` verified against the real
+  `p3p-client-sdk@1.3.0` shapes plus manual runbook
+  `docs/audit/p3p-sandbox.md`; `docs` CI job now a required branch
+  protection check alongside `gate`/`secrets`.
 - P3P evidence-only adapter (ADR-0020, Phase 2): `src/adapters/p3p.ts`
   normalizes SDK-decoded challenges (paise amounts, route-path resources,
   `RESERVE_PAY`/`OTM`/`CARD`), maps them to identity-free `/pay` demands

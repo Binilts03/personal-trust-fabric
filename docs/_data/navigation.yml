@@ -25,5 +25,3 @@ main:
         url: /audit/verify/
       - title: Threats
         url: /audit/threats/
-  - title: Research
-    url: /research/

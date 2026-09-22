@@ -18,14 +18,18 @@ import { isRecord, reqString } from "./guards.js";
  * - It verifies a `Payment-Receipt` against the authorized operation.
  * - It NEVER touches provider credentials: no `PINELABS_CLIENT_SECRET`,
  *   Grantex API key, grant token, one-time payment token, PAN, or UPI
- *   credential appears in any input, output, receipt, or error string.
- *   Credential creation and capture live behind `P3pProtectedExecutor`
- *   (host duty, official Pine Labs SDK, trusted environment only).
+ *   credential appears in any input, output, receipt, or error string
+ *   (error strings never echo caller input). Credential creation and
+ *   capture live behind `P3pProtectedExecutor` (host duty, official Pine
+ *   Labs SDK, trusted environment only).
  *
- * Challenge-id + method binding: `p3pChallengeId` and `p3pMethod` ride in
- * the operation context, so the PTF-derived terms digest covers them —
- * a swapped challenge or method fails closed on terms at evaluate/redeem
- * time. Execution itself uses the fixed-field `PaymentInstruction`
+ * Challenge-id + method + expiry binding: `p3pChallengeId`, `p3pMethod`,
+ * and `p3pExpiresAt` ride in the operation context, so the PTF-derived
+ * terms digest covers them — a swapped challenge, method, or expiry fails
+ * closed on terms at evaluate/redeem time. `toP3pPaymentDemand` additionally
+ * re-checks challenge expiry at mapping time (a challenge that expires
+ * between normalize and redeem is refused even though normalize passed
+ * earlier), and `verifyP3pReceipt` enforces the same bound on receipts.
  * (recipient/amount/currency/resource/purpose/termsDigest); the digest
  * transitively binds the P3P fields.
  *
@@ -54,15 +58,15 @@ function isMethod(v: unknown): v is P3pPaymentMethod {
 export function parsePaiseAmount(raw: unknown): number {
   if (typeof raw === "number") {
     if (!Number.isSafeInteger(raw) || raw <= 0)
-      throw new P3pError(`amount out of safe range: ${String(raw)}`);
+      throw new P3pError("amount out of safe range");
     return raw;
   }
   if (typeof raw === "string") {
     if (!/^\d+$/.test(raw))
-      throw new P3pError(`amount must be a paise integer, got ${raw}`);
+      throw new P3pError("amount must be a paise integer");
     const n = Number(raw);
     if (!Number.isSafeInteger(n) || n <= 0)
-      throw new P3pError(`amount out of safe range: ${raw}`);
+      throw new P3pError("amount out of safe range");
     return n;
   }
   throw new P3pError("amount must be a paise integer");
@@ -128,8 +132,7 @@ export function normalizeP3pChallenge(
   if (!Array.isArray(methods) || methods.length === 0)
     throw new P3pError("paymentMethods must be non-empty");
   for (const m of methods) {
-    if (!isMethod(m))
-      throw new P3pError(`unsupported payment method: ${String(m)}`);
+    if (!isMethod(m)) throw new P3pError("unsupported payment method");
   }
   return {
     challengeId,
@@ -159,10 +162,14 @@ export interface P3pDemandContext {
  * One normalized challenge → identity-free PTF operation + capability args.
  * Still evidence: must pass Authority + Capabilities under the host's
  * verified ingress. Identity comes from ingress (ADR-0013), never here.
+ * Re-checks challenge expiry at mapping time: a challenge that expires
+ * between normalize and redeem is refused here even though the earlier
+ * normalize passed.
  */
 export function toP3pPaymentDemand(
   challenge: P3pChallenge,
-  ctx: P3pDemandContext
+  ctx: P3pDemandContext,
+  opts: { readonly nowSec?: number } = {}
 ): {
   readonly operation: AuthorityOperation;
   readonly capabilityArgs: {
@@ -172,6 +179,8 @@ export function toP3pPaymentDemand(
     readonly p3pMethod: P3pPaymentMethod;
   };
 } {
+  const now = opts.nowSec ?? Math.floor(Date.now() / 1000);
+  if (challenge.expiresAt <= now) throw new P3pError("challenge expired");
   if (
     ctx.expectedResourcePath !== undefined &&
     ctx.resource !== ctx.expectedResourcePath
@@ -205,6 +214,7 @@ export function toP3pPaymentDemand(
       currency: ctx.currency,
       p3pChallengeId: challenge.challengeId,
       p3pMethod: method,
+      p3pExpiresAt: challenge.expiresAt,
     },
     purpose: ctx.purpose,
   };
@@ -234,7 +244,10 @@ export interface P3pReceipt {
  * Verify a `Payment-Receipt` against the authorized operation. Any binding
  * mismatch fails closed; replay within the caller-supplied seen-set fails
  * closed (`seenChallengeIds` is host-owned, same duty as verifier nonces).
- * Unknown receipt fields are never trusted and never echoed.
+ * Unknown receipt fields are never trusted and never echoed — including
+ * `errorReason`, which maps to a fixed reason so provider detail cannot
+ * leak into exception text. Where `expected.expiresAt` is supplied, a
+ * receipt for an expired challenge fails closed as well.
  */
 export function verifyP3pReceipt(
   receipt: unknown,
@@ -244,6 +257,7 @@ export function verifyP3pReceipt(
     readonly resource: string;
     readonly merchant: string;
     readonly challengeId: string;
+    readonly expiresAt?: number;
   },
   opts: {
     readonly nowSec?: number;
@@ -254,14 +268,7 @@ export function verifyP3pReceipt(
 ): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
   if (!isRecord(receipt)) return { ok: false, reason: "malformed receipt" };
   if (receipt["success"] !== true)
-    return {
-      ok: false,
-      reason:
-        typeof receipt["errorReason"] === "string" &&
-        receipt["errorReason"].length > 0
-          ? receipt["errorReason"]
-          : "receipt reports failure",
-    };
+    return { ok: false, reason: "receipt reports failure" };
   const transactionId = receipt["transactionId"];
   if (typeof transactionId !== "string" || transactionId.length === 0)
     return { ok: false, reason: "missing transaction" };
@@ -281,6 +288,11 @@ export function verifyP3pReceipt(
     return { ok: false, reason: "merchant mismatch" };
   if (receipt["challengeId"] !== expected.challengeId)
     return { ok: false, reason: "challenge mismatch" };
+  if (expected.expiresAt !== undefined) {
+    const now = opts.nowSec ?? Math.floor(Date.now() / 1000);
+    if (!Number.isInteger(expected.expiresAt) || now > expected.expiresAt)
+      return { ok: false, reason: "challenge expired" };
+  }
   if (opts.capturedAt !== undefined && opts.maxReceiptAgeSec !== undefined) {
     const now = opts.nowSec ?? Math.floor(Date.now() / 1000);
     if (
