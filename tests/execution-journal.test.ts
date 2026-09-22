@@ -670,6 +670,17 @@ describe("durable execution journal (phase 3)", () => {
     assert.equal(isTerminal(ok), false);
     assert.throws(() => loadExecution(d, "00".repeat(16)), /unknown execution/);
     assert.throws(() => loadExecution(d, "zz"));
+    // Validation parity with the SQLite backend: non-string notes and
+    // unknown abort reasons throw on both.
+    transitionExecution(d, rec.executionId, "SUBMITTING", {}, NOW);
+    assert.throws(() =>
+      transitionExecution(d, rec.executionId, "SUBMITTED_UNKNOWN", {
+        lastError: 123 as never,
+      })
+    );
+    assert.throws(() =>
+      abortExecution(d, rec.executionId, "bogus" as never, NOW)
+    );
     // Creation is idempotent on the key: same terms return the record.
     const same = createExecution(
       d,

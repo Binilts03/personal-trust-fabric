@@ -13,6 +13,15 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Transactional persistence decision (ADR-0022, Phase 4):
+  `src/store/repositories.ts` (Authority/Proposal/Execution/Replay/Audit
+  seams, file behavior as the shape contract) plus a bounded SQLite WAL
+  experiment for the execution journal (`src/store/sqlite.ts`, built-in
+  `node:sqlite`, no new dependency): conditional-UPDATE transitions,
+  transactional file→SQLite migration and staged SQLite→file export
+  (sources never deleted), parity suite running journal behavior against
+  both backends; file stays the default, SQLite opt-in; adversarial
+  review findings fixed before merge.
 - Durable execution journal (ADR-0021, Phase 3): `src/store/execution.ts`
   (file-per-execution records, strict transition map, derived
   idempotency keys, key-idempotent create, persisted retry budget,
