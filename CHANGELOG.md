@@ -13,6 +13,15 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Execution/authority crash integration (review High finding):
+  `ptf_redeem` routes through `executeWithJournal` keyed on
+  proposal-anchored identity (`termsDigest` + provider scope, surviving
+  remints); crash between provider effect and proposal transition
+  reconciles to the same receipt instead of resubmitting (proven by a
+  red-then-green crash matrix incl. SIGKILL restart and revoke-remint
+  deny); reconcile adoption passes provider attestation; reconcile
+  queries are read-only by contract (one submit + N queries); journal
+  capped at 5000 records with named repair.
 - Authenticated multi-agent ingress (ADR-0023, Phase 5): operator-managed
   agent registry (`agents.json`, CAS-guarded, `ptf agent` CLI) plus
   claimant-bound challenge/response session proof (`ptf_authenticate`

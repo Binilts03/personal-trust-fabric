@@ -326,6 +326,74 @@ export function providerAsExecutor(
 }
 
 /**
+ * Adapt a `PaymentExecutor` (the MCP server's rail seam) to a
+ * `ProtectedProvider` so journaled execution can run over it. Mirror image
+ * of `providerAsExecutor`: builds the payment instruction from the exact
+ * request terms and binds the returned transaction as the external ref.
+ * Receipts stay secret-free by construction (fixed fields only).
+ */
+export function executorAsProvider(
+  executor: PaymentExecutor,
+  kind: ProviderKind,
+  nowSec: () => number = () => Math.floor(Date.now() / 1000)
+): ProtectedProvider {
+  return {
+    kind,
+    async submit(req: ProviderRequest): Promise<ProviderSubmission> {
+      checkRequest(req);
+      const context = req.context as Record<string, unknown>;
+      const amount: unknown = context["amount"];
+      const currency: unknown = context["currency"];
+      if (
+        typeof amount !== "number" ||
+        !Number.isFinite(amount) ||
+        amount < 0
+      ) {
+        throw new Error(
+          "provider: executor needs context.amount as a non-negative finite number"
+        );
+      }
+      if (typeof currency !== "string" || currency.length === 0) {
+        throw new Error(
+          "provider: executor needs context.currency as a non-empty string"
+        );
+      }
+      const settled = await executor.executePayment({
+        capabilityId: req.capabilityId,
+        recipient: req.recipient,
+        amount,
+        currency,
+        resource: req.resource,
+        purpose: req.purpose,
+        termsDigest: req.termsDigest,
+      });
+      return {
+        kind,
+        capabilityId: req.capabilityId,
+        termsDigest: req.termsDigest,
+        externalRef: settled.transaction,
+        at: nowSec(),
+      };
+    },
+    verify(
+      sub: ProviderSubmission,
+      expected: { readonly capabilityId: string; readonly termsDigest: string }
+    ): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
+      if (typeof sub !== "object" || sub === null)
+        return { ok: false, reason: "malformed submission" };
+      if (sub.kind !== kind) return { ok: false, reason: "kind mismatch" };
+      if (sub.capabilityId !== expected.capabilityId)
+        return { ok: false, reason: "capability mismatch" };
+      if (sub.termsDigest !== expected.termsDigest)
+        return { ok: false, reason: "terms mismatch" };
+      if (!isNonEmptyString(sub.externalRef))
+        return { ok: false, reason: "missing externalRef" };
+      return { ok: true };
+    },
+  };
+}
+
+/**
  * Domain-neutral provider execution (ADR-0018): any authorized action runs
  * here and returns an `ExecutionReceipt` with no payment-shaped fields —
  * email needs no amount, identity needs no currency. Payment flows keep
@@ -689,12 +757,11 @@ export async function executeWithJournal(opts: {
     throw new Error("provider: redemption is not bound to this request");
   }
   authorizedTermsCover(op, opts.req);
-  // Derived, never caller-supplied: same authorized terms always map to
-  // the same key, so no caller can fork two effects from one terms set.
-  const key = deriveIdempotencyKey(
-    opts.req.termsDigest,
-    opts.redemption.chainId
-  );
+  // Derived, never caller-supplied: same authorized terms in the same
+  // provider scope always map to the same key, so no caller can fork two
+  // effects from one terms set — and a reminted capability reconciles
+  // instead of forking.
+  const key = deriveIdempotencyKey(opts.req.termsDigest, opts.provider.kind);
 
   let rec = J.findByIdempotencyKey(opts.dir, key);
   if (rec !== null) {
@@ -764,6 +831,38 @@ export async function executeWithJournal(opts: {
         externalRef = assertExternalRef(outcome.externalRef);
       } catch {
         throw new ExecutionError("journal: query returned malformed ref");
+      }
+      // A claimed effect is still evidence, not authority: run the same
+      // provider attestation as the submit path before adopting the ref.
+      // A rail that confirms effects it never made quarantines instead.
+      const attested = opts.provider.verify(
+        {
+          kind: opts.provider.kind,
+          capabilityId: opts.redemption.chainId,
+          termsDigest: opts.req.termsDigest,
+          externalRef,
+          at,
+        },
+        {
+          capabilityId: opts.redemption.chainId,
+          termsDigest: opts.req.termsDigest,
+        }
+      );
+      if (!attested.ok) {
+        rec = J.transition(
+          opts.dir,
+          rec.executionId,
+          "RECONCILED",
+          {
+            lastError: "reconcile: provider attestation failed",
+            reconciledAt: nowSec,
+          },
+          nowSec
+        );
+        throw new AmbiguousExecutionError(
+          rec.executionId,
+          "journal: execution quarantined — manual reconciliation required"
+        );
       }
       rec = J.transition(
         opts.dir,

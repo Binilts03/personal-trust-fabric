@@ -13,6 +13,16 @@ import { randomHex } from "../core/crypto.js";
 import { atomicWrite } from "./files.js";
 
 /**
+ * Cap on journal records per store (mirrors the 1000-file proposal
+ * anti-fill bound, scaled for receipt history). Minting a record requires
+ * passing authority gates first, but unlimited-use grants could still
+ * grow the journal without bound — fail closed with a named repair
+ * (back up, then prune terminal records only after revoking or expiring
+ * the underlying authority, so pruned terms can never be re-authorized).
+ */
+export const MAX_EXECUTION_RECORDS = 5000;
+
+/**
  * Durable execution journal (ADR-0021, roadmap G3).
  *
  * Crash semantics before this journal: authority consumption persisted
@@ -112,19 +122,21 @@ function pathOf(storeDir: string, executionId: string): string {
 }
 
 /**
- * Deterministic provider idempotency key for one authorized terms set.
- * Full digests, no truncation: same (termsDigest, capabilityId) → same key
- * across retries and replays; different terms → different key.
+ * Deterministic provider idempotency key for one authorized terms set in
+ * one provider scope. Same (termsDigest, scope) → same key across retries,
+ * replays, and capability remints; different terms or scopes → different
+ * keys. Capability identity is deliberately NOT part of the key (a remint
+ * must reconcile, never fork); it stays in the record as binding evidence.
  */
 export function deriveIdempotencyKey(
   termsDigest: string,
-  capabilityId: string
+  scope: string
 ): string {
   if (!/^[0-9a-f]{16,128}$/.test(termsDigest))
     throw new ExecutionError("malformed termsDigest");
-  if (!/^[0-9a-f]{16,128}$/.test(capabilityId))
-    throw new ExecutionError("malformed capabilityId");
-  return `ptf-${termsDigest}-${capabilityId}`;
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(scope))
+    throw new ExecutionError("malformed scope");
+  return `ptf-${termsDigest}-${scope}`;
 }
 
 /** External refs are provider-controlled evidence: bounded, non-empty. */
@@ -236,6 +248,15 @@ export function createExecution(
   mkdirSync(dirOf(storeDir), { recursive: true });
   const byKey = findByIdempotencyKey(storeDir, input.idempotencyKey);
   if (byKey !== null) return byKey;
+  let count = 0;
+  for (const name of readdirSync(dirOf(storeDir))) {
+    if (name.endsWith(".json") && !name.includes(".tmp-")) count += 1;
+  }
+  if (count >= MAX_EXECUTION_RECORDS) {
+    throw new ExecutionError(
+      "journal full: back up the store, then prune terminal records only after revoking or expiring the underlying authority"
+    );
+  }
   const record: ExecutionRecord = {
     executionId,
     idempotencyKey: input.idempotencyKey,

@@ -38,9 +38,12 @@ is validated; SUBMITTING persists BEFORE the provider call.)
 
 - **Identity**: every effectful run gets `executionId` (`randomHex(16)`,
   32 hex chars, one file `executions/<id>.json`) plus a deterministic
-  `providerIdempotencyKey` derived from the FULL `(termsDigest,
-capabilityId)` — never caller-supplied, so one terms set cannot fork two
-  keys. Stable across retries of the same authorized terms.
+  `providerIdempotencyKey` derived from `(termsDigest, provider scope)` —
+  never caller-supplied and deliberately NOT bound to the capability id,
+  so a reminted capability for the same proposal reconciles instead of
+  forking a second key. The capability id stays in the record as binding
+  evidence only. Stable across retries, replays, and remints of the same
+  authorized terms; different provider scopes get different keys.
 - **Submit path**: `AUTHORIZED → SUBMITTING` (attempts+1, durable) →
   provider call carrying the idempotency key in the non-effectful
   `metadata` bag → provider `verify` → `SUCCEEDED` (external ref +
@@ -50,17 +53,33 @@ capabilityId)` — never caller-supplied, so one terms set cannot fork two
   reconciles rather than hiding behind a terminal state. `FAILED_FINAL`
   is reserved for explicit host abort (freeze/cancel of pending records).
   No receipt exists unless `SUCCEEDED` persisted.
+- **MCP integration**: `ptf_redeem` routes through `executeWithJournal`
+  (via `executorAsProvider`), so the proposal lifecycle and the journal
+  share one execution identity keyed on the proposal terms. A crash
+  between provider effect and proposal transition recovers to the SAME
+  receipt on remint — no second submission. The `/pay` receipt projects
+  the exact authorized amount/currency onto the journal receipt (verified
+  equal, never invented).
 - **Restart path**: leftover `SUBMITTING` records are crash evidence, so
   recovery marks them `SUBMITTED_UNKNOWN` first. Reconcile queries the
-  provider by idempotency key: effect confirmed → `SUCCEEDED`; absent →
+  provider by idempotency key: effect confirmed AND provider-attested →
+  `SUCCEEDED` (attestation runs on adopted refs too — a rail that
+  confirms effects it never made quarantines instead); absent →
   back to `SUBMITTING` for exactly one safe retry with the SAME key
   (attempt budget fixed at create — resume cannot re-arm it — then
   `RECONCILED`); unknowable → `RECONCILED` quarantine for manual
   reconciliation. **Never blind-retry**: resume without a query result
-  throws `reconcile required`.
+  throws `reconcile required`. Reconcile queries MUST be read-only;
+  crash-replay issues one submit plus N queries, never two submits.
 - **Idempotent replay**: re-running identical terms returns the stored
   `SUCCEEDED` receipt without touching the provider; re-running
   `FAILED_FINAL`/`RECONCILED` throws without touching the provider.
+- **Growth bound**: at most `MAX_EXECUTION_RECORDS` (5000) records per
+  store — minting requires passing authority gates, but unlimited-use
+  grants could still grow the journal without bound, so creation fails
+  closed with a named repair (back up, then prune terminal records only
+  after revoking or expiring the underlying authority, so pruned terms
+  can never be re-authorized).
 - **Storage**: one JSON file per execution (O_EXCL create, durable
   write→fsync→rename, `0600`, corrupt→throw), mirroring ADR-0017
   conventions. The journal exposes an `ExecutionRepository`-shaped

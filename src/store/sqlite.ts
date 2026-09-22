@@ -12,6 +12,7 @@ import { randomHex } from "../core/crypto.js";
 import { atomicWrite } from "./files.js";
 import {
   ExecutionError,
+  MAX_EXECUTION_RECORDS,
   canTransition,
   listExecutions,
   validateExecutionRecord,
@@ -171,6 +172,14 @@ export const SqliteExecutions: ExecutionRepository = {
         .get(input.idempotencyKey) as { record_json: string } | undefined;
       if (byKey !== undefined) {
         return parseRecord(byKey.record_json, "idempotency-key");
+      }
+      const total = db
+        .prepare("SELECT COUNT(*) AS n FROM executions")
+        .get() as { n: number };
+      if (total.n >= MAX_EXECUTION_RECORDS) {
+        throw new ExecutionError(
+          "journal full: back up the store, then prune terminal records only after revoking or expiring the underlying authority"
+        );
       }
       const executionId = explicitId !== "" ? explicitId : randomHex(16);
       if (!/^[0-9a-f]{32}$/.test(executionId)) {
