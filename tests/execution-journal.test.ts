@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -911,6 +911,129 @@ describe("durable execution journal (phase 3)", () => {
       transitionExecution(d, rec.executionId, "AUTHORIZED", {
         lastError: "x".repeat(257),
       })
+    );
+  });
+
+  it("adoption trusts provider attestation: a lying confirmer is host failure", async () => {
+    const d = dir();
+    const { principal, recipient, caps } = setup();
+    const digest = "77".repeat(32);
+    const { redemption, chainId } = issueRedeem(
+      caps,
+      principal,
+      recipient,
+      digest
+    );
+    let submits = 0;
+    const liar: ProtectedProvider = {
+      kind: "email",
+      async submit(req) {
+        submits += 1;
+        throw new Error("rail timeout");
+      },
+      // Dishonest attestation: confirms refs it never produced.
+      verify: () => ({ ok: true as const }),
+    };
+    try {
+      await executeWithJournal({
+        dir: d,
+        provider: liar,
+        req: reqFor(chainId, digest),
+        redemption,
+        nowSec: NOW,
+      });
+      assert.fail("expected ambiguous throw");
+    } catch (err) {
+      assert.ok(err instanceof AmbiguousExecutionError);
+    }
+    // PTF ran attestation and adopted per its result; the lie is the
+    // host's verify implementation, not a journal bypass. No resubmit.
+    const receipt = await executeWithJournal({
+      dir: d,
+      provider: liar,
+      req: reqFor(chainId, digest),
+      redemption,
+      query: queryStub("effected", "ext-liar-confirm"),
+      nowSec: NOW,
+      at: NOW,
+    });
+    assert.equal(receipt.transaction, "ext-liar-confirm");
+    assert.equal(submits, 1);
+  });
+
+  it("AUTHORIZED leftovers resume to exactly one submit", async () => {
+    const d = dir();
+    const { principal, recipient, caps } = setup();
+    const digest = "88".repeat(32);
+    const { redemption, chainId } = issueRedeem(
+      caps,
+      principal,
+      recipient,
+      digest
+    );
+    // Crash between AUTHORIZED and SUBMITTING: craft the leftover directly.
+    const key = deriveIdempotencyKey(digest, "email");
+    const created = createExecution(
+      d,
+      {
+        idempotencyKey: key,
+        capabilityId: chainId,
+        termsDigest: digest,
+        action: "/email/send",
+        recipient: DEST,
+        resource: "msg:1",
+        purpose: "followup",
+        context: { to: "a@approved-company.com" },
+      },
+      NOW
+    );
+    transitionExecution(d, created.executionId, "AUTHORIZED", {}, NOW);
+    const fakes = makeFakeProviders({ nowSec: () => NOW });
+    const receipt = await executeWithJournal({
+      dir: d,
+      provider: fakes.email,
+      req: reqFor(chainId, digest),
+      redemption,
+      nowSec: NOW,
+      at: NOW,
+    });
+    assert.ok(receipt.transaction.startsWith("fake-email-"));
+    assert.equal(fakes.email.calls.length, 1);
+    assert.equal(findByIdempotencyKey(d, key)?.attempts, 1);
+  });
+
+  it("journal creation fails closed at capacity with named repair", () => {
+    const d = dir();
+    const base = {
+      capabilityId: "ab".repeat(32),
+      termsDigest: "cd".repeat(32),
+      action: "/email/send",
+      recipient: DEST,
+      resource: "msg:1",
+      purpose: "followup",
+      context: {},
+    };
+    // Fill directly (createExecution per record would be O(n^2) scans).
+    mkdirSync(join(d, "executions"), { recursive: true });
+    for (let i = 0; i < 5000; i += 1) {
+      const id = i.toString(16).padStart(32, "0");
+      writeFileSync(
+        join(d, "executions", `${id}.json`),
+        JSON.stringify({
+          ...base,
+          executionId: id,
+          idempotencyKey: `k-fill-${i}`,
+          state: "SUCCEEDED",
+          createdAt: NOW,
+          updatedAt: NOW,
+          attempts: 1,
+          maxAttempts: 3,
+        })
+      );
+    }
+    assert.throws(
+      () => createExecution(d, { ...base, idempotencyKey: "k-overflow" }, NOW),
+      /journal full/
     );
   });
 });

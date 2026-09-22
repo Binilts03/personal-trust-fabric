@@ -14,6 +14,7 @@ import {
   ExecutionError,
   MAX_EXECUTION_RECORDS,
   canTransition,
+  journalFullError,
   listExecutions,
   validateExecutionRecord,
   type ExecutionRecord,
@@ -177,9 +178,7 @@ export const SqliteExecutions: ExecutionRepository = {
         .prepare("SELECT COUNT(*) AS n FROM executions")
         .get() as { n: number };
       if (total.n >= MAX_EXECUTION_RECORDS) {
-        throw new ExecutionError(
-          "journal full: back up the store, then prune terminal records only after revoking or expiring the underlying authority"
-        );
+        throw journalFullError();
       }
       const executionId = explicitId !== "" ? explicitId : randomHex(16);
       if (!/^[0-9a-f]{32}$/.test(executionId)) {

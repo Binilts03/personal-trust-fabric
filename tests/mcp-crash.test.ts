@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,7 +91,7 @@ function failed(response: Record<string, unknown>): boolean {
   );
 }
 
-function seedStore(maxUses = 2): {
+function seedStore(maxUses: number): {
   dir: string;
   recipient: ReturnType<typeof generateEd25519Keypair>;
 } {
@@ -226,6 +226,24 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
       const tx2 = await redeemOnce(rpc, digest, recipient);
       // Must reconcile to the SAME effect, never submit a second one.
       assert.equal(tx2, tx1);
+      // Secret-freedom across every new surface: the recipient private
+      // key (real keystore material) must appear in no journal record,
+      // proposal, receipt, or audit line.
+      const privHex = Buffer.from(
+        recipient.privateKey.export({ format: "der", type: "pkcs8" })
+      ).toString("hex");
+      const blobs: string[] = [
+        readFileSync(proposalPath, "utf8"),
+        readFileSync(join(dir, "audit.jsonl"), "utf8"),
+      ];
+      for (const name of readdirSync(join(dir, "executions"))) {
+        if (name.endsWith(".json")) {
+          blobs.push(readFileSync(join(dir, "executions", name), "utf8"));
+        }
+      }
+      for (const blob of blobs) {
+        assert.ok(!blob.includes(privHex));
+      }
     } finally {
       rpc.close();
     }
@@ -306,6 +324,74 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
       };
       assert.equal(body.allowed, false);
       assert.equal(body.reason, "revoked");
+    } finally {
+      rpc.close();
+    }
+  });
+
+  it("unknown journal outcome over stdio fails closed as reconcile-required", async () => {
+    const { dir, recipient } = seedStore(3);
+    const rpc = launch(dir);
+    try {
+      await init(rpc);
+      const { digest } = await propose(rpc);
+      await redeemOnce(rpc, digest, recipient);
+      // Force genuine unknown state: rewind BOTH the proposal (pending,
+      // as a crash before transition leaves it) and the journal record
+      // (SUBMITTED_UNKNOWN without receipt fields, as a crash during
+      // submission leaves it).
+      const proposalPath = join(dir, "proposals", `${digest}.json`);
+      const stored = JSON.parse(readFileSync(proposalPath, "utf8")) as {
+        state: string;
+      };
+      stored.state = "pending";
+      writeFileSync(proposalPath, JSON.stringify(stored));
+      const names = readdirSync(join(dir, "executions")).filter((n) =>
+        n.endsWith(".json")
+      );
+      assert.equal(names.length, 1);
+      const execPath = join(dir, "executions", names[0] as string);
+      const rec = JSON.parse(readFileSync(execPath, "utf8")) as {
+        state: string;
+      };
+      assert.equal(rec.state, "SUCCEEDED");
+      rec.state = "SUBMITTED_UNKNOWN";
+      delete (rec as Record<string, unknown>)["externalRef"];
+      delete (rec as Record<string, unknown>)["receiptId"];
+      delete (rec as Record<string, unknown>)["receiptAt"];
+      writeFileSync(execPath, JSON.stringify(rec));
+      // The stdio surface has no provider query: the reminted redemption
+      // must refuse to guess rather than blind-retry, naming reconcile,
+      // and the record stays unknown.
+      const ch = await rpc.call("tools/call", {
+        name: "ptf_redeem",
+        arguments: { termsDigest: digest },
+      });
+      assert.equal(failed(ch), false);
+      const { cidHex } = JSON.parse(textOf(ch)) as { cidHex?: string };
+      assert.ok(cidHex);
+      const priv = createPrivateKey({
+        key: Buffer.from(
+          recipient.privateKey.export({ format: "der", type: "pkcs8" })
+        ),
+        format: "der",
+        type: "pkcs8",
+      });
+      const sig = signBytes(priv, new Uint8Array(Buffer.from(cidHex, "hex")));
+      const done = await rpc.call("tools/call", {
+        name: "ptf_redeem",
+        arguments: {
+          termsDigest: digest,
+          recipientKeyHex: Buffer.from(recipient.publicKeyRaw).toString("hex"),
+          recipientSigHex: Buffer.from(sig).toString("hex"),
+        },
+      });
+      assert.equal(failed(done), true);
+      assert.ok(textOf(done).includes("reconcile"));
+      const reread = JSON.parse(readFileSync(execPath, "utf8")) as {
+        state: string;
+      };
+      assert.equal(reread.state, "SUBMITTED_UNKNOWN");
     } finally {
       rpc.close();
     }

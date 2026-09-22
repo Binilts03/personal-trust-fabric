@@ -22,6 +22,13 @@ import { atomicWrite } from "./files.js";
  */
 export const MAX_EXECUTION_RECORDS = 5000;
 
+/** Shared cap failure (both backends): identical message, named repair. */
+export function journalFullError(): ExecutionError {
+  return new ExecutionError(
+    "journal full: back up the store, then prune terminal records only after revoking or expiring the underlying authority"
+  );
+}
+
 /**
  * Durable execution journal (ADR-0021, roadmap G3).
  *
@@ -246,16 +253,25 @@ export function createExecution(
   )
     throw new ExecutionError("journal: context must be an object");
   mkdirSync(dirOf(storeDir), { recursive: true });
-  const byKey = findByIdempotencyKey(storeDir, input.idempotencyKey);
-  if (byKey !== null) return byKey;
+  // Single scan serves duplicate detection and the capacity bound
+  // together: per-create cost stays one pass, not two.
+  let byKey: ExecutionRecord | null = null;
   let count = 0;
   for (const name of readdirSync(dirOf(storeDir))) {
-    if (name.endsWith(".json") && !name.includes(".tmp-")) count += 1;
+    if (!name.endsWith(".json") || name.includes(".tmp-")) continue;
+    count += 1;
+    if (byKey !== null) continue;
+    let rec: ExecutionRecord;
+    try {
+      rec = readRecord(join(dirOf(storeDir), name));
+    } catch {
+      throw new ExecutionError(`journal corrupt: ${name}`);
+    }
+    if (rec.idempotencyKey === input.idempotencyKey) byKey = rec;
   }
+  if (byKey !== null) return byKey;
   if (count >= MAX_EXECUTION_RECORDS) {
-    throw new ExecutionError(
-      "journal full: back up the store, then prune terminal records only after revoking or expiring the underlying authority"
-    );
+    throw journalFullError();
   }
   const record: ExecutionRecord = {
     executionId,
