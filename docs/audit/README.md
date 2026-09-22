@@ -13,15 +13,16 @@ The durable product language is in `CONTEXT.md`; architecture decisions are in `
 
 ## Review map
 
-| Question | File |
-| --- | --- |
-| How is it built? | `architecture.md` |
-| What can go wrong? | `../../THREATMODEL.md`, `threats.md` |
-| What is tested? | `tests.md` |
-| What is explicitly not claimed? | `limits.md` |
-| How do I reproduce the gate? | `verify.md` |
-| How do I operate the reference implementation? | `operations.md` |
-| How do I report a vulnerability? | `../../SECURITY.md` |
+| Question                                       | File                                 |
+| ---------------------------------------------- | ------------------------------------ |
+| How is it built?                               | `architecture.md`                    |
+| What can go wrong?                             | `../../THREATMODEL.md`, `threats.md` |
+| What is tested?                                | `tests.md`                           |
+| What is explicitly not claimed?                | `limits.md`                          |
+| How do I reproduce the gate?                   | `verify.md`                          |
+| How do I operate the reference implementation? | `operations.md`                      |
+| How do I run the P3P sandbox round-trip?       | `p3p-sandbox.md`                     |
+| How do I report a vulnerability?               | `../../SECURITY.md`                  |
 
 ## Verification shortcut
 

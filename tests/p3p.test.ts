@@ -1,14 +1,19 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   Authority,
   Capabilities,
+  FileAuditLog,
   executeAndReceipt,
   generateEd25519Keypair,
   leafCidHex,
   normalizeP3pChallenge,
   parsePaiseAmount,
   paymentBounds,
+  signBytes,
   toP3pPaymentDemand,
   verifyP3pReceipt,
   type AuthorityOperation,
@@ -80,12 +85,16 @@ function demandFor(
   overrides: Record<string, unknown> = {}
 ): AuthorityOperation {
   const challenge = normalizeP3pChallenge(challengeFor(), NOW);
-  const { operation } = toP3pPaymentDemand(challenge, {
-    purpose: "weather-data",
-    resource: "/api/weather",
-    currency: "INR",
-    ...overrides,
-  });
+  const { operation } = toP3pPaymentDemand(
+    challenge,
+    {
+      purpose: "weather-data",
+      resource: "/api/weather",
+      currency: "INR",
+      ...overrides,
+    },
+    { nowSec: NOW }
+  );
   return operation;
 }
 
@@ -145,11 +154,15 @@ describe("p3p adapter as evidence (phase 2)", () => {
 
   it("maps a challenge to an identity-free bounded demand", () => {
     const challenge = normalizeP3pChallenge(challengeFor(), NOW);
-    const { operation, capabilityArgs } = toP3pPaymentDemand(challenge, {
-      purpose: "weather-data",
-      resource: "/api/weather",
-      currency: "INR",
-    });
+    const { operation, capabilityArgs } = toP3pPaymentDemand(
+      challenge,
+      {
+        purpose: "weather-data",
+        resource: "/api/weather",
+        currency: "INR",
+      },
+      { nowSec: NOW }
+    );
     assert.ok(!("principal" in operation));
     assert.ok(!("actor" in operation));
     assert.ok(!("termsDigest" in operation));
@@ -157,6 +170,7 @@ describe("p3p adapter as evidence (phase 2)", () => {
     assert.equal(operation.context["amount"], 10000);
     assert.equal(operation.context["p3pChallengeId"], "ch_test_001");
     assert.equal(operation.context["p3pMethod"], "RESERVE_PAY");
+    assert.equal(operation.context["p3pExpiresAt"], NOW + 300);
     assert.deepEqual(capabilityArgs, {
       amount: 10000,
       currency: "INR",
@@ -174,7 +188,8 @@ describe("p3p adapter as evidence (phase 2)", () => {
           purpose: "weather-data",
           resource: "/api/weather",
           currency: "INR",
-        }
+        },
+        { nowSec: NOW }
       )
     );
     assert.throws(() =>
@@ -184,7 +199,8 @@ describe("p3p adapter as evidence (phase 2)", () => {
           purpose: "weather-data",
           resource: "/api/weather",
           currency: "INR",
-        }
+        },
+        { nowSec: NOW }
       )
     );
     assert.throws(() =>
@@ -195,17 +211,113 @@ describe("p3p adapter as evidence (phase 2)", () => {
           resource: "/api/weather",
           currency: "INR",
           expectedMerchant: MERCHANT,
-        }
+        },
+        { nowSec: NOW }
       )
     );
     assert.throws(() =>
-      toP3pPaymentDemand(normalizeP3pChallenge(base, NOW), {
+      toP3pPaymentDemand(
+        normalizeP3pChallenge(base, NOW),
+        {
+          purpose: "weather-data",
+          resource: "/api/weather",
+          currency: "INR",
+          expectedMethod: "CARD",
+        },
+        { nowSec: NOW }
+      )
+    );
+  });
+
+  it("a challenge expiring between normalize and mapping is refused at mapping", () => {
+    const challenge = normalizeP3pChallenge(challengeFor(), NOW);
+    assert.throws(() =>
+      toP3pPaymentDemand(
+        challenge,
+        { purpose: "weather-data", resource: "/api/weather", currency: "INR" },
+        { nowSec: NOW + 301 }
+      )
+    );
+    // Still valid inside the window.
+    const { operation } = toP3pPaymentDemand(
+      challenge,
+      { purpose: "weather-data", resource: "/api/weather", currency: "INR" },
+      { nowSec: NOW + 299 }
+    );
+    assert.equal(operation.context["p3pExpiresAt"], NOW + 300);
+  });
+
+  it("modified terms after CHECK fail closed at authorize time", () => {
+    const principal = generateEd25519Keypair();
+    const recipient = generateEd25519Keypair();
+    const attacker = generateEd25519Keypair();
+    const keys = new Map([
+      ["p", principal.publicKeyRaw],
+      ["m", recipient.publicKeyRaw],
+      ["x", attacker.publicKeyRaw],
+    ]);
+    const caps = new Capabilities({
+      resolveKey: (id) => keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const digest = "cd".repeat(32);
+    const cap = caps.issue(
+      null,
+      {
+        iss: "p",
+        aud: "p",
+        sub: "p",
+        cmd: "/pay",
+        pol: [["<=", ".amount", 10000]],
         purpose: "weather-data",
         resource: "/api/weather",
+        recipient: "m",
+        amountMax: 10000,
         currency: "INR",
-        expectedMethod: "CARD",
-      })
+        exp: NOW + 300,
+        maxUses: 1,
+        termsDigest: digest,
+      },
+      principal.privateKey
     );
+    const demand = {
+      cmd: "/pay" as const,
+      args: { amount: 10000, currency: "INR" },
+      recipient: "m",
+      resource: "/api/weather",
+      purpose: "weather-data",
+      termsDigest: digest,
+    };
+    // CHECK passes on the exact terms…
+    const checked = caps.check([cap], demand);
+    assert.equal(checked.ok, true);
+    // …but authorize denies every post-CHECK mutation.
+    const mutatedAmount = caps.authorize(
+      [cap],
+      { ...demand, args: { amount: 10001, currency: "INR" } },
+      { consume: false }
+    );
+    assert.equal(mutatedAmount.ok, false);
+    const mutatedRecipient = caps.authorize(
+      [cap],
+      { ...demand, recipient: "x" },
+      { consume: false }
+    );
+    assert.equal(mutatedRecipient.ok, false);
+    if (!mutatedRecipient.ok)
+      assert.equal(mutatedRecipient.reason, "recipient");
+    const mutatedResource = caps.authorize(
+      [cap],
+      { ...demand, resource: "/api/other" },
+      { consume: false }
+    );
+    assert.equal(mutatedResource.ok, false);
+    const mutatedDigest = caps.authorize(
+      [cap],
+      { ...demand, termsDigest: "00".repeat(32) },
+      { consume: false }
+    );
+    assert.equal(mutatedDigest.ok, false);
   });
 
   it("authority allows a covered operation and cites the grant", () => {
@@ -410,6 +522,24 @@ describe("p3p adapter as evidence (phase 2)", () => {
       ).ok,
       false
     );
+    // Provider failure detail is never echoed: fixed vocabulary only, so a
+    // secret smuggled in errorReason cannot reach exception text.
+    const leaked = verifyP3pReceipt(
+      {
+        success: false,
+        transactionId: "",
+        ...expected,
+        errorReason: "ptf-canary-provider-detail-8c2e",
+      },
+      expected
+    );
+    assert.equal(leaked.ok, false);
+    if (!leaked.ok) {
+      assert.equal(leaked.reason, "receipt reports failure");
+      assert.ok(
+        !JSON.stringify(leaked).includes("ptf-canary-provider-detail-8c2e")
+      );
+    }
     assert.equal(
       verifyP3pReceipt({ success: true, ...expected }, expected).ok,
       false
@@ -442,6 +572,30 @@ describe("p3p adapter as evidence (phase 2)", () => {
     if (!stale.ok) assert.equal(stale.reason, "stale receipt");
   });
 
+  it("receipt for an expired challenge fails closed", () => {
+    const expected = {
+      amountPaise: 10000,
+      currency: "INR",
+      resource: "/api/weather",
+      merchant: MERCHANT,
+      challengeId: "ch_test_001",
+      expiresAt: NOW + 300,
+    };
+    const good = {
+      success: true,
+      transactionId: "txn-1",
+      amountPaise: 10000,
+      currency: "INR",
+      resource: "/api/weather",
+      merchant: MERCHANT,
+      challengeId: "ch_test_001",
+    };
+    assert.equal(verifyP3pReceipt(good, expected, { nowSec: NOW }).ok, true);
+    const expired = verifyP3pReceipt(good, expected, { nowSec: NOW + 301 });
+    assert.equal(expired.ok, false);
+    if (!expired.ok) assert.equal(expired.reason, "challenge expired");
+  });
+
   it("secret boundary: provider credentials never appear in adapter outputs", () => {
     const sentinelSecret = "ptf-canary-client-secret-9f2c";
     const sentinelGrant = "ptf-canary-grant-token-4bd1";
@@ -462,11 +616,15 @@ describe("p3p adapter as evidence (phase 2)", () => {
       "paymentMethods",
       "resource",
     ]);
-    const { operation, capabilityArgs } = toP3pPaymentDemand(normalized, {
-      purpose: "weather-data",
-      resource: "/api/weather",
-      currency: "INR",
-    });
+    const { operation, capabilityArgs } = toP3pPaymentDemand(
+      normalized,
+      {
+        purpose: "weather-data",
+        resource: "/api/weather",
+        currency: "INR",
+      },
+      { nowSec: NOW }
+    );
     const receipt = verifyP3pReceipt(
       {
         success: true,
@@ -498,16 +656,145 @@ describe("p3p adapter as evidence (phase 2)", () => {
       assert.ok(!blob.includes(sentinelGrant));
       assert.ok(!blob.includes(sentinelPan));
     }
+    // Error strings never echo caller input (no exception-text sink).
+    for (const bad of [
+      challengeFor({ amountPaise: `${sentinelPan}` }),
+      challengeFor({ paymentMethods: [sentinelGrant] }),
+      challengeFor({ currency: sentinelSecret }),
+    ]) {
+      try {
+        normalizeP3pChallenge(bad, NOW);
+        assert.fail("expected throw");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        assert.ok(!msg.includes(sentinelSecret));
+        assert.ok(!msg.includes(sentinelGrant));
+        assert.ok(!msg.includes(sentinelPan));
+      }
+    }
     // paise discipline: decimals and overflow rejected, never rounded.
     assert.throws(() => parsePaiseAmount("10.5"));
     assert.throws(() => parsePaiseAmount(Number.MAX_SAFE_INTEGER + 1));
     assert.equal(parsePaiseAmount("10000"), 10000);
   });
 
+  it("secret boundary end to end: receipt and audit carry no credentials", async () => {
+    const sentinelGrant = "ptf-canary-grant-token-e2e-7a1f";
+    const sentinelPan = "4111111111111111";
+    const sentinelSecret = "ptf-canary-client-secret-e2e-3b9d";
+    const dir = mkdtempSync(join(tmpdir(), "ptf-p3p-canary-"));
+    // Tainted challenge: secrets smuggled as unknown extra fields.
+    const normalized = normalizeP3pChallenge(
+      {
+        ...challengeFor(),
+        grantToken: sentinelGrant,
+        cardPan: sentinelPan,
+        clientSecret: sentinelSecret,
+      },
+      NOW
+    );
+    const { operation } = toP3pPaymentDemand(
+      normalized,
+      {
+        purpose: "weather-data",
+        resource: "/api/weather",
+        currency: "INR",
+      },
+      { nowSec: NOW }
+    );
+    const principal = generateEd25519Keypair();
+    const recipient = generateEd25519Keypair();
+    const keys = new Map([
+      ["p", principal.publicKeyRaw],
+      [MERCHANT, recipient.publicKeyRaw],
+    ]);
+    const caps = new Capabilities({
+      resolveKey: (id) => keys.get(id) ?? null,
+      nowSec: () => NOW,
+    });
+    const digest = "ef".repeat(32);
+    const cap = caps.issue(
+      null,
+      {
+        iss: "p",
+        aud: "p",
+        sub: "p",
+        cmd: "/pay",
+        pol: [["<=", ".amount", 10000]],
+        purpose: "weather-data",
+        resource: "/api/weather",
+        recipient: MERCHANT,
+        amountMax: 10000,
+        currency: "INR",
+        exp: NOW + 300,
+        maxUses: 1,
+        termsDigest: digest,
+      },
+      principal.privateKey
+    );
+    const cid = leafCidHex(cap);
+    const amount = operation.context["amount"] as number;
+    const currency = operation.context["currency"] as string;
+    const redeemed = caps.redeem(
+      [cap],
+      {
+        cmd: "/pay",
+        args: { amount, currency },
+        recipient: MERCHANT,
+        resource: "/api/weather",
+        purpose: "weather-data",
+        termsDigest: digest,
+      },
+      {
+        proof: {
+          key: recipient.publicKeyRaw,
+          sig: signBytes(recipient.privateKey, Buffer.from(cid, "hex")),
+        },
+      }
+    );
+    assert.equal(redeemed.ok, true);
+    if (!redeemed.ok) return;
+    const receipt = await executeAndReceipt(
+      {
+        executePayment: async () => ({
+          ok: true as const,
+          transaction: "fake-tx-canary",
+        }),
+      },
+      {
+        capabilityId: cid,
+        recipient: MERCHANT,
+        amount,
+        currency,
+        resource: "/api/weather",
+        purpose: "weather-data",
+        termsDigest: digest,
+      },
+      redeemed,
+      NOW
+    );
+    const audit = FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW);
+    audit.append({
+      actor: AGENT,
+      action: "redeem",
+      authorityId: "g-p3p",
+      capabilityId: receipt.capabilityId,
+      detail: receipt.transaction,
+    });
+    const auditText = readFileSync(join(dir, "audit.jsonl"), "utf8");
+    for (const blob of [JSON.stringify(receipt), auditText]) {
+      assert.ok(!blob.includes(sentinelGrant));
+      assert.ok(!blob.includes(sentinelPan));
+      assert.ok(!blob.includes(sentinelSecret));
+    }
+    assert.equal(audit.verifyChain(), true);
+  });
+
   it("sandbox-live wiring is env-gated and skipped without credentials", () => {
     if (process.env["PTF_P3P_LIVE"] !== "1") {
       // No credentials on CI/dev machines: the live sandbox round-trip is a
-      // documented manual step (runbook below), never an implicit network call.
+      // documented manual step (docs/audit/p3p-sandbox.md), never an
+      // implicit network call.
       // Docs: Pine Labs UAT `https://pluraluat.v2.pinepg.in`, token via
       // `POST /api/auth/v1/token` (client_credentials); Grantex hosted
       // `https://api.grantex.dev`. All values env-supplied, host-held.

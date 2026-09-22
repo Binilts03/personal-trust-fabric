@@ -91,5 +91,8 @@ edge to be evidence-only with a core-ignorant boundary.
   challenges only in CI, SDK-owned wire, host-owned credentials and
   live sandbox runs.
 - Live UAT proving (real mandate + sandbox capture + receipt) remains a
-  documented manual runbook step, tracked under roadmap G2 — this ADR +
-  adapter does not claim it.
+  documented manual runbook step (`docs/audit/p3p-sandbox.md`, host
+  reference `examples/p3p-sandbox-host.mjs` — verified against the real
+  `p3p-client-sdk@1.3.0` export shapes `decodeChallenge`,
+  `extractAmountPaise`, `decodeReceipt`), tracked under roadmap G2 —
+  this ADR + adapter does not claim it.

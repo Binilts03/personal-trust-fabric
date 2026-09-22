@@ -83,7 +83,9 @@ tested at the boundary.
   tokens, one-time credentials, PANs never enter PTF inputs/outputs;
   canary-tested). CI runs synthetic challenges + the full denial matrix
   only; live UAT round-trips are env-gated host runs
-  (`PTF_P3P_LIVE=1`), never implicit (proof: `tests/p3p.test.ts`).
+  (`PTF_P3P_LIVE=1`), never implicit. Host wiring reference:
+  `examples/p3p-sandbox-host.mjs`; manual runbook:
+  `docs/audit/p3p-sandbox.md` (proof: `tests/p3p.test.ts`).
 - AP2: known open-constraint shapes enforced (`amount_range`,
   `allowed_payees`, `allowed_merchants`); any other constraint fails closed
   as `unresolved_constraint` → fall back to human-present. `checkout_jwt`

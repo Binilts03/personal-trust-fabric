@@ -41,7 +41,6 @@ Default deny. Exact terms. Use without possession. External messages are evidenc
 | [CLI Reference](cli-reference)     | `ptf` command: init, keygen, grant, pay, audit, backup                     |
 | [ADRs](adr)                        | Architecture Decision Records                                              |
 | [Audit Docs](audit)                | Limits, operations, verification, threats                                  |
-| [Research](research)               | Deep dives on protocols, standards, interop                                |
 
 ---
 
