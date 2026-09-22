@@ -13,6 +13,23 @@ import { randomHex } from "../core/crypto.js";
 import { atomicWrite } from "./files.js";
 
 /**
+ * Cap on journal records per store (mirrors the 1000-file proposal
+ * anti-fill bound, scaled for receipt history). Minting a record requires
+ * passing authority gates first, but unlimited-use grants could still
+ * grow the journal without bound — fail closed with a named repair
+ * (back up, then prune terminal records only after revoking or expiring
+ * the underlying authority, so pruned terms can never be re-authorized).
+ */
+export const MAX_EXECUTION_RECORDS = 5000;
+
+/** Shared cap failure (both backends): identical message, named repair. */
+export function journalFullError(): ExecutionError {
+  return new ExecutionError(
+    "journal full: back up the store, then prune terminal records only after revoking or expiring the underlying authority"
+  );
+}
+
+/**
  * Durable execution journal (ADR-0021, roadmap G3).
  *
  * Crash semantics before this journal: authority consumption persisted
@@ -112,19 +129,22 @@ function pathOf(storeDir: string, executionId: string): string {
 }
 
 /**
- * Deterministic provider idempotency key for one authorized terms set.
- * Full digests, no truncation: same (termsDigest, capabilityId) → same key
- * across retries and replays; different terms → different key.
+ * Deterministic provider idempotency key for one authorized terms set in
+ * one provider scope. Same (termsDigest, providerScope) → same key across
+ * retries, replays, and capability remints; different terms or scopes →
+ * different keys. Capability identity is deliberately NOT part of the key
+ * (a remint must reconcile, never fork); it stays in the record as
+ * binding evidence.
  */
 export function deriveIdempotencyKey(
   termsDigest: string,
-  capabilityId: string
+  providerScope: string
 ): string {
   if (!/^[0-9a-f]{16,128}$/.test(termsDigest))
     throw new ExecutionError("malformed termsDigest");
-  if (!/^[0-9a-f]{16,128}$/.test(capabilityId))
-    throw new ExecutionError("malformed capabilityId");
-  return `ptf-${termsDigest}-${capabilityId}`;
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(providerScope))
+    throw new ExecutionError("malformed providerScope");
+  return `ptf-${termsDigest}-${providerScope}`;
 }
 
 /** External refs are provider-controlled evidence: bounded, non-empty. */
@@ -234,8 +254,13 @@ export function createExecution(
   )
     throw new ExecutionError("journal: context must be an object");
   mkdirSync(dirOf(storeDir), { recursive: true });
-  const byKey = findByIdempotencyKey(storeDir, input.idempotencyKey);
-  if (byKey !== null) return byKey;
+  // Single scan serves duplicate detection and the capacity bound
+  // together: per-create cost stays one pass, not two.
+  const scanned = scanExecutions(storeDir, input.idempotencyKey);
+  if (scanned.match !== null) return scanned.match;
+  if (scanned.count >= MAX_EXECUTION_RECORDS) {
+    throw journalFullError();
+  }
   const record: ExecutionRecord = {
     executionId,
     idempotencyKey: input.idempotencyKey,
@@ -332,6 +357,33 @@ export function transitionExecution(
 }
 
 /**
+ * Single directory scan serving duplicate detection, capacity counting,
+ * and key lookup together — one pass per create instead of three.
+ * Corrupt files throw (fail-closed); callers never silently skip.
+ */
+function scanExecutions(
+  storeDir: string,
+  idempotencyKey: string
+): { match: ExecutionRecord | null; count: number } {
+  let match: ExecutionRecord | null = null;
+  let count = 0;
+  let names: string[];
+  try {
+    names = readdirSync(dirOf(storeDir));
+  } catch {
+    return { match, count };
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json") || name.includes(".tmp-")) continue;
+    count += 1;
+    if (match !== null) continue;
+    const rec = readRecord(join(dirOf(storeDir), name));
+    if (rec.idempotencyKey === idempotencyKey) match = rec;
+  }
+  return { match, count };
+}
+
+/**
  * Find a record by idempotency key (O(n) scan; indexed backends come with
  * Phase 4). Corrupt files throw — same as listExecutions: tamper must
  * never silently hide a live record from dedupe and fork a second effect.
@@ -340,18 +392,7 @@ export function findByIdempotencyKey(
   storeDir: string,
   idempotencyKey: string
 ): ExecutionRecord | null {
-  let names: string[];
-  try {
-    names = readdirSync(dirOf(storeDir));
-  } catch {
-    return null;
-  }
-  for (const name of names) {
-    if (!name.endsWith(".json") || name.includes(".tmp-")) continue;
-    const rec = readRecord(join(dirOf(storeDir), name));
-    if (rec.idempotencyKey === idempotencyKey) return rec;
-  }
-  return null;
+  return scanExecutions(storeDir, idempotencyKey).match;
 }
 
 /** All records (corrupt files throw — inspection duty, never silent skip at this layer). */

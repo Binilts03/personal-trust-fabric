@@ -16,7 +16,8 @@ tested at the boundary.
   cross-process same-key races and read-then-write transitions rely on
   the single-writer backstop on both backends; WAL+shm travel with the
   db file in backups (checkpoint-on-close keeps the unit coherent);
-  no GC on either journal (archive with backups); encrypted payloads
+  5000-record journal cap on both backends (archive with backups, prune
+  terminal records only after revoking/expiring authority); encrypted payloads
   declined (journal payloads are handles-only; vault stays file-based).
 - Migration never discards: file→SQLite is one transaction
   (all-or-nothing, existing rows win); SQLite→file stages then atomically
@@ -78,17 +79,28 @@ tested at the boundary.
   immediately before executing all the same; live rails stay host duty.
   The journaled path (`executeWithJournal`, ADR-0021) keeps the burn but
   records the outcome lifecycle (`PREPARED → … → SUCCEEDED /
-SUBMITTED_UNKNOWN / RECONCILED`) with derived idempotency keys and
+SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
+  (`termsDigest` + provider scope — remints reconcile, never fork) and
   query-first reconcile instead of blind retry; attestation failures
   route to reconcile (an effected rail with a bad confirmation must not
-  hide behind a terminal state). Journal ceilings: one file per
-  execution, no GC (archive with backups); O(n) key lookup (indexed
-  backends await the Phase-4 decision); single-writer topology —
+  hide behind a terminal state); adopted refs pass provider attestation
+  before SUCCEEDED. MCP `ptf_redeem` runs this path, so a crash between
+  provider effect and proposal transition reconciles to the same receipt.
+  Journal ceilings: one file per execution, 5000-record cap with named
+  repair (prune terminal records only after revoking/expiring authority);
+  O(n) key lookup on files; single-writer topology —
   cross-process same-key races and read-then-write transitions rely on
   the single-writer backstop; `RECONCILED` needs a host provider query
-  plus manual completion; `metadata` idempotency carriage and context
-  secret-freedom stay host-reviewed conventions like the rest of the
-  provider seam.
+  (which MUST be read-only — PTF calls it at most once per resume and
+  never submits on effected/unknown paths, but cannot constrain what
+  host code does inside it) plus manual completion; reconcile adoption
+  trusts `provider.verify` — a verify that attests fiction adopts fiction,
+  so production verifies must check rail evidence (signatures, ledger),
+  never echo ids; hosts running multiple rails of one kind against one
+  store MUST set distinct provider namespaces or one rail's outcome
+  satisfies another's terms; `metadata`
+  idempotency carriage and context secret-freedom stay host-reviewed
+  conventions like the rest of the provider seam.
 - Exact-operation binding (ADR-0018): `authorize` echoes the verified
   demand and every execute path deep-compares its instruction against the
   echo — bare `{ok, chainId}` redemptions fail closed, as does any mutated

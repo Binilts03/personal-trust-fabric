@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -175,7 +175,7 @@ describe("durable execution journal (phase 3)", () => {
     assert.equal(receipt.capabilityId, chainId);
     assert.ok(receipt.transaction.startsWith("fake-email-"));
     assert.equal(receipt.termsDigest, digest);
-    const key = deriveIdempotencyKey(digest, chainId);
+    const key = deriveIdempotencyKey(digest, "email");
     assert.equal(fakes.email.calls[0]?.metadata?.["idempotencyKey"], key);
     const rec = findByIdempotencyKey(d, key);
     assert.ok(rec);
@@ -302,12 +302,54 @@ describe("durable execution journal (phase 3)", () => {
       assert.ok(err instanceof AmbiguousExecutionError);
     }
     // The effect may still have happened: unknown, not failed.
-    const key = deriveIdempotencyKey(digest, chainId);
+    const key = deriveIdempotencyKey(digest, "email");
     assert.equal(findByIdempotencyKey(d, key)?.state, "SUBMITTED_UNKNOWN");
-    // Reconcile confirms the effect: adopts the ref, no resubmit.
+    // A rail that will not attest the adopted ref quarantines instead of
+    // adopting blindly (D1.1 settlement gate).
+    await assert.rejects(
+      executeWithJournal({
+        dir: d,
+        provider,
+        req: reqFor(chainId, digest),
+        redemption,
+        query: queryStub("effected", "ext-late-confirm"),
+        nowSec: NOW,
+        at: NOW,
+      }),
+      /quarantined/
+    );
+    assert.equal(findByIdempotencyKey(d, key)?.state, "RECONCILED");
+  });
+
+  it("reconcile adopts an attested ref without resubmitting", async () => {
+    const d = dir();
+    const { principal, recipient, caps } = setup();
+    const digest = "dd".repeat(32);
+    const { redemption, chainId } = issueRedeem(
+      caps,
+      principal,
+      recipient,
+      digest
+    );
+    const rejecting = new RejectProvider();
+    try {
+      await executeWithJournal({
+        dir: d,
+        provider: rejecting,
+        req: reqFor(chainId, digest),
+        redemption,
+        nowSec: NOW,
+      });
+      assert.fail("expected ambiguous throw");
+    } catch (err) {
+      assert.ok(err instanceof AmbiguousExecutionError);
+    }
+    // A provider that attests the adopted ref confirms the effect: adopts
+    // it with zero new submits.
+    const fakes = makeFakeProviders({ nowSec: () => NOW });
     const receipt = await executeWithJournal({
       dir: d,
-      provider,
+      provider: fakes.email,
       req: reqFor(chainId, digest),
       redemption,
       query: queryStub("effected", "ext-late-confirm"),
@@ -315,7 +357,8 @@ describe("durable execution journal (phase 3)", () => {
       at: NOW,
     });
     assert.equal(receipt.transaction, "ext-late-confirm");
-    assert.equal(provider.calls, 1);
+    assert.equal(fakes.email.calls.length, 0);
+    assert.equal(rejecting.calls, 1);
   });
 
   it("explicit abort fails pending executions without submitting", async () => {
@@ -329,7 +372,7 @@ describe("durable execution journal (phase 3)", () => {
       digest
     );
     const fakes = makeFakeProviders({ nowSec: () => NOW });
-    const key = deriveIdempotencyKey(digest, chainId);
+    const key = deriveIdempotencyKey(digest, "email");
     const created = createExecution(
       d,
       {
@@ -469,8 +512,108 @@ describe("durable execution journal (phase 3)", () => {
     assert.equal(receipt.transaction, "ext-confirmed-9");
     assert.equal(query.calls, 1);
     assert.equal(provider.calls, 1);
-    const key = deriveIdempotencyKey(digest, chainId);
+    const key = deriveIdempotencyKey(digest, "email");
     assert.equal(findByIdempotencyKey(d, key)?.state, "SUCCEEDED");
+  });
+
+  it("reconcile queries are read-only: one submit, N queries, never two submits", async () => {
+    const d = dir();
+    const { principal, recipient, caps } = setup();
+    const digest = "66".repeat(32);
+    const { redemption, chainId } = issueRedeem(
+      caps,
+      principal,
+      recipient,
+      digest
+    );
+    let submits = 0;
+    const flaky: ProtectedProvider = {
+      kind: "email",
+      async submit(req) {
+        submits += 1;
+        if (submits === 1) throw new Error("rail timeout");
+        return {
+          kind: "email" as const,
+          capabilityId: req.capabilityId,
+          termsDigest: req.termsDigest,
+          externalRef: "ext-retry-2",
+          at: NOW,
+        };
+      },
+      verify: () => ({ ok: true as const }),
+    };
+    try {
+      await executeWithJournal({
+        dir: d,
+        provider: flaky,
+        req: reqFor(chainId, digest),
+        redemption,
+        nowSec: NOW,
+      });
+      assert.fail("expected ambiguous throw");
+    } catch (err) {
+      assert.ok(err instanceof AmbiguousExecutionError);
+    }
+    let queries = 0;
+    const countingQuery = {
+      async query() {
+        queries += 1;
+        return { state: "absent" } as const;
+      },
+    };
+    const receipt = await executeWithJournal({
+      dir: d,
+      provider: flaky,
+      req: reqFor(chainId, digest),
+      redemption,
+      query: countingQuery,
+      nowSec: NOW,
+      at: NOW,
+    });
+    assert.equal(receipt.transaction, "ext-retry-2");
+    // Exactly two submits (initial + one confirmed-absent retry) against
+    // one read-only reconcile query — crash replay never double-submits.
+    assert.equal(submits, 2);
+    assert.equal(queries, 1);
+  });
+
+  it("distinct rail namespaces isolate identical terms", async () => {
+    const d = dir();
+    const { principal, recipient, caps } = setup();
+    const digest = "99".repeat(32);
+    const { redemption, chainId } = issueRedeem(
+      caps,
+      principal,
+      recipient,
+      digest
+    );
+    const fakes = makeFakeProviders({ nowSec: () => NOW });
+    const first = await executeWithJournal({
+      dir: d,
+      provider: fakes.email,
+      req: reqFor(chainId, digest),
+      redemption,
+      nowSec: NOW,
+      at: NOW,
+    });
+    // Same terms, second rail of the same kind: must execute independently,
+    // never adopt the first rail's receipt.
+    const railB: ProtectedProvider = {
+      kind: "email",
+      namespace: "email-b",
+      submit: async (req) => fakes.email.submit(req),
+      verify: (sub, exp) => fakes.email.verify(sub, exp),
+    };
+    const second = await executeWithJournal({
+      dir: d,
+      provider: railB,
+      req: reqFor(chainId, digest),
+      redemption,
+      nowSec: NOW,
+      at: NOW,
+    });
+    assert.notEqual(second.transaction, first.transaction);
+    assert.equal(fakes.email.calls.length, 2);
   });
 
   it("reconcile absent retries with the SAME idempotency key, then succeeds", async () => {
@@ -528,7 +671,7 @@ describe("durable execution journal (phase 3)", () => {
       at: NOW,
     });
     assert.ok(receipt.transaction.startsWith("fake-email-"));
-    const key = deriveIdempotencyKey(digest, chainId);
+    const key = deriveIdempotencyKey(digest, "email");
     assert.equal(fakes.email.calls[0]?.metadata?.["idempotencyKey"], key);
     const rec = findByIdempotencyKey(d, key);
     assert.equal(rec?.attempts, 2);
@@ -699,12 +842,23 @@ describe("durable execution journal (phase 3)", () => {
     assert.equal(same.executionId, ok.executionId);
     assert.equal(findByIdempotencyKey(d, "nope"), null);
     assert.equal(findByIdempotencyKey(dir(), "nope"), null);
-    assert.throws(() => deriveIdempotencyKey("xyz", "ab".repeat(32)));
-    assert.throws(() => deriveIdempotencyKey("cd".repeat(32), "xyz"));
+    assert.throws(() => deriveIdempotencyKey("xyz", "email"));
+    assert.throws(() => deriveIdempotencyKey("cd".repeat(32), "EMAIL"));
+    assert.throws(() => deriveIdempotencyKey("cd".repeat(32), ""));
     // Stable derivation: same inputs, same key.
     assert.equal(
-      deriveIdempotencyKey("cd".repeat(32), "ab".repeat(32)),
-      deriveIdempotencyKey("cd".repeat(32), "ab".repeat(32))
+      deriveIdempotencyKey("cd".repeat(32), "email"),
+      deriveIdempotencyKey("cd".repeat(32), "email")
+    );
+    // Remint stability: the key carries no capability identity, so a
+    // reminted capability reconciles instead of forking a second effect.
+    const stable = deriveIdempotencyKey("cd".repeat(32), "email");
+    assert.ok(!stable.includes("ab".repeat(32)));
+    // Scope separation: same terms through different providers → different
+    // keys, so one provider's outcome never satisfies another's.
+    assert.notEqual(
+      deriveIdempotencyKey("cd".repeat(32), "email"),
+      deriveIdempotencyKey("cd".repeat(32), "payment")
     );
   });
 
@@ -769,7 +923,7 @@ describe("durable execution journal (phase 3)", () => {
     } catch (err) {
       assert.ok(err instanceof AmbiguousExecutionError);
     }
-    const key = deriveIdempotencyKey(digest, chainId);
+    const key = deriveIdempotencyKey(digest, "email");
     assert.equal(findByIdempotencyKey(d, key)?.state, "SUBMITTED_UNKNOWN");
   });
 
@@ -796,6 +950,129 @@ describe("durable execution journal (phase 3)", () => {
       transitionExecution(d, rec.executionId, "AUTHORIZED", {
         lastError: "x".repeat(257),
       })
+    );
+  });
+
+  it("adoption trusts provider attestation: a lying confirmer is host failure", async () => {
+    const d = dir();
+    const { principal, recipient, caps } = setup();
+    const digest = "77".repeat(32);
+    const { redemption, chainId } = issueRedeem(
+      caps,
+      principal,
+      recipient,
+      digest
+    );
+    let submits = 0;
+    const liar: ProtectedProvider = {
+      kind: "email",
+      async submit(req) {
+        submits += 1;
+        throw new Error("rail timeout");
+      },
+      // Dishonest attestation: confirms refs it never produced.
+      verify: () => ({ ok: true as const }),
+    };
+    try {
+      await executeWithJournal({
+        dir: d,
+        provider: liar,
+        req: reqFor(chainId, digest),
+        redemption,
+        nowSec: NOW,
+      });
+      assert.fail("expected ambiguous throw");
+    } catch (err) {
+      assert.ok(err instanceof AmbiguousExecutionError);
+    }
+    // PTF ran attestation and adopted per its result; the lie is the
+    // host's verify implementation, not a journal bypass. No resubmit.
+    const receipt = await executeWithJournal({
+      dir: d,
+      provider: liar,
+      req: reqFor(chainId, digest),
+      redemption,
+      query: queryStub("effected", "ext-liar-confirm"),
+      nowSec: NOW,
+      at: NOW,
+    });
+    assert.equal(receipt.transaction, "ext-liar-confirm");
+    assert.equal(submits, 1);
+  });
+
+  it("AUTHORIZED leftovers resume to exactly one submit", async () => {
+    const d = dir();
+    const { principal, recipient, caps } = setup();
+    const digest = "88".repeat(32);
+    const { redemption, chainId } = issueRedeem(
+      caps,
+      principal,
+      recipient,
+      digest
+    );
+    // Crash between AUTHORIZED and SUBMITTING: craft the leftover directly.
+    const key = deriveIdempotencyKey(digest, "email");
+    const created = createExecution(
+      d,
+      {
+        idempotencyKey: key,
+        capabilityId: chainId,
+        termsDigest: digest,
+        action: "/email/send",
+        recipient: DEST,
+        resource: "msg:1",
+        purpose: "followup",
+        context: { to: "a@approved-company.com" },
+      },
+      NOW
+    );
+    transitionExecution(d, created.executionId, "AUTHORIZED", {}, NOW);
+    const fakes = makeFakeProviders({ nowSec: () => NOW });
+    const receipt = await executeWithJournal({
+      dir: d,
+      provider: fakes.email,
+      req: reqFor(chainId, digest),
+      redemption,
+      nowSec: NOW,
+      at: NOW,
+    });
+    assert.ok(receipt.transaction.startsWith("fake-email-"));
+    assert.equal(fakes.email.calls.length, 1);
+    assert.equal(findByIdempotencyKey(d, key)?.attempts, 1);
+  });
+
+  it("journal creation fails closed at capacity with named repair", () => {
+    const d = dir();
+    const base = {
+      capabilityId: "ab".repeat(32),
+      termsDigest: "cd".repeat(32),
+      action: "/email/send",
+      recipient: DEST,
+      resource: "msg:1",
+      purpose: "followup",
+      context: {},
+    };
+    // Fill directly (createExecution per record would be O(n^2) scans).
+    mkdirSync(join(d, "executions"), { recursive: true });
+    for (let i = 0; i < 5000; i += 1) {
+      const id = i.toString(16).padStart(32, "0");
+      writeFileSync(
+        join(d, "executions", `${id}.json`),
+        JSON.stringify({
+          ...base,
+          executionId: id,
+          idempotencyKey: `k-fill-${i}`,
+          state: "SUCCEEDED",
+          createdAt: NOW,
+          updatedAt: NOW,
+          attempts: 1,
+          maxAttempts: 3,
+        })
+      );
+    }
+    assert.throws(
+      () => createExecution(d, { ...base, idempotencyKey: "k-overflow" }, NOW),
+      /journal full/
     );
   });
 });

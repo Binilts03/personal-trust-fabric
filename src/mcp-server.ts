@@ -12,7 +12,8 @@ import {
   FileAuditLog,
   RecipientRegistry,
   canonicalize,
-  executeAndReceipt,
+  executeWithJournal,
+  executorAsProvider,
   issueAgentChallenge,
   leafCidHex,
   loadAgents,
@@ -919,20 +920,42 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       // double-spend — the safe direction. CAS failure here fails the redeem
       // closed before any money moves.
       saveAuthority(opts.dir, auth);
-      const receipt = await executeAndReceipt(
-        executor,
-        {
+      // Journaled execution (ADR-0021): the execution record persists under
+      // a proposal-anchored idempotency key before the provider call, so a
+      // crash between effect and receipt reconciles to the same receipt
+      // instead of resubmitting. A reminted capability finds the SUCCEEDED
+      // record and returns it without touching the provider.
+      const journaled = await executeWithJournal({
+        dir: opts.dir,
+        provider: executorAsProvider(executor, "payment", now),
+        req: {
           capabilityId: leafCidHex(challenge.cap),
+          termsDigest: args.termsDigest,
+          action: "/pay",
           recipient,
-          amount,
-          currency,
           resource,
           purpose,
-          termsDigest: args.termsDigest,
+          context: { amount, currency },
         },
-        redeemed,
-        now()
-      );
+        redemption: redeemed,
+        nowSec: now(),
+        at: now(),
+      });
+      // Project the /pay receipt shape from the journal receipt. Amount and
+      // currency come from the exact authorized terms verified above
+      // (authorizedTermsCover inside the journal) — never invented.
+      const receipt = {
+        receiptId: journaled.receiptId,
+        capabilityId: journaled.capabilityId,
+        recipient: journaled.recipient,
+        amount,
+        currency,
+        resource: journaled.resource,
+        purpose: journaled.purpose,
+        transaction: journaled.transaction,
+        at: journaled.at,
+        termsDigest: journaled.termsDigest,
+      };
       // Authority already persisted above: the entry stamps the post-save
       // revisions so a later file rollback fails the freshness check.
       audit.append({
