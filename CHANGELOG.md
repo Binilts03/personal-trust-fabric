@@ -24,6 +24,9 @@ release day. This project adheres to Semantic Versioning.
   `p3p-client-sdk@1.3.0` shapes plus manual runbook
   `docs/audit/p3p-sandbox.md`; `docs` CI job now a required branch
   protection check alongside `gate`/`secrets`.
+- Build hygiene: `prebuild` removes `dist/` before every `tsc` build so
+  stale compiled tests from other branches can never pollute `npm test`
+  (previously a dirty `dist/` ran phantom suites and failed the gate).
 - P3P evidence-only adapter (ADR-0020, Phase 2): `src/adapters/p3p.ts`
   normalizes SDK-decoded challenges (paise amounts, route-path resources,
   `RESERVE_PAY`/`OTM`/`CARD`), maps them to identity-free `/pay` demands

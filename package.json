@@ -78,6 +78,7 @@
   "scripts": {
     "check:brand": "node scripts/check-brand.mjs",
     "typecheck": "tsc --noEmit",
+    "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/tests/*.test.js\"",
     "eval": "npm run build && node --test \"dist/tests/eval/*.test.js\"",
