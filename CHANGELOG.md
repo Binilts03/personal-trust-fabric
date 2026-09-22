@@ -13,6 +13,15 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Durable execution journal (ADR-0021, Phase 3): `src/store/execution.ts`
+  (file-per-execution records, strict transition map, derived
+  idempotency keys, key-idempotent create, persisted retry budget,
+  explicit abort, restart recovery) plus journaled orchestrator
+  `executeWithJournal` (re-entrant by key, idempotent replay, query-first
+  reconcile to SUCCEEDED / safe same-key retry / RECONCILED quarantine,
+  never blind retry; attestation failures reconcile rather than hide;
+  fixed-vocabulary errors and bounded external refs); adversarial review
+  findings fixed before merge.
 - P3P review hardening: challenge expiry is now digest-bound
   (`p3pExpiresAt` in operation context) and re-enforced at demand mapping
   and receipt verification; adapter error strings and receipt failure
