@@ -15,7 +15,8 @@ import { isRecord, reqString } from "./guards.js";
  * - It normalizes an SDK/host-decoded challenge into `P3pChallenge` and maps
  *   it to an identity-free PTF `/pay` operation (amounts in paise, minor
  *   units — no decimal shifting here, same discipline as x402 atomic units).
- * - It verifies a `Payment-Receipt` against the authorized operation.
+ * - It normalizes a `Payment-Receipt` into `P3pReceipt` (wire-faithful to
+ *   `decodeReceipt`) and verifies it against the authorized terms.
  * - It NEVER touches provider credentials: no `PINELABS_CLIENT_SECRET`,
  *   Grantex API key, grant token, one-time payment token, PAN, or UPI
  *   credential appears in any input, output, receipt, or error string
@@ -44,8 +45,13 @@ export class P3pError extends Error {
   }
 }
 
-/** Payment methods live on P3P today (challenge advertises a subset). */
-export const P3P_METHODS = ["RESERVE_PAY", "OTM", "CARD"] as const;
+/** Payment methods in the current P3P payload contract (challenge advertises a subset). */
+export const P3P_METHODS = [
+  "RESERVE_PAY",
+  "OTM",
+  "CARD",
+  "CREDIT_EMI",
+] as const;
 export type P3pPaymentMethod = (typeof P3P_METHODS)[number];
 
 function isMethod(v: unknown): v is P3pPaymentMethod {
@@ -229,34 +235,111 @@ export function toP3pPaymentDemand(
   };
 }
 
+/**
+ * Normalized P3P receipt — wire-faithful to the official
+ * `decodeReceipt` output (`p3p-client-sdk`), mapped to PTF vocabulary:
+ * `status` → `success`, `reference` → `transactionId`,
+ * `settlement.amount` (minor-unit string) → `amountPaise`,
+ * `settlement.currency` → `currency`, `timestamp` → `receivedAt`.
+ * The wire carries NO resource/merchant (and `paymentGateway` is never
+ * trusted): those bindings live on the challenge side, enforced when the
+ * demand is mapped and folded into the PTF terms digest. A receipt is
+ * bound to its challenge by `challengeId` (server-issued, one-time-token
+ * bound rail-side); cross-challenge use fails on challenge binding plus
+ * the host replay set.
+ */
 export interface P3pReceipt {
   readonly success: boolean;
   readonly transactionId: string;
   readonly amountPaise: number;
   readonly currency: string;
-  readonly resource: string;
-  readonly merchant: string;
   readonly challengeId: string;
-  readonly errorReason?: string;
+  readonly paymentMethod?: P3pPaymentMethod;
+  readonly receivedAt: number;
 }
 
 /**
- * Verify a `Payment-Receipt` against the authorized operation. Any binding
- * mismatch fails closed; replay within the caller-supplied seen-set fails
- * closed (`seenChallengeIds` is host-owned, same duty as verifier nonces).
- * Unknown receipt fields are never trusted and never echoed — including
- * `errorReason`, which maps to a fixed reason so provider detail cannot
- * leak into exception text. Where `expected.expiresAt` is supplied, a
- * receipt for an expired challenge fails closed as well.
+ * Validate a host/SDK-decoded `Payment-Receipt` into the normalized shape.
+ * Unknown extra fields are ignored AND never echoed into the output
+ * (freshly built below), so gateway metadata or smuggled credentials
+ * cannot propagate. Throws before any verification. Non-terminal wire
+ * statuses have no receipt representation here: a `202`-pending debit is
+ * not a receipt — the host polls `getDebitStatus` to terminal and only
+ * then normalizes (see `P3pProtectedExecutor`).
+ */
+export function normalizeP3pReceipt(wire: unknown): P3pReceipt {
+  if (!isRecord(wire)) throw new P3pError("receipt must be an object");
+  const status = wire["status"];
+  if (status !== "success" && status !== "failure")
+    throw new P3pError("receipt status must be success or failure");
+  const reference = wire["reference"];
+  if (typeof reference !== "string" || reference.length === 0)
+    throw new P3pError("receipt transaction missing");
+  if (reference.length > 256)
+    throw new P3pError("receipt transaction exceeds 256 chars");
+  const settlement = wire["settlement"];
+  if (!isRecord(settlement)) throw new P3pError("receipt settlement missing");
+  let amountPaise: number;
+  try {
+    amountPaise = parsePaiseAmount(settlement["amount"]);
+  } catch {
+    throw new P3pError("receipt amount must be a paise integer");
+  }
+  let currency: string;
+  try {
+    currency = parseCurrency(settlement["currency"]);
+  } catch {
+    throw new P3pError("receipt currency must be a 3-letter ISO code");
+  }
+  const challengeId = reqString(
+    wire["challengeId"],
+    "p3p: missing/invalid challengeId"
+  );
+  if (challengeId.length > 256)
+    throw new P3pError("challengeId exceeds 256 chars");
+  const rawTimestamp = wire["timestamp"];
+  if (typeof rawTimestamp !== "string")
+    throw new P3pError("receipt timestamp missing");
+  const receivedAt = Math.floor(Date.parse(rawTimestamp) / 1000);
+  if (!Number.isInteger(receivedAt) || receivedAt <= 0)
+    throw new P3pError("receipt timestamp malformed");
+  let paymentMethod: P3pPaymentMethod | undefined;
+  if (wire["paymentMethod"] !== undefined) {
+    if (!isMethod(wire["paymentMethod"]))
+      throw new P3pError("unsupported payment method");
+    paymentMethod = wire["paymentMethod"];
+  }
+  return {
+    success: status === "success",
+    transactionId: reference,
+    amountPaise,
+    currency,
+    challengeId,
+    ...(paymentMethod !== undefined ? { paymentMethod } : {}),
+    receivedAt,
+  };
+}
+
+/**
+ * Verify a normalized `Payment-Receipt` against the authorized terms. Any
+ * binding mismatch fails closed; replay within the caller-supplied seen-set
+ * fails closed (`seenChallengeIds` is host-owned, same duty as verifier
+ * nonces). Method binds only when both sides carry it (older rails omit
+ * it); resource/merchant bind transitively via `challengeId` — the
+ * authorized demand already checked them against the challenge and the
+ * digest covers them, and genuine receipts never carry them, so comparing
+ * host-supplied copies here would be theater. Where `expected.expiresAt`
+ * is supplied, a receipt for an expired challenge fails closed as well.
+ * Staleness uses the host-supplied `capturedAt` (map the receipt's
+ * `receivedAt` into it); `maxReceiptAgeSec` bounds it.
  */
 export function verifyP3pReceipt(
   receipt: unknown,
   expected: {
     readonly amountPaise: number;
     readonly currency: string;
-    readonly resource: string;
-    readonly merchant: string;
     readonly challengeId: string;
+    readonly method?: P3pPaymentMethod;
     readonly expiresAt?: number;
   },
   opts: {
@@ -282,12 +365,14 @@ export function verifyP3pReceipt(
     return { ok: false, reason: "amount mismatch" };
   if (receipt["currency"] !== expected.currency)
     return { ok: false, reason: "currency mismatch" };
-  if (receipt["resource"] !== expected.resource)
-    return { ok: false, reason: "resource mismatch" };
-  if (receipt["merchant"] !== expected.merchant)
-    return { ok: false, reason: "merchant mismatch" };
   if (receipt["challengeId"] !== expected.challengeId)
     return { ok: false, reason: "challenge mismatch" };
+  if (
+    expected.method !== undefined &&
+    receipt["paymentMethod"] !== undefined &&
+    receipt["paymentMethod"] !== expected.method
+  )
+    return { ok: false, reason: "method mismatch" };
   if (expected.expiresAt !== undefined) {
     const now = opts.nowSec ?? Math.floor(Date.now() / 1000);
     if (!Number.isInteger(expected.expiresAt) || now > expected.expiresAt)
@@ -317,12 +402,22 @@ export function verifyP3pReceipt(
  * `GRANTEX_API_KEY`, and the server-side grant token. PTF supplies only the
  * normalized challenge, the selected method, the grant SCOPE NAME (never the
  * grant token), and a stable idempotency key. The result carries external
- * refs as evidence; verify with `verifyP3pReceipt` before trusting it.
+ * refs as evidence; normalize with `normalizeP3pReceipt` and verify with
+ * `verifyP3pReceipt` before trusting it.
+ *
+ * Pending is not a receipt: on `202` the host polls `getDebitStatus` to a
+ * terminal state and only then returns. A poll timeout is UNKNOWN outcome
+ * (money may have moved) — never report it as success, and reconcile
+ * out-of-band; for PTF verification it simply yields no receipt (deny).
+ * The customer mobile number for token creation is host-resolved inside
+ * the executor and must never cross PTF (Personal State boundary).
  */
 export interface P3pProtectedExecutor {
   executePaidRoute(input: {
     readonly challenge: P3pChallenge;
     readonly paymentMethod: P3pPaymentMethod;
+    /** Active mandate/pre-auth reference for token creation (mandate/card rails). */
+    readonly paymentMethodReferenceId?: string;
     /** Scope NAME the grant must carry (e.g. "mpp:payment:initiate") — never a token. */
     readonly requiredScope: string;
     /** Stable per authorized terms (derive from termsDigest). */
