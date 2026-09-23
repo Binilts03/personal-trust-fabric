@@ -13,6 +13,13 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Durable presentation-nonce replay protection (G11): `ptf_present_data`
+  records every presentation nonce in the durable `FileReplay` set
+  (`nonces.json`) and denies repeats as replay — restart no longer launders
+  a replayed nonce. Check-then-record runs before vault/keys
+  (burn-before-deliver: a crash between record and presentation burns the
+  nonce, never grants a second presentation — retry with a fresh nonce);
+  entries prune past a 600s window covering the verifier maxAge default.
 - Human approval surface, slice 1 (G6): deterministic LLM-free operator
   loop over the MCP proposal queue — `ptf review [--digest]` (sanitized
   rendering via the existing approval presenter; terminal-control smuggling

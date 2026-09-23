@@ -40,6 +40,7 @@ import {
   loadProposal,
   transitionProposal,
 } from "./store/challenges.js";
+import { FileReplay } from "./store/repositories.js";
 import type {
   ActorSelector,
   AuthorityOperation,
@@ -1096,6 +1097,18 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       if (digestForOperation(bound) !== args.termsDigest) {
         fail("proposal terms changed: propose again");
       }
+      // Durable presentation-nonce replay (G11): nonce uniqueness is
+      // verifier duty, but a restarted host must not launder a replayed
+      // nonce — the in-memory set dies with the process. Check-then-record
+      // up front, before vault or keys (burn-before-deliver: a crash
+      // between record and presentation burns the nonce, never grants a
+      // second presentation — retry with a fresh nonce). Prune window
+      // (600s) covers the verifier maxAge default (300s) with margin.
+      FileReplay.prune(opts.dir, 600, now());
+      if (FileReplay.has(opts.dir, args.nonce)) {
+        fail("replay denied: presentation nonce already used");
+      }
+      FileReplay.add(opts.dir, args.nonce, now());
       const holderSeed = keys[demand.principal];
       if (holderSeed === undefined) {
         fail(`server holds no key for principal ${demand.principal}`);

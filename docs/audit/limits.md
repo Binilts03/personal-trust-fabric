@@ -68,6 +68,13 @@ tested at the boundary.
   `proposals/` (O_EXCL create, TTL GC) — restart preserves
   pending/denied/executed; recipient challenges stay in-memory (lost on
   restart, fail-closed → redeem phase 1 again).
+- Presentation nonces are durable (`nonces.json` via `FileReplay`) and
+  burn-before-deliver: a crash between nonce record and presentation burns
+  the nonce without a presentation (safe direction — retry the pending
+  proposal with a fresh nonce, never a second presentation for the first).
+  Entries prune past 600s (verifier maxAge default 300s + margin); a
+  verifier enforcing a longer window must prune less aggressively —
+  host-configured duty, no knob yet.
 - Human approval surface is CLI-only and partial: `review` (sanitized),
   `approve` (one one-time approval per proposal), `deny` (veto, mints
   nothing). No freeze switch, no WebAuthn/passkey step-up, no receipts
