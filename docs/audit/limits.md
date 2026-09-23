@@ -75,6 +75,9 @@ tested at the boundary.
   Entries prune past 600s (verifier maxAge default 300s + margin); a
   verifier enforcing a longer window must prune less aggressively —
   host-configured duty, no knob yet.
+- Benchmark numbers (`npm run bench`) are env-stamped local measurements
+  for same-box comparison only — never SLOs, never cross-machine claims.
+  CI asserts row shape, not timings (timing thresholds would flake).
 - Human approval surface is CLI-only and partial: `review` (sanitized),
   `approve` (one one-time approval per proposal), `deny` (veto, mints
   nothing). No freeze switch, no WebAuthn/passkey step-up, no receipts
