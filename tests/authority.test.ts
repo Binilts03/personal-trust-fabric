@@ -479,6 +479,8 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010,
       cmd: "/pay" as const,
       args: { amount: 100, currency: "INR" },
       recipient: MERCHANT,
+      resource: "r",
+      purpose: "p",
       termsDigest: digest,
     };
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
@@ -522,6 +524,38 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010,
     // Bounded /pay grants still register and allow.
     auth.addGrant(payGrant("bounded-pay"));
     assert.equal(auth.evaluate(op(), INGRESS).allow, true);
+  });
+
+  it("soft guard rejects /pay* grants without an exact currency", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    // Amount ceiling without currency: 2000 of WHAT is unsafe.
+    assert.throws(
+      () =>
+        auth.addGrant({
+          id: "currency-less-pay",
+          principal: PRINCIPAL,
+          actor: { kind: "exact", id: AGENT },
+          action: { name: "/pay" },
+          bounds: [{ path: ".context.amount", op: "<=", value: 2000 }],
+        }),
+      /currency/
+    );
+    // A currency SET is not an exact currency: one ceiling cannot safely
+    // cover two monies.
+    assert.throws(
+      () =>
+        auth.addGrant({
+          id: "multi-currency-pay",
+          principal: PRINCIPAL,
+          actor: { kind: "exact", id: AGENT },
+          action: { name: "/pay" },
+          bounds: [
+            { path: ".context.amount", op: "<=", value: 2000 },
+            { path: ".context.currency", op: "in", value: ["INR", "USD"] },
+          ],
+        }),
+      /currency/
+    );
   });
 });
 

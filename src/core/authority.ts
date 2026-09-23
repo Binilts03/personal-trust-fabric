@@ -749,6 +749,11 @@ export class Authority {
     // (<=, ==, or `in`) on every /pay* grant. One-time exact-terms approvals
     // remain the path for open or unusual amounts. Soft (add-time throw, not
     // an evaluation rule) so existing bounded grants and restores keep working.
+    // Currency is part of the same guard: an amount without an exact currency
+    // is not a bound at all (2000 of WHAT?), and one ceiling cannot safely
+    // cover two monies — so `.context.currency == "<ISO>"` is required too.
+    // Multi-currency authority needs one grant per currency, or a real
+    // monetary-bound model instead of independent scalar predicates.
     if (g.action.name.startsWith("/pay")) {
       const hasAmountCeiling = g.bounds.some(
         (b) =>
@@ -758,6 +763,18 @@ export class Authority {
       if (!hasAmountCeiling) {
         throw new Error(
           `grant ${g.id}: unbounded /pay* grant rejected — add a .context.amount ceiling (e.g. paymentBounds({ amountMax, currency }))`
+        );
+      }
+      const hasExactCurrency = g.bounds.some(
+        (b) =>
+          b.path === ".context.currency" &&
+          b.op === "==" &&
+          typeof b.value === "string" &&
+          b.value.length > 0
+      );
+      if (!hasExactCurrency) {
+        throw new Error(
+          `grant ${g.id}: currency-less /pay* grant rejected — bind one exact .context.currency (e.g. paymentBounds({ amountMax, currency }))`
         );
       }
     }

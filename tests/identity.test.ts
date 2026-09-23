@@ -79,6 +79,8 @@ describe("recipient binding registry with rotation (ptf-v02/01)", () => {
       cmd: "/pay" as const,
       args: { amount: 10, currency: "INR" },
       recipient: MERCHANT,
+      resource: "r",
+      purpose: "p",
       termsDigest: digest,
     };
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));

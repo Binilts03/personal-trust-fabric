@@ -163,6 +163,8 @@ describe("protected payment execution with receipts and secretness audit (ptf-v0
       cmd: "/pay" as const,
       args: { amount: 10, currency: "INR" },
       recipient: MERCHANT,
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
       termsDigest: digest,
     };
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));

@@ -99,6 +99,8 @@ describe("capability runtime (ticket 01)", () => {
       cmd: "/pay" as const,
       args: { amount: 1790, currency: "INR" },
       recipient: MERCHANT,
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
       termsDigest: terms,
     };
 
@@ -107,6 +109,39 @@ describe("capability runtime (ticket 01)", () => {
     const first = caps.authorize([root], demand, { consume: true, proof });
     assert.equal(first.ok, true);
     assert.equal(caps.authorize([root], demand, { consume: false }).ok, false);
+  });
+
+  it("redeem requires resource and purpose; omission fails closed", () => {
+    const { caps, principal, merchant } = setup();
+    const terms = termsDigestOf(payTerms());
+    const root = issueRoot(caps, principal, 1_700_003_600, terms);
+    const proof = proofFor(root, merchant);
+    const base = {
+      cmd: "/pay" as const,
+      args: { amount: 1790, currency: "INR" },
+      recipient: MERCHANT,
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
+      termsDigest: terms,
+    };
+    // Fully specified demand redeems.
+    assert.equal(caps.redeem([root], base, { proof }).ok, true);
+    // Omitted resource or purpose fails closed on redeem (dry-run check
+    // stays lenient — only redemption carries executable meaning).
+    const { caps: caps2, principal: p2, merchant: m2 } = setup();
+    const root2 = issueRoot(caps2, p2, 1_700_003_600, terms);
+    const proof2 = proofFor(root2, m2);
+    const { resource: _r, ...noResource } = base;
+    void _r;
+    assert.equal(
+      caps2.redeem([root2], noResource, { proof: proof2 }).ok,
+      false
+    );
+    const { purpose: _p, ...noPurpose } = base;
+    void _p;
+    assert.equal(caps2.redeem([root2], noPurpose, { proof: proof2 }).ok, false);
+    const checked = caps2.check([root2], noResource);
+    assert.equal(checked.ok, true);
   });
 
   it("attenuates downward only; widening is rejected at issue", () => {
@@ -196,6 +231,8 @@ describe("capability runtime (ticket 01)", () => {
       cmd: "/pay" as const,
       args: { amount: 5000, currency: "INR" },
       recipient: MERCHANT,
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
       termsDigest: terms,
     };
     const denied = caps.authorize([root], over, { consume: false });
@@ -204,6 +241,8 @@ describe("capability runtime (ticket 01)", () => {
       cmd: "/pay" as const,
       args: { amount: 100, currency: "INR" },
       recipient: MERCHANT,
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
       termsDigest: terms,
     };
     assert.equal(caps.authorize([root], demand, { consume: true }).ok, false);
@@ -248,6 +287,8 @@ describe("capability runtime (ticket 01)", () => {
       cmd: "/pay" as const,
       args: { amount: 100, currency: "INR" },
       recipient: MERCHANT,
+      resource: "invoice:inv_8472",
+      purpose: "pay invoice",
       termsDigest: terms,
     };
     caps.revoke(root.payload.revocationId);
@@ -410,6 +451,8 @@ describe("attenuation fixes (review batch A)", () => {
           cmd: "/pay",
           args: { amount: 10, currency: "INR" },
           recipient: MERCHANT,
+          resource: "r",
+          purpose: "p",
           termsDigest: digest,
         },
         {
