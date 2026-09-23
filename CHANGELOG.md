@@ -170,6 +170,19 @@ CLI/MCP surface or `src/api.ts` — except the documented behavior change
 that proposals now survive restarts (ADR-0017; previously check → unknown
 after restart).
 
+### Fixed
+
+- Authority hardening (independent review batch B): `/pay*` standing grants
+  now require one exact `.context.currency == "<ISO>"` bound alongside the
+  amount ceiling (add-time throw; wrong-currency demands denied at
+  evaluate; pre-guard currency-less snapshots throw at restore);
+  capability `redeem()` fails closed when `resource`/`purpose` is absent
+  (dry-run `check()` stays lenient by design); `revoke(policyId)` now
+  throws instead of recording an unenforced revocation — policies retire
+  via `disablePolicy()` (immediate, permanent, snapshot-audited, restore
+  safe); `ptf_present_data` responses carry an explicit read-only /
+  not-a-payment-authorization notice for display layers.
+
 ## [0.1.0-rc.1] - 2026-09-14
 
 First release candidate: user-owned trust and delegated-authority layer

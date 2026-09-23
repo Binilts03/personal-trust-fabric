@@ -748,7 +748,14 @@ export class Authority {
     // never creates (ADR-0002): require an explicit `.context.amount` ceiling
     // (<=, ==, or `in`) on every /pay* grant. One-time exact-terms approvals
     // remain the path for open or unusual amounts. Soft (add-time throw, not
-    // an evaluation rule) so existing bounded grants and restores keep working.
+    // an evaluation rule) so existing bounded grants keep working; restores
+    // re-validate through the same path, so pre-guard currency-less
+    // snapshots throw instead of minting unbounded-currency authority.
+    // Currency is part of the same guard: an amount without an exact currency
+    // is not a bound at all (2000 of WHAT?), and one ceiling cannot safely
+    // cover two monies — so `.context.currency == "<ISO>"` is required too.
+    // Multi-currency authority needs one grant per currency, or a real
+    // monetary-bound model instead of independent scalar predicates.
     if (g.action.name.startsWith("/pay")) {
       const hasAmountCeiling = g.bounds.some(
         (b) =>
@@ -758,6 +765,18 @@ export class Authority {
       if (!hasAmountCeiling) {
         throw new Error(
           `grant ${g.id}: unbounded /pay* grant rejected — add a .context.amount ceiling (e.g. paymentBounds({ amountMax, currency }))`
+        );
+      }
+      const hasExactCurrency = g.bounds.some(
+        (b) =>
+          b.path === ".context.currency" &&
+          b.op === "==" &&
+          typeof b.value === "string" &&
+          b.value.length > 0
+      );
+      if (!hasExactCurrency) {
+        throw new Error(
+          `grant ${g.id}: currency-less /pay* grant rejected — bind one exact .context.currency (e.g. paymentBounds({ amountMax, currency }))`
         );
       }
     }
@@ -932,6 +951,11 @@ export class Authority {
       throw new Error("policy id required");
     }
     this.checkDuplicateId(p.id, `policy ${p.id}`);
+    if (this.revoked.has(p.id)) {
+      throw new Error(
+        `policy ${p.id}: id was retired via disablePolicy — ids are global and immutable`
+      );
+    }
     const what = `policy ${p.id}`;
     if (p.actor !== undefined) checkActorSelector(p.actor, what);
     if (p.actionName !== undefined) {
@@ -982,12 +1006,47 @@ export class Authority {
     this.issued.set(authorityId, set);
   }
 
+  /**
+   * Revoke a grant or approval id. Revocation is permanent, audit-visible
+   * (snapshot `revoked`), and fans out to derived capabilities via onRevoke.
+   *
+   * Policies are NOT revocable: evaluate never consults `revoked` for
+   * policies, so revoking a policy id used to record a revocation that
+   * changed nothing while the policy kept narrowing. Passing a policy id
+   * throws — retire policies with {@link disablePolicy}.
+   */
   revoke(id: string, exp?: number): void {
+    if (this.policies.has(id)) {
+      throw new Error(
+        `revoke: ${id} is a policy — revoke has no effect on policies; retire it with disablePolicy`
+      );
+    }
     this.revoked.set(id, exp ?? null);
     const derived = this.issued.get(id);
     if (derived !== undefined && this.onRevoke !== undefined) {
       this.onRevoke([...derived]);
     }
+  }
+
+  /**
+   * Retire a policy: it stops narrowing immediately, and the retirement is
+   * permanent and audit-visible. The id is recorded in `revoked` (so
+   * snapshots/audits show the retirement and the id can never be
+   * re-registered — citations may still reference it), while the policy body
+   * is dropped so it can never apply again, including across
+   * snapshot/restore cycles.
+   */
+  disablePolicy(id: string): void {
+    if (!this.policies.has(id)) {
+      if (this.grants.has(id) || this.approvals.has(id)) {
+        throw new Error(
+          `disablePolicy: ${id} is not a policy — revoke grants and approvals with revoke`
+        );
+      }
+      throw new Error(`disablePolicy: unknown policy ${id}`);
+    }
+    this.policies.delete(id);
+    this.revoked.set(id, null);
   }
 
   /** Drop revocation entries whose authority is known-expired. */
@@ -1090,8 +1149,10 @@ export class Authority {
       auth.addGrant(g as StandingGrant);
     for (const a of snap["approvals"] as unknown[])
       auth.addApproval(a as OneTimeApproval);
-    for (const p of snap["policies"] as unknown[])
-      auth.addPolicy(p as PolicyConstraint);
+    // Revocations load BEFORE policies: addPolicy rejects retired ids, so a
+    // snapshot smuggling both a policy body and its retirement scar fails
+    // closed here instead of reviving the policy. (Grants/approvals have no
+    // such check — a revoked grant must restore as revoked, not throw.)
     const revoked = snap["revoked"];
     if (!Array.isArray(revoked))
       throw new Error("authority snapshot: revoked must be an array");
@@ -1105,6 +1166,8 @@ export class Authority {
       }
       auth.revoked.set(entry[0] as string, entry[1] as number | null);
     }
+    for (const p of snap["policies"] as unknown[])
+      auth.addPolicy(p as PolicyConstraint);
     const used = snap["used"];
     if (!Array.isArray(used))
       throw new Error("authority snapshot: used must be an array");

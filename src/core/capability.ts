@@ -188,7 +188,11 @@ export class Capabilities {
   /**
    * Redemption (ADR-0018): verifies, checks the recipient proof, consumes
    * one use, and returns the ONLY value execute paths accept. Proof is
-   * required (no bare authorization exists).
+   * required (no bare authorization exists). Resource and purpose are
+   * required: an underspecified demand must never produce a successful
+   * redemption, since "redeemed" means "this exact operation may execute".
+   * Dry-run `check` stays lenient — only redemption carries executable
+   * meaning, so only redemption enforces completeness.
    */
   redeem(
     chain: CapabilityChain,
@@ -198,6 +202,22 @@ export class Capabilities {
       readonly nowSec?: number;
     }
   ): RedemptionResult {
+    if (typeof demand.resource !== "string" || demand.resource.length === 0) {
+      const denied: RedemptionResult = {
+        ok: false,
+        reason: "terms",
+        detail: "resource required for redemption",
+      };
+      return denied;
+    }
+    if (typeof demand.purpose !== "string" || demand.purpose.length === 0) {
+      const denied: RedemptionResult = {
+        ok: false,
+        reason: "terms",
+        detail: "purpose required for redemption",
+      };
+      return denied;
+    }
     return this.runAuthorization(chain, demand, opts, "redeem");
   }
 

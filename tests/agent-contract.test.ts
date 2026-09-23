@@ -233,6 +233,8 @@ describe("general agent contract (P0 slice 2)", () => {
       cmd: "/pay" as const,
       args: { amount: 100, currency: "INR" },
       recipient: M,
+      resource: "invoice:1",
+      purpose: "p",
       termsDigest: digest,
     };
     // Missing proof on redeem fails closed.

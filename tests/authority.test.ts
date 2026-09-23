@@ -132,6 +132,37 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010,
     assert.equal(under.allow, true);
   });
 
+  it("revoke(policy) throws; policies retire via disablePolicy only", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant(payGrant("grocery-weekly"));
+    auth.addPolicy({
+      id: "frugal-cap",
+      actionName: "/pay",
+      bounds: paymentBounds({ amountMax: 1000, currency: "INR" }),
+    });
+    assert.equal(auth.evaluate(op(1500), INGRESS).allow, false);
+    // Revoking a policy id is rejected: the old path recorded a revocation
+    // that evaluate never consulted, so the policy kept narrowing.
+    assert.throws(() => auth.revoke("frugal-cap"), /disablePolicy/);
+    const still = auth.evaluate(op(1500), INGRESS);
+    assert.equal(still.allow, false);
+    if (!still.allow) assert.equal(still.policyId, "frugal-cap");
+    // Explicit disable retires it: the same demand now passes.
+    auth.disablePolicy("frugal-cap");
+    assert.equal(auth.evaluate(op(1500), INGRESS).allow, true);
+    // Retirement is permanent and audited: re-registration throws, the
+    // snapshot drops the policy but keeps the retired id.
+    assert.throws(
+      () => auth.addPolicy({ id: "frugal-cap", bounds: [] }),
+      /retired/
+    );
+    assert.throws(() => auth.disablePolicy("frugal-cap"), /unknown/);
+    assert.throws(() => auth.disablePolicy("grocery-weekly"), /revoke/);
+    const snap = auth.snapshot();
+    assert.ok(!snap.policies.some((p) => p.id === "frugal-cap"));
+    assert.ok(snap.revoked.some(([id]) => id === "frugal-cap"));
+  });
+
   it("one-time approval binds exact terms; mutations fail closed with terms reason", () => {
     const auth = new Authority({ nowSec: () => NOW });
     const operation = op(1790);
@@ -479,6 +510,8 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010,
       cmd: "/pay" as const,
       args: { amount: 100, currency: "INR" },
       recipient: MERCHANT,
+      resource: "r",
+      purpose: "p",
       termsDigest: digest,
     };
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
@@ -522,6 +555,99 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010,
     // Bounded /pay grants still register and allow.
     auth.addGrant(payGrant("bounded-pay"));
     assert.equal(auth.evaluate(op(), INGRESS).allow, true);
+  });
+
+  it("soft guard rejects /pay* grants without an exact currency", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    // Amount ceiling without currency: 2000 of WHAT is unsafe.
+    assert.throws(
+      () =>
+        auth.addGrant({
+          id: "currency-less-pay",
+          principal: PRINCIPAL,
+          actor: { kind: "exact", id: AGENT },
+          action: { name: "/pay" },
+          bounds: [{ path: ".context.amount", op: "<=", value: 2000 }],
+        }),
+      /currency/
+    );
+    // A currency SET is not an exact currency: one ceiling cannot safely
+    // cover two monies.
+    assert.throws(
+      () =>
+        auth.addGrant({
+          id: "multi-currency-pay",
+          principal: PRINCIPAL,
+          actor: { kind: "exact", id: AGENT },
+          action: { name: "/pay" },
+          bounds: [
+            { path: ".context.amount", op: "<=", value: 2000 },
+            { path: ".context.currency", op: "in", value: ["INR", "USD"] },
+          ],
+        }),
+      /currency/
+    );
+  });
+
+  it("currency binds at evaluate; legacy currency-less restores throw", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant(payGrant("inr-only"));
+    const usd = {
+      ...op(),
+      context: { amount: 100, currency: "USD", recipient: MERCHANT },
+    };
+    const denied = auth.evaluate(usd, INGRESS);
+    assert.equal(denied.allow, false);
+    if (!denied.allow) assert.equal(denied.reason, "no-authority");
+    // A pre-guard snapshot carrying a currency-less /pay* grant fails closed
+    // at restore instead of minting unbounded-currency authority.
+    const legacy = auth.snapshot();
+    const stripped = {
+      ...legacy,
+      grants: legacy.grants.map((g) => ({
+        ...g,
+        bounds: g.bounds.filter((b) => b.path !== ".context.currency"),
+      })),
+    };
+    assert.throws(() => Authority.restore(stripped), /currency/);
+  });
+
+  it("restore rejects a snapshot that revives a retired policy", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant(payGrant("grocery-weekly"));
+    auth.addPolicy({
+      id: "frugal-cap",
+      actionName: "/pay",
+      bounds: paymentBounds({ amountMax: 1000, currency: "INR" }),
+    });
+    auth.disablePolicy("frugal-cap");
+    const snap = auth.snapshot();
+    // Honest round-trip: body gone, scar present, no narrowing after restore.
+    const back = Authority.restore(JSON.parse(JSON.stringify(snap)), {
+      nowSec: () => NOW,
+    });
+    assert.ok(!back.snapshot().policies.some((p) => p.id === "frugal-cap"));
+    assert.ok(back.snapshot().revoked.some(([id]) => id === "frugal-cap"));
+    assert.equal(back.evaluate(op(1500), INGRESS).allow, true);
+    assert.throws(
+      () => back.addPolicy({ id: "frugal-cap", bounds: [] }),
+      /retired/
+    );
+    // Crafted snapshot: policy body present AND retired id → fails closed.
+    const revived = {
+      ...snap,
+      policies: [
+        {
+          id: "frugal-cap",
+          actionName: "/pay" as const,
+          bounds: paymentBounds({ amountMax: 1000, currency: "INR" }),
+        },
+      ],
+    };
+    assert.throws(
+      () => Authority.restore(revived, { nowSec: () => NOW }),
+      /retired/
+    );
   });
 });
 
