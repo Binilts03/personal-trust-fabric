@@ -949,6 +949,11 @@ export class Authority {
       throw new Error("policy id required");
     }
     this.checkDuplicateId(p.id, `policy ${p.id}`);
+    if (this.revoked.has(p.id)) {
+      throw new Error(
+        `policy ${p.id}: id was retired via disablePolicy — ids are global and immutable`
+      );
+    }
     const what = `policy ${p.id}`;
     if (p.actor !== undefined) checkActorSelector(p.actor, what);
     if (p.actionName !== undefined) {
@@ -999,12 +1004,47 @@ export class Authority {
     this.issued.set(authorityId, set);
   }
 
+  /**
+   * Revoke a grant or approval id. Revocation is permanent, audit-visible
+   * (snapshot `revoked`), and fans out to derived capabilities via onRevoke.
+   *
+   * Policies are NOT revocable: evaluate never consults `revoked` for
+   * policies, so revoking a policy id used to record a revocation that
+   * changed nothing while the policy kept narrowing. Passing a policy id
+   * throws — retire policies with {@link disablePolicy}.
+   */
   revoke(id: string, exp?: number): void {
+    if (this.policies.has(id)) {
+      throw new Error(
+        `revoke: ${id} is a policy — revoke has no effect on policies; retire it with disablePolicy`
+      );
+    }
     this.revoked.set(id, exp ?? null);
     const derived = this.issued.get(id);
     if (derived !== undefined && this.onRevoke !== undefined) {
       this.onRevoke([...derived]);
     }
+  }
+
+  /**
+   * Retire a policy: it stops narrowing immediately, and the retirement is
+   * permanent and audit-visible. The id is recorded in `revoked` (so
+   * snapshots/audits show the retirement and the id can never be
+   * re-registered — citations may still reference it), while the policy body
+   * is dropped so it can never apply again, including across
+   * snapshot/restore cycles.
+   */
+  disablePolicy(id: string): void {
+    if (!this.policies.has(id)) {
+      if (this.grants.has(id) || this.approvals.has(id)) {
+        throw new Error(
+          `disablePolicy: ${id} is not a policy — revoke grants and approvals with revoke`
+        );
+      }
+      throw new Error(`disablePolicy: unknown policy ${id}`);
+    }
+    this.policies.delete(id);
+    this.revoked.set(id, null);
   }
 
   /** Drop revocation entries whose authority is known-expired. */

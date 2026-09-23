@@ -132,6 +132,37 @@ describe("policy authority with digest-bound approval (ptf-v01/01, neutral 0010,
     assert.equal(under.allow, true);
   });
 
+  it("revoke(policy) throws; policies retire via disablePolicy only", () => {
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant(payGrant("grocery-weekly"));
+    auth.addPolicy({
+      id: "frugal-cap",
+      actionName: "/pay",
+      bounds: paymentBounds({ amountMax: 1000, currency: "INR" }),
+    });
+    assert.equal(auth.evaluate(op(1500), INGRESS).allow, false);
+    // Revoking a policy id is rejected: the old path recorded a revocation
+    // that evaluate never consulted, so the policy kept narrowing.
+    assert.throws(() => auth.revoke("frugal-cap"), /disablePolicy/);
+    const still = auth.evaluate(op(1500), INGRESS);
+    assert.equal(still.allow, false);
+    if (!still.allow) assert.equal(still.policyId, "frugal-cap");
+    // Explicit disable retires it: the same demand now passes.
+    auth.disablePolicy("frugal-cap");
+    assert.equal(auth.evaluate(op(1500), INGRESS).allow, true);
+    // Retirement is permanent and audited: re-registration throws, the
+    // snapshot drops the policy but keeps the retired id.
+    assert.throws(
+      () => auth.addPolicy({ id: "frugal-cap", bounds: [] }),
+      /retired/
+    );
+    assert.throws(() => auth.disablePolicy("frugal-cap"), /unknown/);
+    assert.throws(() => auth.disablePolicy("grocery-weekly"), /revoke/);
+    const snap = auth.snapshot();
+    assert.ok(!snap.policies.some((p) => p.id === "frugal-cap"));
+    assert.ok(snap.revoked.some(([id]) => id === "frugal-cap"));
+  });
+
   it("one-time approval binds exact terms; mutations fail closed with terms reason", () => {
     const auth = new Authority({ nowSec: () => NOW });
     const operation = op(1790);
