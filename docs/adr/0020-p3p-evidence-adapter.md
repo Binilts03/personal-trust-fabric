@@ -96,3 +96,19 @@ edge to be evidence-only with a core-ignorant boundary.
   `p3p-client-sdk@1.3.0` export shapes `decodeChallenge`,
   `extractAmountPaise`, `decodeReceipt`), tracked under roadmap G2 —
   this ADR + adapter does not claim it.
+
+## Addendum 2026-09-23: receipt wire-shape alignment
+
+Re-reading the published `p3p-client-sdk@1.3.0` types showed the
+`P3pReceipt` contract did not match the wire: genuine receipts carry
+`status`/`reference`/`settlement`/`timestamp`/`paymentMethod?` and NO
+`resource`/`merchant`/`transactionId`/`amountPaise` top-level fields.
+`normalizeP3pReceipt` now maps the wire shape (dropping `paymentGateway`
+and unknown fields); `verifyP3pReceipt` binds amount/currency/challenge
+plus method-when-present, with resource/merchant binding transitive via
+the server-issued `challengeId` — the old receipt-side comparisons
+compared host-supplied copies of fields the rail never sends, which
+proved nothing. `CREDIT_EMI` joined the accepted methods (`Crypto`
+stays rejected); the executor seam gained `paymentMethodReferenceId`
+for mandate/card rails. No architectural change: still thin,
+SDK-agnostic, evidence-only.

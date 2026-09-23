@@ -126,12 +126,12 @@ One CLI/MCP writer per store (optimistic revision control fails closed instead o
 
 ## Architecture (four planes)
 
-| Plane               | Location                                           | Responsibility                                                            |
-| ------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
-| Personal State      | `src/store/vault.ts`                               | Encrypted, purpose/agent/expiry/sensitivity-scoped records                |
-| Authority           | `src/core/`                                        | Zero-dependency deterministic: grants + digest-bound approvals            |
-| Protected Execution | `src/core/execute.ts`, `src/adapters/providers.ts` | Credentials used inside PTF; outward go sanitized instructions + receipts |
-| Protocol Edge       | `src/adapters/`                                    | AP2, x402, OAuth-agent, OpenID4VP/SD-JWT, MCP/WebMCP, A2A, AuthZEN PDP    |
+| Plane               | Location                                           | Responsibility                                                              |
+| ------------------- | -------------------------------------------------- | --------------------------------------------------------------------------- |
+| Personal State      | `src/store/vault.ts`                               | Encrypted, purpose/agent/expiry/sensitivity-scoped records                  |
+| Authority           | `src/core/`                                        | Zero-dependency deterministic: grants + digest-bound approvals              |
+| Protected Execution | `src/core/execute.ts`, `src/adapters/providers.ts` | Credentials used inside PTF; outward go sanitized instructions + receipts   |
+| Protocol Edge       | `src/adapters/`                                    | P3P, AP2, x402, OAuth-agent, OpenID4VP/SD-JWT, MCP/WebMCP, A2A, AuthZEN PDP |
 
 Three flows cover everything: **disclose** (agent asks, PTF returns the minimal approved claim), **execute** (agent asks, PTF acts internally, agent gets a receipt), **approve** (agent proposes exact terms, the person approves or denies, any change needs a new approval).
 

@@ -18,6 +18,7 @@
 import {
   Authority,
   normalizeP3pChallenge,
+  normalizeP3pReceipt,
   paymentBounds,
   toP3pPaymentDemand,
   verifyP3pReceipt,
@@ -84,37 +85,50 @@ const mutated = {
   context: { ...operation.context, amount: 10001 },
 };
 const denied = auth.evaluate(mutated, ingress, { nowSec: NOW });
-console.log("mutated-amount", denied.allow ? "ALLOW (BUG)" : `DENY (${denied.reason})`);
-const receiptCheck = verifyP3pReceipt(
-  {
-    success: true,
-    transactionId: "txn-sandbox-probe",
-    amountPaise: 10000,
-    currency: "INR",
-    resource: "/api/weather",
-    merchant: MERCHANT,
-    challengeId: "ch_sandbox_probe_001",
-  },
-  {
-    amountPaise: 10000,
-    currency: "INR",
-    resource: "/api/weather",
-    merchant: MERCHANT,
-    challengeId: "ch_sandbox_probe_001",
-  }
+console.log(
+  "mutated-amount",
+  denied.allow ? "ALLOW (BUG)" : `DENY (${denied.reason})`
 );
-console.log("receipt", receiptCheck.ok ? "BOUND" : `REJECTED (${receiptCheck.reason})`);
+const normalizedReceipt = normalizeP3pReceipt({
+  status: "success",
+  reference: "txn-sandbox-probe",
+  settlement: { amount: "10000", currency: "INR" },
+  challengeId: "ch_sandbox_probe_001",
+  timestamp: new Date(NOW * 1000).toISOString(),
+  paymentMethod: "RESERVE_PAY",
+});
+const receiptCheck = verifyP3pReceipt(
+  // Wire shape mirrors decodeReceipt output (status/reference/settlement);
+  // resource/merchant never ride the receipt — bound via the challenge.
+  normalizedReceipt,
+  {
+    amountPaise: 10000,
+    currency: "INR",
+    challengeId: "ch_sandbox_probe_001",
+    method: "RESERVE_PAY",
+  },
+  // Staleness wiring: the receipt's own timestamp bounds acceptance.
+  { capturedAt: normalizedReceipt.receivedAt, maxReceiptAgeSec: 300 }
+);
+console.log(
+  "receipt",
+  receiptCheck.ok ? "BOUND" : `REJECTED (${receiptCheck.reason})`
+);
 
 // ---- Phase B: real SDK decode of an operator-supplied 402 (env-gated) ----
 if (process.env["PTF_P3P_LIVE"] !== "1") {
-  console.log("live-decode skipped (set PTF_P3P_LIVE=1 with PTF_P3P_CHALLENGE)");
+  console.log(
+    "live-decode skipped (set PTF_P3P_LIVE=1 with PTF_P3P_CHALLENGE)"
+  );
   process.exit(0);
 }
 let sdk;
 try {
   sdk = await import("p3p-client-sdk");
 } catch {
-  console.error("live-decode needs the official SDK: npm i p3p-client-sdk (host only)");
+  console.error(
+    "live-decode needs the official SDK: npm i p3p-client-sdk (host only)"
+  );
   process.exit(2);
 }
 const header = process.env["PTF_P3P_CHALLENGE"] ?? "";

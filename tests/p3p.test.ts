@@ -11,12 +11,14 @@ import {
   generateEd25519Keypair,
   leafCidHex,
   normalizeP3pChallenge,
+  normalizeP3pReceipt,
   parsePaiseAmount,
   paymentBounds,
   signBytes,
   toP3pPaymentDemand,
   verifyP3pReceipt,
   type AuthorityOperation,
+  type P3pProtectedExecutor,
   type VerifiedIdentity,
 } from "../src/index.js";
 
@@ -480,59 +482,68 @@ describe("p3p adapter as evidence (phase 2)", () => {
     );
   });
 
-  it("receipt verification binds amount, currency, resource, merchant, challenge", () => {
+  it("receipt verification binds amount, currency, challenge, transaction", () => {
     const expected = {
       amountPaise: 10000,
       currency: "INR",
-      resource: "/api/weather",
-      merchant: MERCHANT,
       challengeId: "ch_test_001",
     };
-    const good = { success: true, transactionId: "txn-1", ...expected };
+    const good = normalizeP3pReceipt(wireReceiptFor());
     assert.equal(verifyP3pReceipt(good, expected).ok, true);
     assert.equal(
-      verifyP3pReceipt({ ...good, amountPaise: 9999 }, expected).ok,
-      false
-    );
-    assert.equal(
-      verifyP3pReceipt({ ...good, currency: "USD" }, expected).ok,
-      false
-    );
-    assert.equal(
-      verifyP3pReceipt({ ...good, resource: "/api/other" }, expected).ok,
-      false
-    );
-    assert.equal(
-      verifyP3pReceipt({ ...good, merchant: ATTACKER_MERCHANT }, expected).ok,
-      false
-    );
-    assert.equal(
-      verifyP3pReceipt({ ...good, challengeId: "ch_other" }, expected).ok,
-      false
-    );
-    assert.equal(
       verifyP3pReceipt(
-        {
-          success: false,
-          transactionId: "",
-          ...expected,
-          errorReason: "declined",
-        },
+        normalizeP3pReceipt(
+          wireReceiptFor({ settlement: { amount: "9999", currency: "INR" } })
+        ),
         expected
       ).ok,
       false
     );
-    // Provider failure detail is never echoed: fixed vocabulary only, so a
-    // secret smuggled in errorReason cannot reach exception text.
-    const leaked = verifyP3pReceipt(
-      {
-        success: false,
-        transactionId: "",
-        ...expected,
-        errorReason: "ptf-canary-provider-detail-8c2e",
-      },
-      expected
+    assert.equal(
+      verifyP3pReceipt(
+        normalizeP3pReceipt(
+          wireReceiptFor({ settlement: { amount: "10000", currency: "USD" } })
+        ),
+        expected
+      ).ok,
+      false
     );
+    assert.equal(
+      verifyP3pReceipt(
+        normalizeP3pReceipt(wireReceiptFor({ challengeId: "ch_other" })),
+        expected
+      ).ok,
+      false
+    );
+    assert.throws(
+      () => normalizeP3pReceipt(wireReceiptFor({ reference: "" })),
+      /transaction/
+    );
+    assert.equal(
+      verifyP3pReceipt(
+        normalizeP3pReceipt(wireReceiptFor({ status: "failure" })),
+        expected
+      ).ok,
+      false
+    );
+    // Host-enriched resource/merchant are ignored, never trusted: the wire
+    // carries neither, binding is transitive via challengeId (proved above
+    // by the ch_other denial + the replay set below).
+    const enriched = normalizeP3pReceipt(
+      wireReceiptFor({ resource: "/api/other", merchant: ATTACKER_MERCHANT })
+    );
+    assert.equal(verifyP3pReceipt(enriched, expected).ok, true);
+    assert.ok(!("resource" in enriched));
+    assert.ok(!("merchant" in enriched));
+    // Provider failure detail is never echoed: fixed vocabulary only, so a
+    // secret smuggled alongside a failed receipt cannot reach the result.
+    const failedWire = normalizeP3pReceipt(
+      wireReceiptFor({
+        status: "failure",
+        failureDetail: "ptf-canary-provider-detail-8c2e",
+      })
+    );
+    const leaked = verifyP3pReceipt(failedWire, expected);
     assert.equal(leaked.ok, false);
     if (!leaked.ok) {
       assert.equal(leaked.reason, "receipt reports failure");
@@ -540,21 +551,15 @@ describe("p3p adapter as evidence (phase 2)", () => {
         !JSON.stringify(leaked).includes("ptf-canary-provider-detail-8c2e")
       );
     }
-    assert.equal(
-      verifyP3pReceipt({ success: true, ...expected }, expected).ok,
-      false
-    );
   });
 
   it("replayed and stale receipts fail closed", () => {
     const expected = {
       amountPaise: 10000,
       currency: "INR",
-      resource: "/api/weather",
-      merchant: MERCHANT,
       challengeId: "ch_test_001",
     };
-    const good = { success: true, transactionId: "txn-1", ...expected };
+    const good = normalizeP3pReceipt(wireReceiptFor());
     const seen = new Set<string>();
     assert.equal(
       verifyP3pReceipt(good, expected, { seenChallengeIds: seen }).ok,
@@ -576,20 +581,10 @@ describe("p3p adapter as evidence (phase 2)", () => {
     const expected = {
       amountPaise: 10000,
       currency: "INR",
-      resource: "/api/weather",
-      merchant: MERCHANT,
       challengeId: "ch_test_001",
       expiresAt: NOW + 300,
     };
-    const good = {
-      success: true,
-      transactionId: "txn-1",
-      amountPaise: 10000,
-      currency: "INR",
-      resource: "/api/weather",
-      merchant: MERCHANT,
-      challengeId: "ch_test_001",
-    };
+    const good = normalizeP3pReceipt(wireReceiptFor());
     assert.equal(verifyP3pReceipt(good, expected, { nowSec: NOW }).ok, true);
     const expired = verifyP3pReceipt(good, expected, { nowSec: NOW + 301 });
     assert.equal(expired.ok, false);
@@ -626,22 +621,19 @@ describe("p3p adapter as evidence (phase 2)", () => {
       { nowSec: NOW }
     );
     const receipt = verifyP3pReceipt(
-      {
-        success: true,
-        transactionId: "txn-1",
-        amountPaise: 10000,
-        currency: "INR",
-        resource: "/api/weather",
-        merchant: MERCHANT,
+      normalizeP3pReceipt({
+        status: "success",
+        reference: "txn-1",
+        settlement: { amount: "10000", currency: "INR" },
         challengeId: "ch_test_001",
+        timestamp: new Date(NOW * 1000).toISOString(),
+        paymentMethod: "RESERVE_PAY",
         grantToken: sentinelGrant,
         cardPan: sentinelPan,
-      },
+      }),
       {
         amountPaise: 10000,
         currency: "INR",
-        resource: "/api/weather",
-        merchant: MERCHANT,
         challengeId: "ch_test_001",
       }
     );
@@ -806,9 +798,162 @@ describe("p3p adapter as evidence (phase 2)", () => {
     assert.ok(baseUrl.startsWith("https://"));
     assert.ok(clientId.length > 0);
     // Live path asserts the seam contract only: the executor receives a
-    // secret-free instruction (challenge + method + scope NAME +
-    // idempotency key) and returns evidence for `verifyP3pReceipt`.
+    // secret-free instruction (challenge + method + mandate ref + scope
+    // NAME + idempotency key) and returns evidence for
+    // `normalizeP3pReceipt` + `verifyP3pReceipt`.
     // Provider credentials must never appear in its inputs or outputs.
     assert.ok(!("clientSecret" in { baseUrl, clientId }));
+  });
+});
+
+function wireReceiptFor(overrides: Record<string, unknown> = {}) {
+  return {
+    status: "success",
+    reference: "txn-1",
+    settlement: { amount: "10000", currency: "INR" },
+    challengeId: "ch_test_001",
+    timestamp: new Date(NOW * 1000).toISOString(),
+    paymentMethod: "RESERVE_PAY",
+    ...overrides,
+  };
+}
+
+function receiptExpectedFor(overrides: Record<string, unknown> = {}) {
+  return {
+    amountPaise: 10000,
+    currency: "INR",
+    challengeId: "ch_test_001",
+    method: "RESERVE_PAY" as const,
+    ...overrides,
+  };
+}
+
+describe("p3p receipt wire shape (SDK 1.3.0 alignment)", () => {
+  it("normalizes a real wire receipt; gateway and smuggled fields dropped", () => {
+    const r = normalizeP3pReceipt(
+      wireReceiptFor({
+        paymentGateway: "PINE LABS ONLINE",
+        grantToken: "ptf-canary-grant-1a2b",
+        cardPan: "4111111111111111",
+      })
+    );
+    assert.deepEqual(r, {
+      success: true,
+      transactionId: "txn-1",
+      amountPaise: 10000,
+      currency: "INR",
+      challengeId: "ch_test_001",
+      paymentMethod: "RESERVE_PAY",
+      receivedAt: NOW,
+    });
+    const blob = JSON.stringify(r);
+    assert.ok(!blob.includes("PINE LABS ONLINE"));
+    assert.ok(!blob.includes("ptf-canary-grant-1a2b"));
+    assert.ok(!blob.includes("4111111111111111"));
+  });
+
+  it("rejects non-terminal and malformed wire receipts at normalize", () => {
+    assert.throws(
+      () => normalizeP3pReceipt(wireReceiptFor({ status: "pending" })),
+      /status/
+    );
+    assert.throws(
+      () => normalizeP3pReceipt(wireReceiptFor({ reference: "" })),
+      /transaction/
+    );
+    assert.throws(
+      () =>
+        normalizeP3pReceipt(
+          wireReceiptFor({ settlement: { amount: "10.5", currency: "INR" } })
+        ),
+      /amount/
+    );
+    assert.throws(
+      () => normalizeP3pReceipt(wireReceiptFor({ timestamp: "not-a-time" })),
+      /timestamp/
+    );
+    assert.throws(() => normalizeP3pReceipt(null), /object/);
+  });
+
+  it("CREDIT_EMI advertises; CRYPTO is rejected at the rail boundary", () => {
+    const emi = normalizeP3pChallenge(
+      challengeFor({ paymentMethods: ["CREDIT_EMI"] }),
+      NOW
+    );
+    assert.deepEqual(emi.paymentMethods, ["CREDIT_EMI"]);
+    assert.throws(
+      () =>
+        normalizeP3pChallenge(
+          challengeFor({ paymentMethods: ["CRYPTO"] }),
+          NOW
+        ),
+      /unsupported payment method/
+    );
+    assert.throws(
+      () =>
+        normalizeP3pChallenge(
+          challengeFor({ paymentMethods: ["Crypto"] }),
+          NOW
+        ),
+      /unsupported payment method/
+    );
+  });
+
+  it("receipt method binds when both sides carry it", () => {
+    const good = normalizeP3pReceipt(wireReceiptFor());
+    assert.equal(verifyP3pReceipt(good, receiptExpectedFor()).ok, true);
+    const swapped = normalizeP3pReceipt(
+      wireReceiptFor({ paymentMethod: "CARD" })
+    );
+    const denied = verifyP3pReceipt(swapped, receiptExpectedFor());
+    assert.equal(denied.ok, false);
+    if (!denied.ok) assert.equal(denied.reason, "method mismatch");
+    // Method absent on either side: nothing to bind, other checks stand.
+    const { paymentMethod: _drop, ...noMethod } = wireReceiptFor();
+    void _drop;
+    assert.equal(
+      verifyP3pReceipt(normalizeP3pReceipt(noMethod), receiptExpectedFor()).ok,
+      true
+    );
+    assert.equal(
+      verifyP3pReceipt(good, {
+        amountPaise: 10000,
+        currency: "INR",
+        challengeId: "ch_test_001",
+      }).ok,
+      true
+    );
+  });
+
+  it("cross-challenge receipts fail on challenge binding, not resource theater", () => {
+    // Genuine wire receipts carry no resource/merchant: binding is
+    // transitive via the server-issued challengeId (one-time token bound
+    // to it rail-side), plus the host replay set.
+    const good = normalizeP3pReceipt(wireReceiptFor());
+    const other = verifyP3pReceipt(good, {
+      ...receiptExpectedFor(),
+      challengeId: "ch_other",
+    });
+    assert.equal(other.ok, false);
+    if (!other.ok) assert.equal(other.reason, "challenge mismatch");
+    const seen = new Set<string>(["ch_test_001"]);
+    const replayed = verifyP3pReceipt(good, receiptExpectedFor(), {
+      seenChallengeIds: seen,
+    });
+    assert.equal(replayed.ok, false);
+    if (!replayed.ok) assert.equal(replayed.reason, "replay");
+  });
+
+  it("executor seam carries the mandate reference; PII stays host-resolved", () => {
+    // Compile-time contract: buildCredential needs paymentMethodReferenceId
+    // for mandate/card rails; mobileNumber is host-resolved inside the
+    // executor and must never cross PTF (Personal State boundary).
+    const stub: P3pProtectedExecutor = {
+      executePaidRoute: async (input) => {
+        assert.equal(typeof input.paymentMethodReferenceId, "string");
+        return normalizeP3pReceipt(wireReceiptFor());
+      },
+    };
+    assert.equal(typeof stub.executePaidRoute, "function");
   });
 });

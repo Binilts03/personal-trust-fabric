@@ -13,6 +13,16 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- P3P wire-shape alignment (SDK 1.3.0): `normalizeP3pReceipt` maps real
+  `decodeReceipt` output (`status`/`reference`/`settlement`/`challengeId`/
+  `timestamp`/`paymentMethod`) to PTF terms, dropping `paymentGateway`
+  and unknown fields; `verifyP3pReceipt` binds amount/currency/challenge
+  plus method-when-present, with resource/merchant binding transitive via
+  the server-issued `challengeId` (genuine receipts carry neither —
+  comparing host-supplied copies was theater); `CREDIT_EMI` accepted,
+  `Crypto` rejected; executor seam gains `paymentMethodReferenceId` and
+  documents pending-poll + unknown-outcome duty. Runbook now maps exact
+  SDK calls; README lists P3P on the protocol edge.
 - PDP observability (G13): unauthenticated `GET /metrics` beside the
   health probes — in-memory decision counters (`allow` + per-reason
   `deny` keyed by the closed `AUTHORITY_DENY_REASONS` vocabulary, never

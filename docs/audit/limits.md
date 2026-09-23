@@ -161,14 +161,27 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   network fetch in this adapter (proof: `tests/x402.test.ts`,
   `tests/settlement.test.ts`).
 - P3P: paise-integer amounts, `currency` 3-letter, route-path resources,
-  `methods ⊆ {RESERVE_PAY, OTM, CARD}`; `p3pChallengeId`/`p3pMethod` folded
+  `methods ⊆ {RESERVE_PAY, OTM, CARD, CREDIT_EMI}` (`Crypto` rejected);
+  `p3pChallengeId`/`p3pMethod` folded
   into the caller's `termsDigest` (challenge/resource/currency/merchant/
-  method mismatches throw before authority). The adapter normalizes
-  host/SDK-decoded challenges only — challenge signing, token creation,
-  capture, and receipt issuance stay in the official Pine Labs SDK behind
+  method mismatches throw before authority). Receipts are wire-faithful
+  (`status`/`reference`/`settlement`/`challengeId`/`timestamp`/
+  `paymentMethod` via `normalizeP3pReceipt`; `paymentGateway` and unknown
+  fields dropped): upstream builds receipts, it does not sign them, so
+  PTF binding (challenge/amount/currency/method + replay set) plus
+  rail-side one-time-token binding is the trust — resource/merchant bind
+  transitively via the server-issued `challengeId`, never from receipt
+  fields that do not exist on the wire. The adapter normalizes
+  host/SDK-decoded challenges and receipts only — challenge signing,
+  token creation, capture, and receipt issuance stay in the official Pine
+  Labs SDK behind
   the host's `P3pProtectedExecutor` (client secret, API keys, grant
   tokens, one-time credentials, PANs never enter PTF inputs/outputs;
-  canary-tested). CI runs synthetic challenges + the full denial matrix
+  canary-tested; mandate/card rails additionally need the
+  `paymentMethodReferenceId`, customer mobile stays host-resolved).
+  Pending debits are not receipts: the host polls `getDebitStatus` to
+  terminal, and poll timeouts are unknown-outcome (reconcile
+  out-of-band). CI runs synthetic challenges + the full denial matrix
   only; live UAT round-trips are env-gated host runs
   (`PTF_P3P_LIVE=1`), never implicit. Host wiring reference:
   `examples/p3p-sandbox-host.mjs`; manual runbook:
