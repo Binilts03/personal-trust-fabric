@@ -1375,7 +1375,7 @@ export async function run(
     for (const rec of pending) {
       const demand = storedDemand(rec.digest, rec.demand);
       io.print(
-        `${rec.digest} ${sanitizeField(demand.action.name)} actor=${sanitizeField(demand.actor)} principal=${sanitizeField(demand.principal)}`
+        `${sanitizeField(rec.digest)} ${sanitizeField(demand.action.name)} actor=${sanitizeField(demand.actor)} principal=${sanitizeField(demand.principal)}`
       );
     }
     return 0;

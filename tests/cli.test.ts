@@ -376,6 +376,11 @@ describe("human approval surface (PR-C)", () => {
       0
     );
     assert.ok(!out.join("\n").includes("\x1b"));
+    // The one-line queue listing is sanitized too.
+    out.length = 0;
+    assert.equal(await run(["--dir", dir, "review"], io, env), 0);
+    assert.ok(!out.join("\n").includes("\x1b"));
+    assert.ok(out.join("\n").includes(digest));
   });
 
   it("approve mints one approval; a second approve fails closed", async () => {
