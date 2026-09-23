@@ -13,6 +13,12 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Empirical benchmark harness (G14): `npm run bench` (`scripts/bench.mjs`,
+  `--n`, default 100) reports env-stamped min/p50/p95/p99 rows for
+  capability CHECK (sequential + x8 concurrent), REDEEM, receipt building,
+  fake-provider round-trip, and authority persist. CI asserts row shape
+  only (`tests/bench.test.ts`) — never thresholds; numbers are local
+  same-box comparisons, not SLOs.
 - Durable presentation-nonce replay protection (G11): `ptf_present_data`
   records every presentation nonce in the durable `FileReplay` set
   (`nonces.json`) and denies repeats as replay — restart no longer launders

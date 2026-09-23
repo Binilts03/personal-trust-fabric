@@ -82,6 +82,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/tests/*.test.js\"",
     "eval": "npm run build && node --test \"dist/tests/eval/*.test.js\"",
+    "bench": "node scripts/bench.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run eval",
     "dev-local": "bash scripts/dev-local.sh up",
     "prepare": "husky || true"
