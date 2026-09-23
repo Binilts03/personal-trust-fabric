@@ -1176,6 +1176,11 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
             text: JSON.stringify(
               {
                 presented: true,
+                // Display-layer framing guard: a disclosure is holder-signed
+                // data delivery, not a payment authorization. Display this
+                // notice wherever the presentation is shown.
+                notice:
+                  "read-only /disclose presentation, not a payment authorization: holder-signed data delivery only — no uses consumed, no funds moved",
                 termsDigest: args.termsDigest,
                 disclosed,
                 presentation,

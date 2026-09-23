@@ -129,6 +129,7 @@ describe("agent data-delivery loop (ptf_present_data)", () => {
       nonce: NONCE,
     })) as {
       presented?: boolean;
+      notice?: unknown;
       termsDigest?: string;
       disclosed?: string[];
       presentation?: {
@@ -144,6 +145,10 @@ describe("agent data-delivery loop (ptf_present_data)", () => {
     };
     assert.equal(out.presented, true);
     assert.equal(out.termsDigest, digest);
+    // The payload carries its own non-payment framing so a display layer
+    // cannot present a disclosure as a payment authorization.
+    assert.equal(typeof out.notice, "string");
+    assert.match(out.notice as string, /not a payment authorization/);
     assert.deepEqual(out.disclosed, ["email"]);
     assert.ok(out.presentation);
     assert.equal(out.presentation?.verifier, V);
