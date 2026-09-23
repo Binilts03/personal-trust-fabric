@@ -83,6 +83,8 @@ describe("golden attack transcripts (ptf-v01/05)", () => {
       cmd: "/pay" as const,
       args: { amount: 10, currency: "INR" },
       recipient: M,
+      resource: "r",
+      purpose: "p",
       termsDigest: digest,
     };
     const cidBytes = new Uint8Array(Buffer.from(leafCidHex(cap), "hex"));
