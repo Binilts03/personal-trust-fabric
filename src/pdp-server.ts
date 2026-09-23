@@ -64,6 +64,13 @@
  * 503 `{ ready: false }` otherwise. Both are unauthenticated (probes
  * carry no credentials) and expose nothing sensitive.
  *
+ * METRICS (G13 slice): `GET /metrics` reports in-memory decision counters
+ * (`allow` + per-reason `deny`, keys from the closed
+ * `AUTHORITY_DENY_REASONS` vocabulary only) plus a read-only
+ * execution-states/backlog scan. Same standing as the health probes:
+ * unauthenticated, logs nothing, never evaluated. Counters reset on
+ * restart — point-in-time signals, not audit.
+ *
  * DEV REFERENCE: `examples/pdp-server.mjs` is the loopback AuthZEN-shape
  * reference (single API key mapped to a configured identity — same ingress
  * model as here). This bin is the production-shaped sibling:
@@ -78,7 +85,9 @@ import { hostname } from "node:os";
 import { evaluateAuthZen } from "./adapters/authzen.js";
 import type { AuthZenEvaluationRequest } from "./adapters/authzen.js";
 import type { VerifiedIdentity } from "./core/authority.js";
+import { AUTHORITY_DENY_REASONS } from "./core/authority.js";
 import { loadAuthority } from "./store/files.js";
+import { isTerminal, listExecutions } from "./store/execution.js";
 
 interface PdpKey {
   readonly id: string;
@@ -374,6 +383,13 @@ function main(): void {
 
   const buckets = new Map<string, Bucket>();
 
+  // Decision counters for GET /metrics (G13): in-memory only — the PDP
+  // stays read-only (never saveAuthority), so a restart resets counts and
+  // the runbook treats them as point-in-time signals, not audit. Deny keys
+  // come from AUTHORITY_DENY_REASONS only, never caller content.
+  let allowCount = 0;
+  const denyCounts = new Map<string, number>();
+
   const checkRate = (
     keyId: string,
     now: number
@@ -424,6 +440,44 @@ function main(): void {
         return;
       }
       sendJson(res, 200, { ready: true, replica: replicaId }, rid);
+      return;
+    }
+    if (path === "/metrics") {
+      // Observability probe (G13): same standing as healthz — transport,
+      // not a decision: unauthenticated, logs nothing. Decision counters
+      // are in-memory (restart resets); executions are a read-only disk
+      // scan, so a corrupt journal fails this probe (500), never the
+      // evaluation path.
+      if (req.method !== "GET") {
+        sendJson(res, 405, { error: "method not allowed" }, rid);
+        return;
+      }
+      let states: Record<string, number>;
+      let backlog: number;
+      try {
+        states = {};
+        backlog = 0;
+        for (const rec of listExecutions(storeDir)) {
+          states[rec.state] = (states[rec.state] ?? 0) + 1;
+          if (!isTerminal(rec)) backlog += 1;
+        }
+      } catch {
+        sendJson(res, 500, { error: "executions unavailable" }, rid);
+        return;
+      }
+      sendJson(
+        res,
+        200,
+        {
+          replica: replicaId,
+          decisions: {
+            allow: allowCount,
+            deny: Object.fromEntries(denyCounts),
+          },
+          executions: { states, backlog },
+        },
+        rid
+      );
       return;
     }
     if (path !== "/access/v1/evaluation") {
@@ -534,6 +588,7 @@ function main(): void {
       const authIdRaw: unknown = ctx["authorityId"];
       if (typeof authIdRaw === "string") authorityId = authIdRaw;
       if (decision.decision === true) {
+        allowCount += 1;
         const citRaw: unknown = ctx["citations"];
         if (Array.isArray(citRaw)) {
           const first: unknown = citRaw[0];
@@ -542,6 +597,13 @@ function main(): void {
             if (typeof aid === "string") authorityId = aid;
           }
         }
+      } else {
+        const bucket = (AUTHORITY_DENY_REASONS as readonly string[]).includes(
+          reason ?? ""
+        )
+          ? (reason as string)
+          : "other";
+        denyCounts.set(bucket, (denyCounts.get(bucket) ?? 0) + 1);
       }
       process.stdout.write(
         `${JSON.stringify({

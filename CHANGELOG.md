@@ -13,6 +13,12 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- PDP observability (G13): unauthenticated `GET /metrics` beside the
+  health probes — in-memory decision counters (`allow` + per-reason
+  `deny` keyed by the closed `AUTHORITY_DENY_REASONS` vocabulary, never
+  caller content) plus a read-only execution-states/backlog scan. Probes
+  log nothing and need no auth; counters reset on restart (signals, not
+  audit). Sentinel-tested: caller canaries never surface in the body.
 - Empirical benchmark harness (G14): `npm run bench` (`scripts/bench.mjs`,
   `--n`, default 100) reports env-stamped min/p50/p95/p99 rows for
   capability CHECK (sequential + x8 concurrent), REDEEM, receipt building,

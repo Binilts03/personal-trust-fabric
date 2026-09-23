@@ -102,7 +102,12 @@ history`). A consistently-old full-directory restore passes `--verify`
   authority store loads, 503 `{ ready: false }` otherwise; also
   unauthenticated and unlogged (probes carry no credentials, and a log
   line always means a decision happened). Wire the load balancer to
-  `/readyz`, the supervisor to `/healthz`.
+  `/readyz`, the supervisor to `/healthz`. `GET /metrics` reports
+  in-memory decision counters (`allow` + per-reason `deny`, closed
+  vocabulary only) plus a read-only execution-states/backlog scan —
+  same probe standing (unauthenticated, unlogged). Counters reset on
+  restart: point-in-time signals for dashboards, never audit; scrape
+  on an interval shorter than your deploy cadence.
 
 ## Audit shipping + retention
 

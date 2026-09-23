@@ -193,13 +193,21 @@ export interface Citation {
   readonly binding?: VerifiedExternalBinding;
 }
 
-export type AuthorityDenyReason =
-  | "no-authority"
-  | "forbidden"
-  | "expired"
-  | "uses-exhausted"
-  | "revoked"
-  | "terms";
+/**
+ * Closed deny vocabulary as a runtime tuple — the single source of truth.
+ * Metrics bucket keys must come from here, never from caller content
+ * (cardinality + secrecy guard); unknown strings bucket as "other".
+ */
+export const AUTHORITY_DENY_REASONS = [
+  "no-authority",
+  "forbidden",
+  "expired",
+  "uses-exhausted",
+  "revoked",
+  "terms",
+] as const;
+
+export type AuthorityDenyReason = (typeof AUTHORITY_DENY_REASONS)[number];
 
 export type AuthorityDecision =
   | {
