@@ -89,23 +89,26 @@ console.log(
   "mutated-amount",
   denied.allow ? "ALLOW (BUG)" : `DENY (${denied.reason})`
 );
+const normalizedReceipt = normalizeP3pReceipt({
+  status: "success",
+  reference: "txn-sandbox-probe",
+  settlement: { amount: "10000", currency: "INR" },
+  challengeId: "ch_sandbox_probe_001",
+  timestamp: new Date(NOW * 1000).toISOString(),
+  paymentMethod: "RESERVE_PAY",
+});
 const receiptCheck = verifyP3pReceipt(
   // Wire shape mirrors decodeReceipt output (status/reference/settlement);
   // resource/merchant never ride the receipt — bound via the challenge.
-  normalizeP3pReceipt({
-    status: "success",
-    reference: "txn-sandbox-probe",
-    settlement: { amount: "10000", currency: "INR" },
-    challengeId: "ch_sandbox_probe_001",
-    timestamp: new Date(NOW * 1000).toISOString(),
-    paymentMethod: "RESERVE_PAY",
-  }),
+  normalizedReceipt,
   {
     amountPaise: 10000,
     currency: "INR",
     challengeId: "ch_sandbox_probe_001",
     method: "RESERVE_PAY",
-  }
+  },
+  // Staleness wiring: the receipt's own timestamp bounds acceptance.
+  { capturedAt: normalizedReceipt.receivedAt, maxReceiptAgeSec: 300 }
 );
 console.log(
   "receipt",

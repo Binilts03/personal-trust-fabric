@@ -94,7 +94,10 @@ log the reasons alongside the receipts.
 - Live rails: `RESERVE_PAY`, `OTM`, `CARD`; `CREDIT_EMI` in the
   payload contract; `Crypto` rejected. UAT simulates by amount range
   (about INR 100–50k success, higher bands pending/failed — see the
-  test-card details page when planning runs).
+  test-card details page when planning runs). `paymentGateway` is
+  single-valued upstream today, so dropping it is safe; if a second
+  gateway ever appears with non-namespaced challenge ids, re-examine
+  cross-gateway replay.
 
 ## Secret rules (non-negotiable)
 
