@@ -219,6 +219,13 @@ describe("MCP nonce restart: replay hole", () => {
       const retry = await present(rpc2, digestB, NONCE);
       assert.equal(failed(retry), true, "nonce reuse across restart must deny");
       assert.match(textOf(retry), /replay/);
+      // The proposal is left pending (nonce fault, not proposal fault): a
+      // fresh nonce completes it — no DoS trap, single-present intact.
+      const fresh = await present(rpc2, digestB, "n-fresh-nonce-0123456");
+      assert.equal(
+        (JSON.parse(textOf(fresh)) as { presented?: boolean }).presented,
+        true
+      );
     } finally {
       rpc2.close();
     }

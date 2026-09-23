@@ -1100,10 +1100,12 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       // Durable presentation-nonce replay (G11): nonce uniqueness is
       // verifier duty, but a restarted host must not launder a replayed
       // nonce — the in-memory set dies with the process. Check-then-record
-      // up front, before vault or keys (burn-before-deliver: a crash
-      // between record and presentation burns the nonce, never grants a
-      // second presentation — retry with a fresh nonce). Prune window
-      // (600s) covers the verifier maxAge default (300s) with margin.
+      // up front, before vault or keys (per-call load() above only decrypts
+      // local state: no key is used and nothing is presented before the
+      // record — burn-before-deliver: a crash between record and
+      // presentation burns the nonce, never grants a second presentation —
+      // retry with a fresh nonce). Prune window (600s) covers the verifier
+      // maxAge default (300s) with margin.
       FileReplay.prune(opts.dir, 600, now());
       if (FileReplay.has(opts.dir, args.nonce)) {
         fail("replay denied: presentation nonce already used");
