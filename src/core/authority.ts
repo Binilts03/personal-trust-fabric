@@ -748,7 +748,9 @@ export class Authority {
     // never creates (ADR-0002): require an explicit `.context.amount` ceiling
     // (<=, ==, or `in`) on every /pay* grant. One-time exact-terms approvals
     // remain the path for open or unusual amounts. Soft (add-time throw, not
-    // an evaluation rule) so existing bounded grants and restores keep working.
+    // an evaluation rule) so existing bounded grants keep working; restores
+    // re-validate through the same path, so pre-guard currency-less
+    // snapshots throw instead of minting unbounded-currency authority.
     // Currency is part of the same guard: an amount without an exact currency
     // is not a bound at all (2000 of WHAT?), and one ceiling cannot safely
     // cover two monies — so `.context.currency == "<ISO>"` is required too.
@@ -1147,8 +1149,10 @@ export class Authority {
       auth.addGrant(g as StandingGrant);
     for (const a of snap["approvals"] as unknown[])
       auth.addApproval(a as OneTimeApproval);
-    for (const p of snap["policies"] as unknown[])
-      auth.addPolicy(p as PolicyConstraint);
+    // Revocations load BEFORE policies: addPolicy rejects retired ids, so a
+    // snapshot smuggling both a policy body and its retirement scar fails
+    // closed here instead of reviving the policy. (Grants/approvals have no
+    // such check — a revoked grant must restore as revoked, not throw.)
     const revoked = snap["revoked"];
     if (!Array.isArray(revoked))
       throw new Error("authority snapshot: revoked must be an array");
@@ -1162,6 +1166,8 @@ export class Authority {
       }
       auth.revoked.set(entry[0] as string, entry[1] as number | null);
     }
+    for (const p of snap["policies"] as unknown[])
+      auth.addPolicy(p as PolicyConstraint);
     const used = snap["used"];
     if (!Array.isArray(used))
       throw new Error("authority snapshot: used must be an array");
