@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openKeystore } from "../src/index.js";
 import type { PaymentExecutor } from "../src/index.js";
+import { Authority, createProposal, requestExecution } from "../src/index.js";
 import { parseArgs, run } from "../src/cli.js";
 
 describe("operator CLI argument parsing (prod-03)", () => {
@@ -297,5 +298,138 @@ describe("operator CLI execution ordering (ticket 05)", () => {
     assert.equal(receipt.amount, 100);
     assert.ok((receipt.transaction ?? "").length > 0);
     assert.ok((receipt.capabilityId ?? "").length > 0);
+  });
+});
+
+const REVIEW_NOW = 1_700_000_000;
+
+async function setupProposalStore(purpose = "pay invoice"): Promise<{
+  dir: string;
+  io: { print: (l: string) => void; readLine: () => string; now: () => number };
+  out: string[];
+  env: Record<string, string>;
+  digest: string;
+}> {
+  const dir = mkdtempSync(join(tmpdir(), "ptf-cli-"));
+  const { io, out } = testIo();
+  const env = { PTF_PASSPHRASE: "test-pass-123" };
+  await run(["--dir", dir, "init"], io, env);
+  const auth = new Authority({ nowSec: () => REVIEW_NOW });
+  const prop = requestExecution(
+    auth,
+    {
+      id: "shopper",
+      principal: "you",
+      source: "local-registration",
+      proofRef: "review-test",
+    },
+    {
+      action: "/pay",
+      resourceType: "invoice",
+      resourceId: "invoice:1",
+      purpose,
+      context: { amount: 100, currency: "INR", recipient: "shop" },
+    },
+    { nowSec: REVIEW_NOW }
+  );
+  createProposal(dir, prop.digest, prop.demand, 600, REVIEW_NOW);
+  return { dir, io, out, env, digest: prop.digest };
+}
+
+describe("human approval surface (PR-C)", () => {
+  it("review reports an empty queue and lists a pending proposal", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-cli-"));
+    const { io, out } = testIo();
+    const env = { PTF_PASSPHRASE: "test-pass-123" };
+    await run(["--dir", dir, "init"], io, env);
+    assert.equal(await run(["--dir", dir, "review"], io, env), 0);
+    assert.match(out.join("\n"), /no pending proposals/);
+
+    const seeded = await setupProposalStore();
+    assert.equal(
+      await run(["--dir", seeded.dir, "review"], seeded.io, seeded.env),
+      0
+    );
+    const listed = seeded.out.join("\n");
+    assert.ok(listed.includes(seeded.digest));
+    assert.match(listed, /\/pay/);
+  });
+
+  it("review --digest renders the exact sanitized terms", async () => {
+    const { dir, io, out, env, digest } = await setupProposalStore();
+    assert.equal(
+      await run(["--dir", dir, "review", "--digest", digest], io, env),
+      0
+    );
+    const shown = out.join("\n");
+    assert.match(shown, /PTF approval requested/);
+    assert.ok(shown.includes(digest));
+    assert.match(shown, /invoice:1/);
+  });
+
+  it("review strips terminal-control smuggling from hostile fields", async () => {
+    const { dir, io, out, env, digest } = await setupProposalStore(
+      "pay [2Jinvoice[0m"
+    );
+    assert.equal(
+      await run(["--dir", dir, "review", "--digest", digest], io, env),
+      0
+    );
+    assert.ok(!out.join("\n").includes("\x1b"));
+  });
+
+  it("approve mints one approval; a second approve fails closed", async () => {
+    const { dir, io, out, env, digest } = await setupProposalStore();
+    assert.equal(
+      await run(["--dir", dir, "approve", "--digest", digest], io, env),
+      0
+    );
+    assert.match(out.join("\n"), new RegExp(`appr-${digest}`));
+    await assert.rejects(
+      run(["--dir", dir, "approve", "--digest", digest], io, env),
+      /already/
+    );
+    // A veto after approval must not silently stand next to live authority.
+    await assert.rejects(
+      run(["--dir", dir, "deny", "--digest", digest], io, env),
+      /already approved/
+    );
+  });
+
+  it("deny vetoes; deny twice and approve-after-deny fail closed", async () => {
+    const { dir, io, out, env, digest } = await setupProposalStore();
+    assert.equal(
+      await run(["--dir", dir, "deny", "--digest", digest], io, env),
+      0
+    );
+    assert.match(out.join("\n"), /denied/);
+    await assert.rejects(
+      run(["--dir", dir, "deny", "--digest", digest], io, env),
+      /already denied/
+    );
+    await assert.rejects(
+      run(["--dir", dir, "approve", "--digest", digest], io, env),
+      /already denied|not pending/
+    );
+  });
+
+  it("unknown and malformed digests fail closed; bad ttl rejected", async () => {
+    const { dir, io, env } = await setupProposalStore();
+    await assert.rejects(
+      run(["--dir", dir, "review", "--digest", "f".repeat(64)], io, env),
+      /unknown proposal/
+    );
+    await assert.rejects(
+      run(["--dir", dir, "approve", "--digest", "not-hex"], io, env),
+      /malformed/
+    );
+    await assert.rejects(
+      run(
+        ["--dir", dir, "approve", "--digest", "f".repeat(64), "--ttl-s", "0"],
+        io,
+        env
+      ),
+      /positive integer/
+    );
   });
 });

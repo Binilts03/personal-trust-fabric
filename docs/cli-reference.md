@@ -31,11 +31,13 @@ All commands require `--dir <store-path>` (default `./ptf-store`).
 
 ## Grants & Authority
 
-| Command                                                                                                                                                      | Description                                   |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| `grant --id <id> --principal <alias> --cmd <name> --agent <alias> [--amount-max <n>] [--currency <CCY>] [--recipient <alias>] [--expiry <iso>] [--uses <n>]` | Add standing grant                            |
-| `approve --grant <id> --principal <alias> --agent <alias> --action <name> --resource <type:id> --context <json> --purpose <id>`                              | One-time approval (exact terms, digest-bound) |
-| `revoke --grant <id> --principal <alias>`                                                                                                                    | Revoke grant (request-only via MCP)           |
+| Command                                                                                                                                                      | Description                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `grant --id <id> --principal <alias> --cmd <name> --agent <alias> [--amount-max <n>] [--currency <CCY>] [--recipient <alias>] [--expiry <iso>] [--uses <n>]` | Add standing grant                                                        |
+| `review [--digest <hex>]`                                                                                                                                    | List pending proposals (sanitized) or show one in full                    |
+| `approve --digest <hex> [--ttl-s <n>]`                                                                                                                       | Mint one one-time approval for a pending proposal (default 300s, one use) |
+| `deny --digest <hex>`                                                                                                                                        | Veto a pending proposal (mints nothing)                                   |
+| `revoke --grant <id> --principal <alias>`                                                                                                                    | Revoke grant (request-only via MCP)                                       |
 
 ## Payments & Execution
 
