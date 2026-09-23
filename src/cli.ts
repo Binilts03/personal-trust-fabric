@@ -18,8 +18,10 @@ import {
   leafCidHex,
   loadAgents,
   loadAuthority,
+  loadProposal,
   loadRegistry,
   loadVault,
+  listPendingProposals,
   openKeystore,
   parseDecision,
   parseSensitivity,
@@ -33,11 +35,13 @@ import {
   renderProposal,
   resealKeystore,
   rotateVaultDek,
+  sanitizeField,
   saveAuthority,
   saveRegistry,
   saveAgents,
   sealKeystore,
   signBytes,
+  transitionProposal,
   VAULT_DEK_ALIAS,
   VAULT_DEK_NEXT_ALIAS,
   backupStore,
@@ -114,6 +118,9 @@ const COMMANDS = [
   "vault-rekey",
   "audit",
   "revoke",
+  "review",
+  "approve",
+  "deny",
   "backup",
   "restore",
   "help",
@@ -160,6 +167,9 @@ export function helpText(): string {
     "  backup --to DIR                        copy the store as one unit + anchor.json (refuses non-empty dest; stop writers first)",
     "  restore --from DIR                     copy a backup over fresh --dir, never merges; verifies chain + freshness + anchor",
     "  revoke (--grant ID | --recipient ALIAS)",
+    "  review [--digest D]                  list pending proposals (sanitized) or show one in full",
+    "  approve --digest D [--ttl-s S]       mint one one-time approval for a pending proposal (default 300s)",
+    "  deny --digest D                      veto a pending proposal (mints nothing)",
     "  help                                   print this help",
     "",
     "env: PTF_PASSPHRASE (required for keygen/pay/disclose/vault-*; audit needs it only when a vault file exists; never passed as a flag)",
@@ -206,7 +216,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = tokens;
   if (command === undefined) {
     throw new Error(
-      "usage: ptf [--dir D] <init|keygen|rekey|recipient|agent|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|revoke|help|version> ..."
+      "usage: ptf [--dir D] <init|keygen|rekey|recipient|agent|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|revoke|review|approve|deny|help|version> ..."
     );
   }
   if (!(COMMANDS as readonly string[]).includes(command)) {
@@ -310,6 +320,9 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
   backup: new Set(["to"]),
   restore: new Set(["from"]),
   revoke: new Set(["grant", "recipient"]),
+  review: new Set(["digest"]),
+  approve: new Set(["digest", "ttl-s"]),
+  deny: new Set(["digest"]),
   help: new Set(),
   version: new Set(),
 };
@@ -1285,6 +1298,169 @@ export async function run(
       return 0;
     }
     throw new Error("usage: revoke --grant ID | --recipient ALIAS");
+  }
+
+  /**
+   * Human-surface demand check: a stored proposal is agent-supplied data, so
+   * review/approve/deny validate the shape and the digest binding before a
+   * human sees it or authority is minted from it. Anything off throws —
+   * never render or mint from garbage.
+   */
+  const storedDemand = (digest: string, demand: unknown): AuthorityRequest => {
+    if (
+      typeof demand !== "object" ||
+      demand === null ||
+      Array.isArray(demand)
+    ) {
+      throw new Error(`proposal ${digest} is malformed: demand unreadable`);
+    }
+    const d = demand as Record<string, unknown>;
+    const action = d["action"] as Record<string, unknown> | undefined;
+    const resource = d["resource"] as Record<string, unknown> | undefined;
+    const context = d["context"];
+    if (
+      typeof d["principal"] !== "string" ||
+      d["principal"].length === 0 ||
+      typeof d["actor"] !== "string" ||
+      d["actor"].length === 0 ||
+      typeof action?.["name"] !== "string" ||
+      !(action["name"] as string).startsWith("/") ||
+      typeof resource?.["type"] !== "string" ||
+      typeof resource?.["id"] !== "string" ||
+      d["termsDigest"] !== digest ||
+      (context !== undefined &&
+        (typeof context !== "object" ||
+          context === null ||
+          Array.isArray(context))) ||
+      (d["purpose"] !== undefined && typeof d["purpose"] !== "string")
+    ) {
+      throw new Error(`proposal ${digest} is malformed: stored terms unusable`);
+    }
+    return demand as AuthorityRequest;
+  };
+
+  /** Live proposal or a human-readable failure (unknown vs expired vs corrupt). */
+  const liveProposal = (digest: string) => {
+    try {
+      return loadProposal(dir, digest, now());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("ENOENT")) {
+        throw new Error(`unknown proposal ${digest}: propose first`);
+      }
+      throw err;
+    }
+  };
+
+  if (command === "review") {
+    const digest = opt(flags, "digest");
+    if (digest !== undefined) {
+      const rec = liveProposal(digest);
+      if (rec.state !== "pending") {
+        throw new Error(`proposal ${digest} already ${rec.state}`);
+      }
+      io.print(
+        renderProposal({
+          demand: storedDemand(digest, rec.demand),
+          citations: [],
+        })
+      );
+      return 0;
+    }
+    const pending = listPendingProposals(dir, now());
+    if (pending.length === 0) {
+      io.print("no pending proposals");
+      return 0;
+    }
+    for (const rec of pending) {
+      const demand = storedDemand(rec.digest, rec.demand);
+      io.print(
+        `${sanitizeField(rec.digest)} ${sanitizeField(demand.action.name)} actor=${sanitizeField(demand.actor)} principal=${sanitizeField(demand.principal)}`
+      );
+    }
+    return 0;
+  }
+
+  if (command === "approve") {
+    const digest = str(flags, "digest");
+    const ttlSec =
+      opt(flags, "ttl-s") !== undefined ? num(flags, "ttl-s") : 300;
+    const rec = liveProposal(digest);
+    if (rec.state !== "pending") {
+      throw new Error(
+        `proposal ${digest} already ${rec.state}: propose again for a fresh decision`
+      );
+    }
+    const demand = storedDemand(digest, rec.demand);
+    const approvalId = `appr-${digest}`;
+    ctx.auth.createApproval({
+      id: approvalId,
+      principal: demand.principal,
+      actor: demand.actor,
+      ...(demand.actorChain !== undefined
+        ? { chain: [...demand.actorChain] }
+        : {}),
+      action: {
+        name: demand.action.name,
+        ...(demand.action.properties !== undefined
+          ? { properties: { ...demand.action.properties } }
+          : {}),
+      },
+      resource: {
+        type: demand.resource.type,
+        id: demand.resource.id,
+        ...(demand.resource.properties !== undefined
+          ? { properties: { ...demand.resource.properties } }
+          : {}),
+      },
+      ...(demand.context !== undefined
+        ? { context: { ...demand.context } }
+        : {}),
+      ...(demand.purpose !== undefined ? { purpose: demand.purpose } : {}),
+      ttlSec,
+      maxUses: 1,
+    });
+    persistState(ctx);
+    ctx.audit.append({
+      actor: "operator",
+      action: "approve",
+      authorityId: approvalId,
+      detail: digest,
+      authorityRev: ctx.auth.loadedRevision(),
+      registryRev: ctx.reg.loadedRevision(),
+    });
+    io.print(`approved ${approvalId} (terms ${digest}, one use, ${ttlSec}s)`);
+    return 0;
+  }
+
+  if (command === "deny") {
+    const digest = str(flags, "digest");
+    const rec = liveProposal(digest);
+    if (rec.state !== "pending") {
+      throw new Error(`proposal ${digest} already ${rec.state}`);
+    }
+    const approvalId = `appr-${digest}`;
+    if (ctx.auth.snapshot().approvals.some((a) => a.id === approvalId)) {
+      throw new Error(
+        `proposal ${digest} already approved as ${approvalId}: revoke the approval to withdraw (revoke --grant ${approvalId})`
+      );
+    }
+    transitionProposal(
+      dir,
+      digest,
+      "denied",
+      { by: "operator", at: now() },
+      now()
+    );
+    ctx.audit.append({
+      actor: "operator",
+      action: "deny",
+      detail: digest,
+      authorityRev: ctx.auth.loadedRevision(),
+      registryRev: ctx.reg.loadedRevision(),
+    });
+    io.print(`denied proposal ${digest}`);
+    return 0;
   }
 
   throw new Error(`unreachable command: ${command}`);

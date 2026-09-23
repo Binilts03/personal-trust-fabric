@@ -45,7 +45,11 @@ export type {
   AuthorityDecision,
 } from "./core/authority.js";
 
-export { renderProposal, parseDecision } from "./core/approve.js";
+export {
+  renderProposal,
+  parseDecision,
+  sanitizeField,
+} from "./core/approve.js";
 export type { ProposalView } from "./core/approve.js";
 
 export { assembleCapsule, renderAgentView } from "./core/persona.js";

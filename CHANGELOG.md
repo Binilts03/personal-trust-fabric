@@ -13,6 +13,17 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Human approval surface, slice 1 (G6): deterministic LLM-free operator
+  loop over the MCP proposal queue — `ptf review [--digest]` (sanitized
+  rendering via the existing approval presenter; terminal-control smuggling
+  stripped), `ptf approve --digest [--ttl-s]` (mints one one-time
+  exact-terms approval, `appr-<digest>`, one use, persisted + audited; the
+  proposal stays pending so the agent flow continues against the new
+  authority), `ptf deny --digest` (veto; mints nothing; refuses to stand
+  next to a live approval and directs to `revoke`). No keys required;
+  unknown/expired/corrupt/tampered proposals fail closed with distinct
+  errors. Store `readRecord` now lets ENOENT propagate as absence instead
+  of misreporting missing files as corrupt.
 - Execution/authority crash integration (review High finding):
   `ptf_redeem` routes through `executeWithJournal` keyed on
   proposal-anchored identity (`termsDigest` + provider scope, surviving

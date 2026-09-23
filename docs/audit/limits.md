@@ -68,6 +68,12 @@ tested at the boundary.
   `proposals/` (O_EXCL create, TTL GC) — restart preserves
   pending/denied/executed; recipient challenges stay in-memory (lost on
   restart, fail-closed → redeem phase 1 again).
+- Human approval surface is CLI-only and partial: `review` (sanitized),
+  `approve` (one one-time approval per proposal), `deny` (veto, mints
+  nothing). No freeze switch, no WebAuthn/passkey step-up, no receipts
+  browser — high-risk approvals stay terminal-careful operator duty.
+  Withdrawing an approval is `revoke` duty (`deny` refuses to stand next
+  to live authority and says so).
 - Audit is tamper-evident (hash chain, opt HMAC), not independently anchored.
   Third-party verifiability needs external anchoring (ADR-0006).
 - Rotation is a hard cutover: re-issue under the new key before revoking the

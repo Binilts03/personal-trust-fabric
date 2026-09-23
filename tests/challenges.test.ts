@@ -51,7 +51,7 @@ describe("durable proposals/challenges file CAS (v04/02)", () => {
     assert.equal(res.purged, 1);
     assert.throws(
       () => loadProposal(d, DIGEST, NOW + 11),
-      /corrupt|expired|missing/i
+      /corrupt|expired|missing|ENOENT/i
     );
   });
 });

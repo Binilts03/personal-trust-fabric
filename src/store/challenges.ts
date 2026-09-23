@@ -120,9 +120,13 @@ export function gcChallenges(
 }
 
 function readRecord(path: string): ChallengeRecord {
+  // Missing file is absence, not corruption: only the read is outside the
+  // try, so ENOENT propagates for callers to map to unknown/expired while
+  // unparseable or ill-shaped content still fails closed as corrupt.
+  const text = readFileSync(path, "utf8") as string;
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8") as string) as unknown;
+    raw = JSON.parse(text) as unknown;
   } catch {
     throw new Error(`challenges: store corrupt: ${path}`);
   }
@@ -184,7 +188,7 @@ export function createProposal(
   return record;
 }
 
-/** Load a live record; expired records read as expired (caller proposes again). */
+/** Load a live record; expired records read as expired (caller proposes again). Missing records throw ENOENT (absence, not corruption). */
 export function loadProposal(
   storeDir: string,
   digest: string,
@@ -194,6 +198,39 @@ export function loadProposal(
   if (nowSec > record.updatedAt + record.ttlSec)
     throw new Error("challenges: proposal expired: propose again");
   return record;
+}
+
+/**
+ * Live pending proposals oldest-first, for the human review queue.
+ * Corrupt files throw (fail-closed: never hide tamper behind a partial
+ * list); expired and decided records are skipped (audit covers history).
+ */
+export function listPendingProposals(
+  storeDir: string,
+  nowSec: number = Math.floor(Date.now() / 1000)
+): ChallengeRecord[] {
+  let names: string[];
+  try {
+    names = readdirSync(dirOf(storeDir));
+  } catch {
+    return [];
+  }
+  const out: ChallengeRecord[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".json") || name.includes(".tmp-")) continue;
+    const rec = readRecord(join(dirOf(storeDir), name));
+    if (rec.state !== "pending") continue;
+    if (nowSec > rec.updatedAt + rec.ttlSec) continue;
+    out.push(rec);
+  }
+  out.sort((a, b) =>
+    a.createdAt === b.createdAt
+      ? a.digest < b.digest
+        ? -1
+        : 1
+      : a.createdAt - b.createdAt
+  );
+  return out;
 }
 
 /** CAS transition pending→terminal. Non-pending records throw; concurrent winner wins. */
