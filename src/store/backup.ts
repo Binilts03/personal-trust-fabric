@@ -17,6 +17,12 @@ import {
 } from "./files.js";
 import { loadAgents } from "./agents.js";
 import { loadVault } from "./vault.js";
+import {
+  loadPrivacyStore,
+  readPrivacyKid,
+  resolvePrivacyDek,
+} from "./privacy.js";
+import { FilePrivacyEventRepository } from "./privacy-events.js";
 
 /**
  * Backup/restore as code (runbook in `docs/audit/operations.md`).
@@ -47,6 +53,7 @@ const STORE_FILES = [
   "authority.json",
   "registry.json",
   "personal-state.json",
+  "privacy-state.json",
   "keystore.json",
   "audit.jsonl",
   "agents.json",
@@ -94,6 +101,7 @@ export interface BackupSummary {
   readonly files: readonly string[];
   readonly proposals: number;
   readonly executions: number;
+  readonly privacyEvents: number;
   readonly anchor: { readonly root: string; readonly count: number };
 }
 
@@ -166,6 +174,24 @@ export function backupStore(
       executions = 0;
     }
   }
+  let privacyEvents = 0;
+  if (existsSync(join(srcDir, "privacy-events"))) {
+    if (!existsSync(join(srcDir, "privacy-state.json"))) {
+      throw new Error(
+        "backup: privacy-events present without privacy-state.json — refusing incoherent backup"
+      );
+    }
+    cpSync(join(srcDir, "privacy-events"), join(destDir, "privacy-events"), {
+      recursive: true,
+    });
+    try {
+      privacyEvents = readdirSync(join(destDir, "privacy-events")).filter((n) =>
+        n.endsWith(".json")
+      ).length;
+    } catch {
+      privacyEvents = 0;
+    }
+  }
   for (const name of SQLITE_FILES) {
     const from = join(srcDir, name);
     if (existsSync(from)) {
@@ -182,7 +208,7 @@ export function backupStore(
   writeFileSync(join(destDir, "anchor.json"), `${JSON.stringify(anchor)}\n`, {
     mode: 0o600,
   });
-  return { destDir, files, proposals, executions, anchor };
+  return { destDir, files, proposals, executions, privacyEvents, anchor };
 }
 
 export interface RestoreSummary {
@@ -233,6 +259,17 @@ export function restoreStore(
     });
     files.push("executions/");
   }
+  if (existsSync(join(backupDir, "privacy-events"))) {
+    if (!existsSync(join(backupDir, "privacy-state.json"))) {
+      throw new Error(
+        "restore: privacy-events present without privacy-state.json — refusing incoherent backup"
+      );
+    }
+    cpSync(join(backupDir, "privacy-events"), join(destDir, "privacy-events"), {
+      recursive: true,
+    });
+    files.push("privacy-events/");
+  }
   for (const name of SQLITE_FILES) {
     const from = join(backupDir, name);
     if (existsSync(from)) {
@@ -259,6 +296,37 @@ export function restoreStore(
       );
     }
     loadVault(destDir, { nowSec: now, keys: opts.keys });
+  }
+  if (existsSync(join(destDir, "privacy-state.json"))) {
+    if (opts.keys === undefined) {
+      throw new Error(
+        "restore: privacy state present but no key material given — unlock the keystore to verify the restore"
+      );
+    }
+    loadPrivacyStore(destDir, { nowSec: now, keys: opts.keys });
+    if (existsSync(join(destDir, "privacy-events"))) {
+      const kid = readPrivacyKid(destDir);
+      if (kid === null) {
+        throw new Error("restore: privacy events require privacy-state.json key id");
+      }
+      const privacyDek = resolvePrivacyDek(opts.keys, kid);
+      const repo = new FilePrivacyEventRepository({
+        dir: destDir,
+        dek: privacyDek,
+        nowSec: now,
+      });
+      for (const name of readdirSync(join(destDir, "privacy-events"))) {
+        if (!name.endsWith(".json")) continue;
+        const eventId = name.slice(0, -".json".length);
+        if (repo.load(eventId) === null) {
+          throw new Error(`restore: privacy event missing after copy: ${eventId}`);
+        }
+      }
+    }
+  } else if (existsSync(join(destDir, "privacy-events"))) {
+    throw new Error(
+      "restore: privacy-events present without privacy-state.json — refusing incoherent restore"
+    );
   }
   // Anchor: recompute over the restored log and compare with the backup's.
   let anchorChecked = false;
