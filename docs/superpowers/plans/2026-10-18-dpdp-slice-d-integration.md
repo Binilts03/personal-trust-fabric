@@ -44,12 +44,12 @@
 - Optional `./privacy/dpdp` only if the profile exports materially improve host ergonomics without exposing store internals.
 
 Curated `./privacy` exports:
-- stable model types;
+- stable model types, including `PrivacySnapshot` and the `PrivacyEventRepository` port;
 - `PrivacyRuntime`;
 - DPDP profile constant/profile object;
 - privacy-wrapped vault/provider helpers;
 - processing summary/erasure-plan types/functions.
-Do not export `PrivacyStore` or file event repository through the public package subpath.
+Do not export `PrivacyStore` or `FilePrivacyEventRepository` through the public package subpath.
 
 - [ ] **Step 1: Write failing package surface tests**
 
