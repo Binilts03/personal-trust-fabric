@@ -9,7 +9,7 @@ import type {
   ProcessingBasisEvidence,
   RetentionHold,
 } from "../privacy/model.js";
-import { atomicWrite } from "./files.js";
+import { atomicWrite, checkFreshness } from "./files.js";
 import {
   assertSealedDek,
   openSnapshotEnvelope,
@@ -458,9 +458,11 @@ export function loadPrivacyStore(
       ? resolvePrivacyDek(opts.keys, typeof kid === "string" ? kid : null)
       : opts.dek;
   if (dek === undefined) throw new Error("privacy: DEK required");
-  return PrivacyStore.restore(openPrivacySnapshot(parsed, dek, path), {
+  const store = PrivacyStore.restore(openPrivacySnapshot(parsed, dek, path), {
     ...(opts.nowSec !== undefined ? { nowSec: opts.nowSec } : {}),
   });
+  checkFreshness(dir, "privacy", store.loadedRevision());
+  return store;
 }
 
 export function rotatePrivacyDek(

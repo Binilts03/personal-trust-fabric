@@ -182,6 +182,8 @@ export interface AuditEvent {
   readonly registryRev?: number;
   readonly vaultRev?: number;
   readonly agentRev?: number;
+  /** Generic additive freshness bindings for extension-owned durable state. */
+  readonly stateRevisions?: Readonly<Record<string, number>>;
 }
 
 export interface AuditEntry extends Required<
@@ -194,6 +196,7 @@ export interface AuditEntry extends Required<
   readonly registryRev?: number;
   readonly vaultRev?: number;
   readonly agentRev?: number;
+  readonly stateRevisions?: Readonly<Record<string, number>>;
   readonly seq: number;
   readonly prevHash: string;
   readonly hash: string;
@@ -219,6 +222,25 @@ function entryHash(
  * logs and code (OS keychain in production) — a host obligation. Genuine
  * third-party verifiability still needs independent anchoring (see ADR-0006).
  */
+function validStateRevisions(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.keys(value as Record<string, unknown>).length > 32
+  ) {
+    return false;
+  }
+  return Object.entries(value as Record<string, unknown>).every(
+    ([name, revision]) =>
+      /^[A-Za-z0-9._:-]{1,64}$/.test(name) &&
+      typeof revision === "number" &&
+      Number.isInteger(revision) &&
+      revision >= 0
+  );
+}
+
 export class Audit {
   private readonly entries: AuditEntry[] = [];
   private readonly nowSec: () => number;
@@ -237,13 +259,39 @@ export class Audit {
   }
 
   append(event: AuditEvent): AuditEntry {
-    for (const field of ["authorityRev", "registryRev", "vaultRev"] as const) {
+    for (const field of [
+      "authorityRev",
+      "registryRev",
+      "vaultRev",
+      "agentRev",
+    ] as const) {
       const v: unknown = event[field];
       if (
         v !== undefined &&
         (typeof v !== "number" || !Number.isInteger(v) || v < 0)
       ) {
         throw new Error(`audit: ${field} must be a non-negative integer`);
+      }
+    }
+    if (event.stateRevisions !== undefined) {
+      if (
+        typeof event.stateRevisions !== "object" ||
+        event.stateRevisions === null ||
+        Array.isArray(event.stateRevisions) ||
+        Object.keys(event.stateRevisions).length > 32
+      ) {
+        throw new Error("audit: stateRevisions must be an object with <=32 entries");
+      }
+      for (const [name, revision] of Object.entries(event.stateRevisions)) {
+        if (
+          !/^[A-Za-z0-9._:-]{1,64}$/.test(name) ||
+          !Number.isInteger(revision) ||
+          revision < 0
+        ) {
+          throw new Error(
+            "audit: stateRevisions keys must be safe names and values non-negative integers"
+          );
+        }
       }
     }
     const prev =
@@ -270,6 +318,10 @@ export class Audit {
         ? { registryRev: event.registryRev }
         : {}),
       ...(event.vaultRev !== undefined ? { vaultRev: event.vaultRev } : {}),
+      ...(event.agentRev !== undefined ? { agentRev: event.agentRev } : {}),
+      ...(event.stateRevisions !== undefined
+        ? { stateRevisions: { ...event.stateRevisions } }
+        : {}),
     };
     const entry: AuditEntry = {
       ...body,
@@ -306,7 +358,12 @@ export class Audit {
       (raw["vaultRev"] !== undefined &&
         (typeof raw["vaultRev"] !== "number" ||
           !Number.isInteger(raw["vaultRev"] as number) ||
-          (raw["vaultRev"] as number) < 0))
+          (raw["vaultRev"] as number) < 0)) ||
+      (raw["agentRev"] !== undefined &&
+        (typeof raw["agentRev"] !== "number" ||
+          !Number.isInteger(raw["agentRev"] as number) ||
+          (raw["agentRev"] as number) < 0)) ||
+      !validStateRevisions(raw["stateRevisions"])
     ) {
       throw new Error("audit: malformed entry");
     }

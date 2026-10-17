@@ -176,7 +176,7 @@ export function loadRegistry(
  */
 export function checkFreshness(
   dir: string,
-  what: "authority" | "registry" | "vault" | "agents",
+  what: "authority" | "registry" | "vault" | "agents" | "privacy",
   fileRev: number
 ): void {
   const field =
@@ -186,7 +186,9 @@ export function checkFreshness(
         ? "registryRev"
         : what === "vault"
           ? "vaultRev"
-          : "agentRev";
+          : what === "agents"
+            ? "agentRev"
+            : null;
   const path = join(dir, "audit.jsonl");
   if (!existsSync(path)) return;
   let maxRef: number | null = null;
@@ -200,9 +202,18 @@ export function checkFreshness(
       continue; // corrupt lines detonate at FileAuditLog.open, not here
     }
     if (typeof rec !== "object" || rec === null || Array.isArray(rec)) continue;
-    const v: unknown = (rec as Record<string, unknown>)[field];
-    if (typeof v === "number" && Number.isInteger(v) && v >= 0) {
-      maxRef = maxRef === null ? v : Math.max(maxRef, v);
+    const obj = rec as Record<string, unknown>;
+    const legacy: unknown = field === null ? undefined : obj[field];
+    const generic =
+      typeof obj["stateRevisions"] === "object" &&
+      obj["stateRevisions"] !== null &&
+      !Array.isArray(obj["stateRevisions"])
+        ? (obj["stateRevisions"] as Record<string, unknown>)[what]
+        : undefined;
+    for (const v of [legacy, generic]) {
+      if (typeof v === "number" && Number.isInteger(v) && v >= 0) {
+        maxRef = maxRef === null ? v : Math.max(maxRef, v);
+      }
     }
   }
   if (maxRef !== null && fileRev < maxRef) {
