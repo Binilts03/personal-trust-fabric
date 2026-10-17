@@ -35,7 +35,11 @@
       "types": "./dist/src/store/vault.d.ts",
       "default": "./dist/src/store/vault.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./privacy": {
+      "types": "./dist/src/privacy/api.d.ts",
+      "default": "./dist/src/privacy/api.js"
+    }
   },
   "bin": {
     "ptf": "./dist/src/cli.js",
