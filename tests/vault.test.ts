@@ -11,6 +11,7 @@ import {
   claimsSubset,
   createVaultDek,
   ensureVaultDek,
+  eraseRecord,
   generateEd25519Keypair,
   loadVault,
   migrateVault,
@@ -642,6 +643,68 @@ describe("durable Personal State vault (P0 slice 1)", () => {
     const pres = readForPurpose(vault, { ...req, nonce: "n-retired" });
     assert.equal(pres.disclosures.length, 1);
     assert.equal(pres.disclosures[0]?.value, "new@example.com");
+  });
+
+  it("erases exactly one record durably without leaking its value", () => {
+    const dir = tmp();
+    const audit = FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW);
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r-delete",
+      owner: P,
+      type: "email",
+      value: "delete-me@example.com",
+      sensitivity: "sensitive",
+      source: "user",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    vault.putRecord({
+      id: "r-keep",
+      owner: P,
+      type: "phone",
+      value: "+91-keep",
+      sensitivity: "general",
+      source: "user",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    saveVault(dir, vault, { dek: DEK });
+
+    const loaded = loadVault(dir, { dek: DEK });
+    const receipt = eraseRecord(
+      dir,
+      loaded,
+      { id: "r-delete", owner: P },
+      { at: NOW + 1, audit, dek: DEK }
+    );
+
+    assert.deepEqual(receipt, {
+      id: "r-delete",
+      type: "email",
+      version: 1,
+      erasedAt: NOW + 1,
+    });
+    assert.throws(
+      () =>
+        eraseRecord(
+          dir,
+          loaded,
+          { id: "r-delete", owner: P },
+          { at: NOW + 2, audit, dek: DEK }
+        ),
+      /unknown record/
+    );
+    const after = loadVault(dir, { dek: DEK });
+    assert.deepEqual(
+      after.listMetadata(P).map((r) => r.id),
+      ["r-keep"]
+    );
+    const evidence = JSON.stringify(receipt) + readFileSync(join(dir, "audit.jsonl"), "utf8");
+    assert.ok(!evidence.includes("delete-me@example.com"));
+    assert.ok(!evidence.includes("+91-keep"));
   });
 
   it("onConsumed runs after consumption but before secret use", async () => {
