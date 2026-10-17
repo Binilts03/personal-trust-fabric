@@ -757,22 +757,92 @@ Residual responsibilities include:
 - regulatory transfer notifications and other laws;
 - statutory Consent Manager registration/governance if that role is pursued.
 
-## 24. Recommended implementation sequence after approval
+## 24. Implementation decomposition after approval
 
-This is sequencing only, not the implementation plan:
+This design is an umbrella architecture. It is intentionally **not** safe to execute as one giant implementation plan or one giant PR. The implementation must remain one coherent mission, but it is decomposed into independently verifiable slices. Each slice must keep legacy verification green before the next slice is integrated.
 
-1. ADR/glossary + regression baseline.
-2. Extract sealed snapshot helper and decompose vault behind compatibility facade.
-3. Add exact-record erasure with regression/abuse tests.
-4. Implement privacy domain model + deterministic engine.
-5. Implement encrypted privacy store + key lifecycle + backup/restore.
-6. Implement DPDP profile.
-7. Implement PrivacyRuntime composition + processing events + rights summary/erasure planner.
-8. Add operator CLI module.
-9. Add MCP privacy-mode hooks without changing agent schemas.
-10. Public exports/docs/limits/changelog.
-11. Thermo-nuclear structural review.
-12. Full verification and claim-by-claim `verify-this` evidence.
+### Slice A — Foundation and vault decomposition
+
+Scope:
+
+1. ADR-0024 + glossary changes + baseline verification evidence.
+2. Extract `sealed-snapshot` cryptographic/CAS plumbing without behavior changes.
+3. Decompose `vault.ts` behind the existing compatibility/public facade.
+4. Add exact-record erasure and its audit/receipt semantics.
+5. Prove all pre-existing tests/evals/harness checks remain green.
+
+Exit criteria:
+
+- no privacy semantics yet;
+- no public API break;
+- `vault.ts` materially smaller;
+- baseline and treatment behavior equivalent except for the new exact-record erasure seam.
+
+### Slice B — Privacy model, engine and encrypted state
+
+Scope:
+
+1. jurisdiction-neutral privacy model;
+2. deterministic narrowing engine;
+3. encrypted privacy store and separate DEK lifecycle;
+4. DPDP profile;
+5. backup/restore + freshness integration;
+6. property/adversarial tests for default-deny, basis/consent scope, guardian evidence, minimisation and tamper/CAS behavior.
+
+Exit criteria:
+
+- privacy evaluation works through a pure public/test seam;
+- privacy allow cannot create authority;
+- privacy state is encrypted, bounded and backed up coherently;
+- no MCP/CLI agent integration yet.
+
+### Slice C — Runtime enforcement and evidence
+
+Scope:
+
+1. `PrivacyRuntime` composition over existing disclosure, protected-use and journal seams;
+2. live re-evaluation immediately before processing;
+3. secret-free Processing Events;
+4. idempotent post-success evidence recovery;
+5. processing summary;
+6. retention/erasure planner using exact-record erasure.
+
+Exit criteria:
+
+- authority-only and privacy-only paths each fail independently when the other gate denies;
+- withdrawal between proposal and processing blocks the effect;
+- processing evidence contains no sentinel personal value;
+- existing exact-operation/journal semantics are reused, not duplicated.
+
+### Slice D — Operator and agent-host integration
+
+Scope:
+
+1. dedicated privacy CLI module + thin top-level routing;
+2. explicit privacy-mode host configuration;
+3. MCP hooks that resolve basis/controller/privacy-subject context outside agent schemas;
+4. public package subpath(s);
+5. docs, changelog, known limits and operator guidance.
+
+Exit criteria:
+
+- agents cannot select or mutate legal-basis fields;
+- existing MCP deployments behave identically when privacy mode is disabled;
+- privacy configuration remains operator-owned.
+
+### Slice E — Independent review and release gate
+
+Scope:
+
+1. thermo-nuclear/engineering structural review of the complete diff;
+2. fix all evidenced BLOCKER/MAJOR findings;
+3. full project verification;
+4. `verify-this` verdicts for the acceptance claims in section 22;
+5. packaging/public-surface audit;
+6. final no-regression comparison against the frozen base SHA.
+
+A slice may use a dedicated implementation branch/PR, but the final feature is not complete until all slices pass the section-22 acceptance criteria. No slice may compensate for a failed invariant in another layer by adding a special case to the Authority core.
+
 
 ## 25. Decision
 
