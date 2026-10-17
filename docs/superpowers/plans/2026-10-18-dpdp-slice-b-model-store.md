@@ -220,6 +220,57 @@ export interface PrivacySnapshot {
   readonly revision: number;
 }
 
+export type ProcessingEventState =
+  | "PREPARED"
+  | "SUCCEEDED"
+  | "FAILED_FINAL"
+  | "OUTCOME_UNKNOWN";
+
+export interface ProcessingEventPrepare {
+  readonly profileId: string;
+  readonly profileRevision: string;
+  readonly dataPrincipalRef: string;
+  readonly authorityPrincipal: string;
+  readonly actor: string;
+  readonly controllerId: string;
+  readonly activityId: string;
+  readonly basisId: string;
+  readonly purpose: string;
+  readonly action: `/${string}`;
+  readonly resource: { readonly type: string; readonly id: string };
+  readonly dataCategories: readonly string[];
+  readonly recipients: readonly ProcessingRecipient[];
+  readonly termsDigest: string;
+  readonly authorityCitationIds: readonly string[];
+  readonly preparedAt: number;
+}
+
+export interface ProcessingEventFinalize {
+  readonly finalizedAt: number;
+  readonly evidenceRef?: string;
+}
+
+export interface ProcessingEventRecord extends ProcessingEventPrepare {
+  readonly eventId: string;
+  readonly idempotencyKey: string;
+  readonly state: ProcessingEventState;
+  readonly finalizedAt?: number;
+  readonly evidenceRef?: string;
+}
+
+export interface PrivacyEventRepository {
+  prepare(input: ProcessingEventPrepare): ProcessingEventRecord;
+  load(eventId: string): ProcessingEventRecord | null;
+  transition(
+    eventId: string,
+    to: Exclude<ProcessingEventState, "PREPARED">,
+    patch: ProcessingEventFinalize
+  ): ProcessingEventRecord;
+  findByKey(idempotencyKey: string): ProcessingEventRecord | null;
+  listBySubject(dataPrincipalRef: string): readonly ProcessingEventRecord[];
+  recoverPrepared(nowSec: number): readonly ProcessingEventRecord[];
+}
+
 export function evaluateProcessing(input: {
   readonly activities: readonly ProcessingActivity[];
   readonly bases: readonly ProcessingBasisEvidence[];
@@ -390,48 +441,19 @@ git commit -m "feat: persist encrypted privacy configuration"
 **Interfaces:**
 - Produces:
 ```ts
-export type ProcessingEventState =
-  | "PREPARED"
-  | "SUCCEEDED"
-  | "FAILED_FINAL"
-  | "OUTCOME_UNKNOWN";
-
-export interface ProcessingEventPrepare {
-  readonly profileId: string;
-  readonly profileRevision: string;
-  readonly dataPrincipalRef: string;
-  readonly authorityPrincipal: string;
-  readonly actor: string;
-  readonly controllerId: string;
-  readonly activityId: string;
-  readonly basisId: string;
-  readonly purpose: string;
-  readonly action: `/${string}`;
-  readonly resource: { readonly type: string; readonly id: string };
-  readonly dataCategories: readonly string[];
-  readonly recipients: readonly ProcessingRecipient[];
-  readonly termsDigest: string;
-  readonly authorityCitationIds: readonly string[];
-  readonly preparedAt: number;
-}
-
-export interface ProcessingEventFinalize {
-  readonly finalizedAt: number;
-  readonly evidenceRef?: string;
-}
-
-export interface ProcessingEventRecord extends ProcessingEventPrepare {
-  readonly eventId: string;
-  readonly idempotencyKey: string;
-  readonly state: ProcessingEventState;
-  readonly finalizedAt?: number;
-  readonly evidenceRef?: string;
-}
-
-export interface PrivacyEventRepository {
+export class FilePrivacyEventRepository implements PrivacyEventRepository {
+  constructor(opts: {
+    readonly dir: string;
+    readonly dek: Uint8Array;
+    readonly nowSec?: () => number;
+  });
   prepare(input: ProcessingEventPrepare): ProcessingEventRecord;
   load(eventId: string): ProcessingEventRecord | null;
-  transition(eventId: string, to: Exclude<ProcessingEventState,"PREPARED">, patch: ProcessingEventFinalize): ProcessingEventRecord;
+  transition(
+    eventId: string,
+    to: Exclude<ProcessingEventState, "PREPARED">,
+    patch: ProcessingEventFinalize
+  ): ProcessingEventRecord;
   findByKey(idempotencyKey: string): ProcessingEventRecord | null;
   listBySubject(dataPrincipalRef: string): readonly ProcessingEventRecord[];
   recoverPrepared(nowSec: number): readonly ProcessingEventRecord[];
