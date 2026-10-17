@@ -316,6 +316,19 @@ export function createPrivacyDek(): Uint8Array {
   return new Uint8Array(randomBytes(DEK_BYTES));
 }
 
+export function ensurePrivacyDek(
+  keys: Record<string, Uint8Array>
+): Uint8Array {
+  const existing = keys[PRIVACY_DEK_ALIAS];
+  if (existing !== undefined) {
+    assertSealedDek(existing, "privacy");
+    return existing;
+  }
+  const dek = createPrivacyDek();
+  keys[PRIVACY_DEK_ALIAS] = dek;
+  return dek;
+}
+
 export function privacyDekFingerprint(dek: Uint8Array): string {
   return sealedDekFingerprint(dek, { kidBytes: KID_BYTES, errorPrefix: "privacy" });
 }

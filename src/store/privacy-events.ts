@@ -17,7 +17,9 @@ import type {
 import { atomicWrite } from "./files.js";
 import {
   openSnapshotEnvelope,
+  readSealedEnvelopeKid,
   sealSnapshotEnvelope,
+  sealedDekFingerprint,
 } from "./sealed-snapshot.js";
 
 const EVENT_VERSION = 1;
@@ -220,4 +222,63 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
       .map((name) => openRecord(join(root, name), this.dek))
       .map(cloneEvent);
   }
+}
+
+
+/** Verify every durable event by decrypting/validating it. */
+export function verifyPrivacyEvents(
+  dir: string,
+  dek: Uint8Array
+): number {
+  const root = join(dir, "privacy-events");
+  if (!existsSync(root)) return 0;
+  let count = 0;
+  for (const name of readdirSync(root).filter((n) => n.endsWith(".json"))) {
+    openRecord(join(root, name), dek);
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * Crash-safe event DEK rotation helper. Callers stage the new DEK in the
+ * keystore before invoking; each file selects its opening key by envelope
+ * kid, so rerunning after a partial rotation safely resumes.
+ */
+export function rotatePrivacyEventsDek(
+  dir: string,
+  opts: {
+    readonly keys: Record<string, Uint8Array>;
+    readonly newDek: Uint8Array;
+  }
+): number {
+  const root = join(dir, "privacy-events");
+  if (!existsSync(root)) return 0;
+  let count = 0;
+  for (const name of readdirSync(root).filter((n) => n.endsWith(".json")).sort()) {
+    const path = join(root, name);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    } catch {
+      throw new Error(`privacy event store corrupt: ${path}`);
+    }
+    const kid = readSealedEnvelopeKid(parsed, eventOptions(), path);
+    const opening = Object.values(opts.keys).find(
+      (candidate) =>
+        candidate instanceof Uint8Array &&
+        candidate.length === 32 &&
+        sealedDekFingerprint(candidate, {
+          kidBytes: 8,
+          errorPrefix: "privacy event",
+        }) === kid
+    );
+    if (opening === undefined) {
+      throw new Error(`privacy event: no DEK matches envelope kid ${kid}`);
+    }
+    const record = openRecord(path, opening);
+    atomicWrite(path, sealRecord(record, opts.newDek));
+    count += 1;
+  }
+  return count;
 }
