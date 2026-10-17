@@ -1,8 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { canonicalize, sha256Hex } from "../core/canonical.js";
+import { randomBytes } from "node:crypto";
 import { atomicWrite, checkFreshness, FileAuditLog } from "./files.js";
+import {
+  assertSealedDek,
+  openSnapshotEnvelope,
+  readSealedEnvelopeKid,
+  sealSnapshotEnvelope,
+  sealedDekFingerprint,
+} from "./sealed-snapshot.js";
 import {
   VaultStore,
   type VaultRecord,
@@ -51,7 +57,6 @@ export const VAULT_DEK_NEXT_ALIAS = "ptf/vault-dek-next";
 const VAULT_ENVELOPE_VERSION = 2;
 const VAULT_AAD = "ptf-vault/v2";
 const DEK_BYTES = 32;
-const IV_BYTES = 12;
 const KID_BYTES = 8;
 
 export interface VaultEnvelopeFile {
@@ -90,15 +95,15 @@ export function ensureVaultDek(keys: Record<string, Uint8Array>): {
 }
 
 function checkDek(dek: unknown): asserts dek is Uint8Array {
-  if (!(dek instanceof Uint8Array) || dek.length !== DEK_BYTES) {
-    throw new Error("vault: DEK must be 32 bytes");
-  }
+  assertSealedDek(dek, "vault");
 }
 
 /** Key id: first 8 bytes of sha256(DEK), hex. Identifies — never secret. */
 export function vaultDekFingerprint(dek: Uint8Array): string {
-  checkDek(dek);
-  return sha256Hex(Buffer.from(dek)).slice(0, KID_BYTES * 2);
+  return sealedDekFingerprint(dek, {
+    kidBytes: KID_BYTES,
+    errorPrefix: "vault",
+  });
 }
 
 /**
@@ -140,44 +145,28 @@ export function readVaultKid(dir: string): string | null {
   if (!existsSync(path)) return null;
   const parsed = parseVaultFile(path);
   if (isLegacyPlaintext(parsed)) throw legacyError(path);
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    (parsed as { kidHex?: unknown }).kidHex === undefined
-  ) {
-    throw new Error(`vault store corrupt: ${path} (bad envelope)`);
-  }
-  const kid: unknown = (parsed as { kidHex?: unknown }).kidHex;
-  if (
-    typeof kid !== "string" ||
-    kid.length !== KID_BYTES * 2 ||
-    !/^[0-9a-fA-F]+$/.test(kid)
-  ) {
-    throw new Error(`vault store corrupt: ${path} (bad envelope)`);
-  }
-  return kid;
+  return readSealedEnvelopeKid(parsed, {
+    version: VAULT_ENVELOPE_VERSION,
+    aad: VAULT_AAD,
+    kidBytes: KID_BYTES,
+    errorPrefix: "vault",
+  }, path);
 }
 
 function sealSnapshot(
   snap: { readonly records: readonly VaultRecord[]; readonly revision: number },
   dek: Uint8Array
 ): VaultEnvelopeFile {
-  checkDek(dek);
-  const plain = canonicalize({
-    records: snap.records,
-    revision: snap.revision,
-  });
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv("aes-256-gcm", Buffer.from(dek), iv);
-  cipher.setAAD(Buffer.from(VAULT_AAD, "utf8"));
-  const ct = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
-  return {
-    version: VAULT_ENVELOPE_VERSION,
-    kidHex: vaultDekFingerprint(dek),
-    ivHex: iv.toString("hex"),
-    ctHex: ct.toString("hex"),
-    tagHex: cipher.getAuthTag().toString("hex"),
-  };
+  return sealSnapshotEnvelope(
+    { records: snap.records, revision: snap.revision },
+    dek,
+    {
+      version: VAULT_ENVELOPE_VERSION,
+      aad: VAULT_AAD,
+      kidBytes: KID_BYTES,
+      errorPrefix: "vault",
+    }
+  ) as VaultEnvelopeFile;
 }
 
 function openSnapshot(
@@ -185,66 +174,31 @@ function openSnapshot(
   dek: Uint8Array,
   path: string
 ): { readonly records: readonly VaultRecord[]; readonly revision: number } {
-  checkDek(dek);
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    Array.isArray(parsed) ||
-    (parsed as { version?: unknown }).version !== VAULT_ENVELOPE_VERSION ||
-    typeof (parsed as Record<string, unknown>)["kidHex"] !== "string" ||
-    typeof (parsed as Record<string, unknown>)["ivHex"] !== "string" ||
-    typeof (parsed as Record<string, unknown>)["ctHex"] !== "string" ||
-    typeof (parsed as Record<string, unknown>)["tagHex"] !== "string"
-  ) {
-    throw new Error(`vault store corrupt: ${path} (bad envelope)`);
-  }
-  const env = parsed as VaultEnvelopeFile;
-  if (
-    env.kidHex.length !== KID_BYTES * 2 ||
-    !/^[0-9a-fA-F]+$/.test(env.kidHex) ||
-    env.ivHex.length !== IV_BYTES * 2 ||
-    !/^[0-9a-fA-F]+$/.test(env.ivHex) ||
-    env.tagHex.length !== 32 ||
-    !/^[0-9a-fA-F]+$/.test(env.tagHex) ||
-    env.ctHex.length === 0 ||
-    env.ctHex.length % 2 !== 0 ||
-    !/^[0-9a-fA-F]+$/.test(env.ctHex)
-  ) {
-    throw new Error(`vault store corrupt: ${path} (bad envelope)`);
-  }
-  let plain: string;
-  try {
-    const decipher = createDecipheriv(
-      "aes-256-gcm",
-      Buffer.from(dek),
-      Buffer.from(env.ivHex, "hex")
-    );
-    decipher.setAAD(Buffer.from(VAULT_AAD, "utf8"));
-    decipher.setAuthTag(Buffer.from(env.tagHex, "hex"));
-    plain =
-      decipher.update(Buffer.from(env.ctHex, "hex"), undefined, "utf8") +
-      decipher.final("utf8");
-  } catch {
-    throw new Error("vault: decryption failed (wrong DEK or tampered file)");
-  }
-  let snap: unknown;
-  try {
-    snap = JSON.parse(plain) as unknown;
-  } catch {
-    throw new Error(`vault store corrupt: ${path} (bad payload)`);
-  }
-  if (
-    typeof snap !== "object" ||
-    snap === null ||
-    Array.isArray(snap) ||
-    !Array.isArray((snap as { records?: unknown }).records)
-  ) {
-    throw new Error(`vault store corrupt: ${path} (bad payload)`);
-  }
-  return snap as {
-    readonly records: readonly VaultRecord[];
-    readonly revision: number;
-  };
+  return openSnapshotEnvelope(
+    parsed,
+    dek,
+    {
+      version: VAULT_ENVELOPE_VERSION,
+      aad: VAULT_AAD,
+      kidBytes: KID_BYTES,
+      errorPrefix: "vault",
+    },
+    path,
+    (value) => {
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        Array.isArray(value) ||
+        !Array.isArray((value as { records?: unknown }).records)
+      ) {
+        throw new Error("vault: bad snapshot payload");
+      }
+      return value as {
+        readonly records: readonly VaultRecord[];
+        readonly revision: number;
+      };
+    }
+  );
 }
 
 /** Pre-encryption plaintext shape. Loading it is refused — migrate first. */
