@@ -40,7 +40,7 @@
 - Produces:
 ```ts
 export interface PrivacyRuntimeDeps {
-  readonly privacy: PrivacyStore;
+  readonly loadPrivacy: () => PrivacyStore;
   readonly events: PrivacyEventRepository;
   readonly profile: PrivacyProfile;
   readonly nowSec?: () => number;
@@ -58,7 +58,7 @@ export type PrivacyGateResult =
       readonly allow: true;
       readonly privacy: Extract<PrivacyDecision,{allow:true}>;
       readonly termsDigest: string;
-      readonly authorityCitations: readonly Citation[];
+      readonly authorityCitationIds: readonly string[];
     }
   | { readonly allow: false; readonly publicReason: "authority-denied" | "privacy-denied"; readonly operatorReason?: PrivacyDenyReason };
 
@@ -85,7 +85,7 @@ Use current `Authority.evaluate(operation, ingress, { consume: false })`; derive
 
 - [ ] **Step 3: Implement live recheck**
 
-Reloaded/current privacy store is supplied by the caller/host at the runtime seam; recheck compares activity/basis identifiers and exact processing context. Any withdrawal/deactivation denies.
+`PrivacyRuntime` calls `loadPrivacy()` again during recheck so a consent withdrawal, activity deactivation, or hold change committed after preflight is visible before processing. It compares activity/basis identifiers and the exact trusted processing context; any withdrawal/deactivation denies.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -116,7 +116,7 @@ export async function discloseWithPrivacy(opts: {
   readonly gate: PrivacyGateRequest;
   readonly vault: VaultStore;
   readonly disclosure: VaultReadRequest;
-  readonly onAuthorityConsumed?: (authority: Authority) => void | Promise<void>;
+  readonly onAuthorityConsumed: (authority: Authority) => void | Promise<void>;
 }): Promise<Presentation>;
 
 export async function useCredentialWithPrivacy(opts: {
@@ -144,7 +144,7 @@ Secret use:
 
 - [ ] **Step 2: Implement wrappers by composing existing vault APIs**
 
-No copy of disclosure selection, secret leak guards, or Authority consumption logic.
+No copy of disclosure selection, secret leak guards, or Authority consumption logic. After `VaultStore.disclose` consumes authority in memory, call `onAuthorityConsumed` before returning/delivering the presentation; a callback failure prevents delivery. For secret use, preserve the existing `SecretUseOptions.onConsumed` burn-before-effect hook.
 
 - [ ] **Step 3: Run focused tests**
 
