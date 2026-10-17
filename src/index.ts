@@ -37,3 +37,6 @@ export * from "./store/anchor.js";
 export * from "./store/vault.js";
 export * from "./profiles/data.js";
 export * from "./adapters/providers.js";
+
+export * from "./privacy/model.js";
+export * from "./privacy/engine.js";
