@@ -72,6 +72,13 @@ function decide(
 }
 
 describe("privacy narrowing engine", () => {
+  it("fails closed when trusted context carries a direct subject identifier", () => {
+    assert.deepEqual(
+      decide({ dataPrincipalRef: "person@example.com" }),
+      { allow: false, reason: "other" }
+    );
+  });
+
   it("defaults deny when processing activity or basis evidence is absent", () => {
     assert.deepEqual(decide({}, { activities: [] }), {
       allow: false,
