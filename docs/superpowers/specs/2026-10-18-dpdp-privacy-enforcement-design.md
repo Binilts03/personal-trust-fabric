@@ -91,11 +91,14 @@ They may be the same individual in a personal deployment, but enterprise process
 
 ### 4.2 Canonical terms
 
-**Privacy Data Principal**  
-The individual to whom the personal data relates for a privacy-law evaluation. Distinct from PTF `Principal`.
+**Privacy Data Principal Reference**  
+A stable, opaque reference to the individual to whom the personal data relates for a privacy-law evaluation. It is distinct from PTF `Principal` and MUST NOT itself be an email address, phone number, government identifier, name, or other directly identifying value. The trusted host owns the mapping between the opaque reference and the real person.
 
 **Data Fiduciary / Controller**  
 The organisation or person that determines the purpose and means of processing. PTF stores an identifier only; it does not infer this role.
+
+**Processing Recipient**  
+A configured recipient of personal data, identified without personal values and classified by role (for example `data-processor`, `data-fiduciary`, `third-party`, or `other`). Recipient role is evidence for policy/reporting; it never creates authority.
 
 **Processing Basis Evidence**  
 An operator-supplied, durable record that asserts the privacy basis relied on for a processing activity and points to the evidence supporting that assertion. It is evidence, not authority.
@@ -113,7 +116,7 @@ An operator-declared description of a class of personal-data processing: exact a
 A deterministic allow/deny result. An allow proves only that configured privacy controls passed; it is not a legal-compliance conclusion.
 
 **Processing Event**  
-A secret-free, queryable record of personal-data processing actually delivered/used/executed through privacy mode. It links the activity, basis, data principal, actor, exact PTF terms digest and authority citations.
+A secret-free, queryable lifecycle record for personal-data processing attempted through privacy mode. It is durably precommitted before the processing boundary and then finalized to an observed outcome. It links the activity, basis, opaque data-principal reference, actor, exact PTF terms digest and authority citations. A crash may leave an `OUTCOME_UNKNOWN` record; the system must never silently erase that uncertainty.
 
 **Retention Hold**  
 An operator-supplied reason and end condition that blocks erasure of specified records/categories while normal processing remains independently subject to privacy and authority checks.
@@ -128,20 +131,22 @@ The following MUST hold:
 1. A Privacy Decision can deny processing; it can never create PTF authority.
 2. No matching active privacy activity in privacy mode means deny.
 3. No matching active processing-basis evidence means deny.
-4. An AI/agent never supplies `basisId`, controller identity, privacy data-principal identity, or legal basis through an agent-facing tool schema.
-5. Privacy subject identity comes from trusted host/application context.
+4. An AI/agent never supplies `basisId`, controller identity, privacy data-principal identity, subject classification, or legal basis through an agent-facing tool schema.
+5. Privacy subject identity and subject-classification evidence come from trusted host/application context; the privacy data-principal reference is opaque and non-identifying.
 6. Requested/used data categories must be a subset of the Processing Activity and active basis scope.
 7. Recipients must be a subset of the Processing Activity and active basis scope.
 8. Purpose must match exactly in v1; no purpose prefix/wildcard semantics.
 9. Consent withdrawal must block future consent-based processing on the next privacy evaluation without revoking unrelated Authority State.
 10. Privacy approval never substitutes for `Authority.evaluate`; both gates must pass.
-11. Existing `authorized_operation === executed_operation` remains unchanged.
-12. Processing events never contain raw personal values, secrets, credentials, notice bodies, or consent content.
-13. Erasure is by exact vault record identifier; no unconstrained “delete all” primitive exists in the vault layer.
-14. A retention hold can prevent erasure but does not itself authorise use/disclosure.
-15. Privacy profiles do not infer legal conclusions. An external trusted actor must assert the basis/evidence.
-16. Existing non-privacy deployments remain behaviorally backward-compatible unless privacy mode is explicitly enabled.
-17. PTF must never describe the result as `compliant=true`. Decisions use control language such as `allow`, `deny`, `basis-active`, and `processing-recorded`.
+11. Agent-facing privacy evaluation occurs only after a non-consuming authority preflight has established that the actor is authorized to make the class of request; an unauthorized caller must not be able to use privacy-state denial details as an oracle.
+12. Existing `authorized_operation === executed_operation` remains unchanged.
+13. Processing events never contain raw personal values, secrets, credentials, notice bodies, consent content, or direct identifiers for the Privacy Data Principal.
+14. A Processing Event is durably precommitted before disclosure/use/effect; completion is finalized afterward. A crash between the external processing and finalization leaves conservative evidence (`OUTCOME_UNKNOWN`) rather than no record.
+15. Erasure is by exact vault record identifier; no unconstrained “delete all” primitive exists in the vault layer.
+16. A retention hold can prevent erasure but does not itself authorise use/disclosure.
+17. Privacy profiles do not infer legal conclusions. An external trusted actor must assert the basis/evidence.
+18. Existing non-privacy deployments remain behaviorally backward-compatible unless privacy mode is explicitly enabled.
+19. PTF must never describe the result as `compliant=true`. Decisions use control language such as `allow`, `deny`, `basis-active`, and `processing-recorded`.
 
 ## 6. Architecture
 
@@ -216,14 +221,15 @@ Evaluation sequence:
 
 1. validate trusted context;
 2. locate one exact active activity;
-3. ensure authority principal/controller relationship matches configured activity;
-4. ensure privacy data-principal scope matches;
-5. ensure exact purpose/action/resource-type match;
-6. ensure requested categories are subsets of activity and basis scope;
-7. ensure recipients are subsets of activity and basis scope;
-8. ensure basis is active and profile-valid;
-9. ensure no applicable privacy lifecycle block prevents processing;
-10. return allow with evidence identifiers only.
+3. ensure the PTF authority principal matches the activity's configured `authorityPrincipal`;
+4. ensure the configured Data Fiduciary/controller matches;
+5. ensure the opaque privacy data-principal reference is in scope;
+6. ensure exact purpose/action/resource-type match;
+7. ensure requested categories are subsets of activity and basis scope;
+8. ensure recipients (including their configured roles) are subsets of activity and basis scope;
+9. ensure basis is active and profile-valid;
+10. ensure no applicable privacy lifecycle block prevents processing;
+11. return allow with evidence identifiers only.
 
 No side effects and no PTF Authority mutation.
 
@@ -233,19 +239,21 @@ Owns composition with existing PTF behavior.
 
 Responsibilities:
 
-- perform privacy preflight before authority consumption;
+- run a non-consuming PTF authority preflight before reading privacy state for an agent-facing request;
+- perform privacy preflight only after that authority preflight passes;
 - call existing disclosure/use/execution seams rather than reimplement them;
 - re-evaluate live privacy state immediately before consequential processing;
-- record the Processing Event after successful delivery/use/execution and before returning the result to the agent-facing caller;
-- idempotently recover processing-event recording when an existing execution journal already proves success;
-- produce rights summaries from PTF-observed Processing Events;
+- durably precommit a Processing Event before disclosure/use/effect, then finalize it after the observed outcome;
+- surface only a coarse agent-facing privacy denial while preserving structured deny reasons for trusted operator/audit surfaces;
+- idempotently reconcile/finalize Processing Events when an existing execution journal or durable proposal proves the outcome;
+- produce rights summaries from PTF-observed Processing Events, including conservative `OUTCOME_UNKNOWN` entries;
 - orchestrate exact-record erasure subject to Retention Holds.
 
 The runtime is the public “privacy enforcement mode” seam. Callers wanting DPDP controls should use the runtime rather than manually composing lower-level stores.
 
 #### `src/privacy/dpdp.ts`
 
-Implements profile id `IN-DPDP-2025`.
+Implements profile family `IN-DPDP-2025` with an explicit profile revision that is pinned to the notified 2025 Rules as corrected by the published corrigendum. Profile revision changes are data/adapter changes, not Authority-core changes.
 
 It validates configured evidence; it does not decide legal sufficiency.
 
@@ -263,23 +271,39 @@ Minimum profile behavior:
 
 Future GDPR/UK-GDPR/PDPA/CCPA profiles implement the same privacy-profile interface without editing this file.
 
-### 7.2 New durable privacy store: `src/store/privacy.ts`
+### 7.2 Durable privacy configuration store: `src/store/privacy.ts`
 
-Stores:
+Stores only mutable privacy configuration/state:
 
 - Notice Evidence;
 - Consent Evidence;
 - Processing Basis Evidence;
 - Processing Activities;
 - Retention Holds;
-- bounded Processing Events;
 - revision metadata.
 
 The store uses a separate privacy DEK alias, e.g. `ptf/privacy-dek`, in the existing keystore. Privacy metadata can itself be personal/confidential; it is encrypted at rest.
 
-Privacy state is one CAS-managed encrypted snapshot in v1. Maximum processing-event count is bounded; operators must export/archive before pruning. Pruning cannot remove events still required by configured retention obligations.
+Privacy configuration is one CAS-managed encrypted snapshot in v1.
 
-### 7.3 Extract encrypted snapshot plumbing
+### 7.3 Durable processing-event repository: `src/store/privacy-events.ts`
+
+Processing history MUST NOT be appended to the mutable privacy snapshot. Each Processing Event is stored independently behind a repository interface so normal processing does not rewrite all privacy configuration/history.
+
+Required semantics:
+
+- one deterministic event key per exact privacy-processing attempt;
+- create/precommit is durable and idempotent;
+- allowed transitions are explicit and fail closed;
+- terminal outcomes include `SUCCEEDED` and `FAILED_FINAL`; `OUTCOME_UNKNOWN` represents a crash/ambiguous boundary and is never silently treated as success or failure;
+- for provider effects, reconciliation may use the existing execution journal as the outcome oracle;
+- for disclosures/protected-use paths without a provider journal, a precommitted-but-unfinalized event is recovered conservatively as `OUTCOME_UNKNOWN`;
+- every event payload is encrypted with the privacy DEK and contains identifiers/metadata only;
+- growth is bounded; export/archive/prune rules must honor configured retention obligations.
+
+This repository may use one encrypted file per event in the file backend. It must not introduce a generic database or a second execution state machine.
+
+### 7.4 Extract encrypted snapshot plumbing
 
 Current `src/store/vault.ts` is ~1,048 lines and contains record semantics, disclosure/use logic, encryption envelope, persistence, migration and key rotation.
 
@@ -298,7 +322,7 @@ It owns:
 
 Domain validation remains in the vault/privacy stores. The helper must not become a generic magic ORM/store.
 
-### 7.4 Decompose vault without breaking imports
+### 7.5 Decompose vault without breaking imports
 
 Preserve `./vault` and existing named exports.
 
@@ -327,7 +351,7 @@ Requirements:
 
 No bulk `eraseAll(owner)` primitive at vault level.
 
-### 7.5 Existing large files
+### 7.6 Existing large files
 
 No DPDP-specific conditional logic may be added directly to:
 
@@ -351,9 +375,10 @@ Required behaviors:
 - `privacy-init` creates the privacy DEK if absent;
 - passphrase rotation re-wraps the keystore and does not re-encrypt privacy state;
 - `privacy-rekey` rotates the privacy DEK with the same crash-safe stage/seal/promote philosophy used by the vault;
-- backup/restore includes `privacy-state.json` and verifies that the privacy DEK is available when privacy state is present;
+- backup/restore includes `privacy-state.json` and `privacy-events/`, and verifies that the privacy DEK is available when either is present;
 - restore treats the PTF store as one coherent unit;
-- privacy revision is included in freshness/audit binding when privacy state mutates.
+- privacy configuration revision is included in freshness/audit binding when configuration mutates;
+- event files remain independently authenticated/encrypted and are included in backup anchoring/integrity checks.
 
 No privacy-state key or plaintext is emitted to agent tools, receipts, logs, or CLI output.
 
@@ -366,25 +391,33 @@ agent asks for claims
         |
 trusted ingress binds PTF actor/principal
         |
-host derives Privacy Data Principal + recipient
+non-consuming Authority preflight
+        |
+DENY -> generic authority/privacy failure; privacy store is not inspected
+        |
+ALLOW
+        |
+host resolves opaque Privacy Data Principal ref + configured recipient
         |
 PrivacyRuntime maps request to exact Processing Activity
         |
-privacy preflight (no authority consumption)
+privacy preflight
         |
-Authority dry-run/proposal
-        |
-human approval if needed
+human approval / proposal flow if needed
         |
 live privacy re-check
+        |
+Processing Event PREPARED persisted
         |
 existing VaultStore disclosure consumes authority
         |
 signed presentation produced
         |
-Processing Event persisted
+Processing Event -> SUCCEEDED
         |
 presentation returned
+
+(crash after PREPARED but before a provable completion -> OUTCOME_UNKNOWN)
 ```
 
 For vault disclosure, data categories are derived from the claim names PTF is actually about to disclose; they are not independently asserted by the agent.
@@ -396,17 +429,21 @@ The trusted provider/host adapter supplies the privacy processing context. Agent
 ```text
 agent proposes exact action
         |
+non-consuming Authority preflight
+        |
 privacy preflight
         |
 authority/redeem
         |
 live privacy re-check
         |
+Processing Event PREPARED persisted
+        |
 existing protected execution / journal
         |
 success/reconcile
         |
-Processing Event persisted idempotently
+Processing Event finalized idempotently from observed/journal outcome
         |
 secret-free result returned
 ```
@@ -417,9 +454,10 @@ No privacy layer reimplements the execution journal.
 
 Each Processing Event contains only identifiers/metadata:
 
-- event id;
+- deterministic event id / idempotency key;
+- lifecycle state (`PREPARED`, `SUCCEEDED`, `FAILED_FINAL`, or `OUTCOME_UNKNOWN`);
 - privacy profile id/version;
-- privacy data-principal reference;
+- opaque privacy data-principal reference;
 - PTF authority principal;
 - verified actor;
 - controller/data-fiduciary id;
@@ -429,16 +467,17 @@ Each Processing Event contains only identifiers/metadata:
 - action;
 - resource type/id;
 - data-category names;
-- recipient ids;
+- recipient ids and configured recipient roles;
 - PTF terms digest;
 - authority citation ids;
 - linked execution/receipt reference when applicable;
-- timestamp;
-- outcome kind.
+- prepared-at timestamp;
+- finalized-at timestamp when known;
+- outcome kind and linked durable evidence reference, if any.
 
-No raw personal value, secret, credential, free-text notice, free-text legal analysis, or model reasoning is permitted.
+No raw personal value, secret, credential, direct subject identifier, free-text notice, free-text legal analysis, or model reasoning is permitted.
 
-Processing Events must be idempotent for a stable operation/outcome key so crash recovery cannot duplicate evidence records.
+Processing Events must be idempotent for a stable operation/outcome key so crash recovery cannot duplicate evidence records. Rights summaries must include `OUTCOME_UNKNOWN` events as “processing outcome unknown / possibly occurred” rather than omit them.
 
 ## 11. Consent semantics
 
@@ -458,11 +497,13 @@ Withdrawing consent:
 - does not erase data when an active Retention Hold or other configured retention necessity exists;
 - exposes the affected activities/records to the rights/erasure planner.
 
-The implementation stores evidence references and structured scope. A host may store the human-readable notice/consent artifact externally; PTF binds it by stable reference/hash.
+The implementation stores evidence references and structured scope. Consent Evidence must capture, at minimum: notice reference/hash, purpose, data categories, affirmative-action timestamp, collection channel/method, language/version where supplied by the host, evidence/proof reference, and withdrawal timestamp/proof reference when withdrawn. A host may store the human-readable notice/consent artifact externally; PTF binds it by stable reference/hash. PTF does not claim that these fields alone establish legally valid consent.
 
 ## 12. Retention and erasure
 
 PTF must not infer statutory retention periods.
+
+PTF does not infer statutory retention periods from free-form legal text. A jurisdiction profile may expose named/versioned retention-control expectations, but the operator supplies the actual Retention Holds/constraints and remains responsible for their legal correctness.
 
 The operator supplies Retention Holds/constraints with:
 
@@ -504,12 +545,12 @@ The privacy subsystem provides **PTF-observed evidence**, not a complete enterpr
 
 ### Processing summary
 
-For one Privacy Data Principal, return:
+For one opaque Privacy Data Principal reference, return:
 
 - categories processed;
 - purposes/activities;
 - recipients/processors recorded through PTF;
-- processing timestamps;
+- processing timestamps and any `OUTCOME_UNKNOWN` attempts;
 - basis references;
 - current consent state;
 - PTF-managed record ids eligible/held for erasure.
@@ -539,7 +580,7 @@ Agents must not be able to:
 - erase data;
 - edit Processing Events.
 
-When privacy mode is enabled for an MCP server, existing agent tools use host-resolved privacy context. The agent schema does not grow fields such as `basisId` or `dpdpPurpose`.
+When privacy mode is enabled for an MCP server, existing agent tools use host-resolved privacy context. The agent schema does not grow fields such as `basisId`, `dpdpPurpose`, subject age/classification, controller id, or direct subject identifier. Unauthorized callers receive coarse failures; detailed privacy deny reasons remain on trusted operator/audit surfaces.
 
 Existing deployments with privacy mode disabled retain current behavior.
 
@@ -609,8 +650,9 @@ Mandatory structural constraints:
 3. No new privacy implementation file should exceed ~500–600 lines without a documented reason.
 4. `src/cli.ts` and `src/mcp-server.ts` may gain routing/hooks only; privacy business logic belongs in focused modules.
 5. Encrypted snapshot mechanics are extracted once and reused; no copied AES-GCM/CAS implementation.
-6. No new runtime dependency is expected. Adding one requires a separate ADR because CI currently pins the dependency allowlist.
-7. Existing imports through `./vault` and current public exports remain compatible.
+6. Processing Events use a separate repository; they must not grow the mutable privacy configuration snapshot.
+7. No new runtime dependency is expected. Adding one requires a separate ADR because CI currently pins the dependency allowlist.
+8. Existing imports through `./vault` and current public exports remain compatible.
 
 ## 19. User stories
 
@@ -634,6 +676,8 @@ Mandatory structural constraints:
 18. As a future profile author, I want to add another jurisdiction without modifying PTF Authority semantics or the DPDP profile.
 19. As a maintainer, I want the vault refactor to preserve existing imports/tests while reducing the god-file surface.
 20. As a maintainer, I want privacy decisions and tests to use closed deterministic reason codes rather than free-form legal prose.
+21. As an unauthorized agent, I must not be able to probe whether a privacy basis, consent record, or subject relationship exists.
+22. As an auditor, I want a precommitted processing record to survive a crash at the disclosure/effect boundary so an ambiguous outcome is visible instead of disappearing.
 
 ## 20. Deny reasons
 
@@ -698,6 +742,8 @@ Tests continue to cross the public test seam through `src/index.ts`, except exis
 - agent claims the data subject is an adult;
 - agent adds extra claim/recipient;
 - stale privacy snapshot after consent withdrawal;
+- unauthorized actor attempts to distinguish “no basis” from “unknown subject” and must not gain a privacy-state oracle;
+- crash after Processing Event PREPARED and before finalization;
 - tampered consent/notice refs;
 - privacy store rollback/mixed backup;
 - processing-event injection with secret-looking values;
@@ -726,17 +772,19 @@ The implementation is acceptable only if all are true:
 1. A valid PTF Authority grant alone cannot pass privacy mode without valid configured Processing Activity + Basis Evidence.
 2. Valid privacy evidence alone cannot pass when PTF Authority denies.
 3. Consent withdrawal between proposal and actual disclosure/use blocks processing.
-4. Data minimisation is mechanically demonstrated by denial of one additional claim.
-5. An agent cannot choose or mutate its legal basis through MCP input.
-6. Processing evidence contains no raw personal data in sentinel leak tests.
-7. Exact-record erasure is implemented and retention holds block erasure without granting use.
-8. Privacy state is encrypted and participates in coherent backup/restore.
-9. Existing non-privacy test/eval suites remain green.
-10. No DPDP-specific branch is introduced into the Authority core.
-11. `vault.ts` is decomposed rather than expanded.
-12. Privacy business logic does not accumulate in `cli.ts` or `mcp-server.ts`.
-13. Public docs say “helps enforce/support DPDP controls,” never “guarantees compliance.”
-14. Known residuals and unsupported DPDP obligations are documented in `docs/audit/limits.md`.
+4. An authority-denied actor cannot probe privacy configuration or distinguish privacy-state details through agent-facing errors.
+5. A crash at the processing boundary leaves a durable `OUTCOME_UNKNOWN`/recoverable event rather than losing evidence.
+6. Data minimisation is mechanically demonstrated by denial of one additional claim.
+7. An agent cannot choose or mutate its legal basis through MCP input.
+8. Processing evidence contains no raw personal data or direct subject identifiers in sentinel leak tests.
+9. Exact-record erasure is implemented and retention holds block erasure without granting use.
+10. Privacy configuration and Processing Events are encrypted and participate in coherent backup/restore.
+11. Existing non-privacy test/eval suites remain green.
+12. No DPDP-specific branch is introduced into the Authority core.
+13. `vault.ts` is decomposed rather than expanded.
+14. Privacy business logic does not accumulate in `cli.ts` or `mcp-server.ts`.
+15. Public docs say “helps enforce/support DPDP controls,” never “guarantees compliance.”
+16. Known residuals and unsupported DPDP obligations are documented in `docs/audit/limits.md`.
 
 ## 23. Explicit residuals after this implementation
 
