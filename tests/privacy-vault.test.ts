@@ -175,7 +175,7 @@ describe("privacy-wrapped vault processing", () => {
         resource: { type: "vault", id: "personal-state" },
         holder: { id: P, privateKey: holder.privateKey },
       },
-      onAuthorityConsumed: () => order.push("authority-persisted"),
+      onAuthorityConsumed: () => { order.push("authority-persisted"); },
     });
     assert.equal(presentation.disclosures.length, 1);
     assert.deepEqual(order, ["authority-persisted"]);
