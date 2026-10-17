@@ -74,6 +74,28 @@ export interface VaultRecordInput {
   readonly expiresAt?: number | null;
 }
 
+export interface VaultRecordMetadata {
+  readonly id: string;
+  readonly owner: string;
+  readonly type: string;
+  readonly sensitivity: VaultSensitivity;
+  readonly source: string;
+  readonly resource?: { readonly type: string; readonly id: string };
+  readonly allowedPurposes: readonly string[];
+  readonly allowedAgents: readonly string[];
+  readonly expiresAt: number | null;
+  readonly version: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface VaultErasureReceipt {
+  readonly id: string;
+  readonly type: string;
+  readonly version: number;
+  readonly erasedAt: number;
+}
+
 export interface VaultSnapshot {
   readonly records: readonly VaultRecord[];
   readonly revision: number;
@@ -400,6 +422,54 @@ export class VaultStore {
       purpose: opts.purpose,
       receipt,
       ...(names !== undefined ? { names: [...names] } : {}),
+    };
+  }
+
+  /** Host-safe metadata projection; never includes record values. */
+  listMetadata(owner?: string): VaultRecordMetadata[] {
+    const out: VaultRecordMetadata[] = [];
+    for (const rec of this.records.values()) {
+      if (owner !== undefined && rec.owner !== owner) continue;
+      out.push({
+        id: rec.id,
+        owner: rec.owner,
+        type: rec.type,
+        sensitivity: rec.sensitivity,
+        source: rec.source,
+        ...(rec.resource !== undefined
+          ? { resource: { type: rec.resource.type, id: rec.resource.id } }
+          : {}),
+        allowedPurposes: [...rec.allowedPurposes],
+        allowedAgents: [...rec.allowedAgents],
+        expiresAt: rec.expiresAt,
+        version: rec.version,
+        createdAt: rec.createdAt,
+        updatedAt: rec.updatedAt,
+      });
+    }
+    return out.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /** Exact-record lifecycle erasure. No wildcard/bulk semantics. */
+  eraseRecord(
+    input: { readonly id: string; readonly owner: string },
+    at?: number
+  ): VaultErasureReceipt {
+    if (!isNonEmptyString(input.id)) throw new Error("vault: id required");
+    if (!isNonEmptyString(input.owner)) throw new Error("vault: owner required");
+    const now = at ?? this.nowSec();
+    if (!Number.isInteger(now) || now < 0) {
+      throw new Error("vault: at must be a non-negative epoch int");
+    }
+    const rec = this.records.get(input.id);
+    if (rec === undefined) throw new Error("vault: unknown record");
+    if (rec.owner !== input.owner) throw new Error("vault: owner mismatch");
+    this.records.delete(rec.id);
+    return {
+      id: rec.id,
+      type: rec.type,
+      version: rec.version,
+      erasedAt: now,
     };
   }
 
@@ -965,6 +1035,34 @@ export function putRecord(
     });
   }
   return rec;
+}
+
+/**
+ * Durable exact-record erasure: mutate in memory, persist through revision
+ * CAS, then append a value-free audit event. A failed save never records a
+ * successful erasure.
+ */
+export function eraseRecord(
+  dir: string,
+  vault: VaultStore,
+  input: { readonly id: string; readonly owner: string },
+  opts: {
+    readonly at?: number;
+    readonly audit?: FileAuditLog;
+    readonly dek: Uint8Array;
+  }
+): VaultErasureReceipt {
+  const receipt = vault.eraseRecord(input, opts.at);
+  saveVault(dir, vault, { dek: opts.dek });
+  if (opts.audit !== undefined) {
+    opts.audit.append({
+      actor: input.owner,
+      action: "vault.erase",
+      detail: `id=${receipt.id} type=${receipt.type} version=${receipt.version} rev=${vault.loadedRevision()}`,
+      vaultRev: vault.loadedRevision(),
+    });
+  }
+  return receipt;
 }
 
 export interface VaultReadRequest {
