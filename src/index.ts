@@ -43,3 +43,4 @@ export * from "./privacy/engine.js";
 export * from "./privacy/dpdp.js";
 export * from "./store/privacy.js";
 export * from "./store/privacy-events.js";
+export * from "./privacy/runtime.js";
