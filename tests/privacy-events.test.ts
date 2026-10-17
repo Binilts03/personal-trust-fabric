@@ -63,6 +63,65 @@ describe("durable privacy processing events", () => {
     );
   });
 
+  it("reconciles OUTCOME_UNKNOWN to a final observed result", () => {
+    const dir = tmp();
+    const dek = createPrivacyDek();
+    const repo = new FilePrivacyEventRepository({ dir, dek, nowSec: () => NOW });
+    const prepared = repo.prepare(PREPARE);
+    const unknown = repo.transition(prepared.eventId, "OUTCOME_UNKNOWN", {
+      finalizedAt: NOW + 1,
+    });
+    assert.equal(unknown.state, "OUTCOME_UNKNOWN");
+    const reconciled = repo.transition(prepared.eventId, "SUCCEEDED", {
+      finalizedAt: NOW + 2,
+      evidenceRef: "execution:confirmed",
+    });
+    assert.equal(reconciled.state, "SUCCEEDED");
+    assert.equal(reconciled.evidenceRef, "execution:confirmed");
+    assert.throws(
+      () =>
+        repo.transition(prepared.eventId, "FAILED_FINAL", {
+          finalizedAt: NOW + 3,
+        }),
+      /terminal|transition/
+    );
+  });
+
+  it("enforces a bounded event store before creating a new processing record", () => {
+    const dir = tmp();
+    const dek = createPrivacyDek();
+    const repo = new FilePrivacyEventRepository({
+      dir,
+      dek,
+      nowSec: () => NOW,
+      maxRecords: 1,
+    });
+    repo.prepare(PREPARE);
+    assert.throws(
+      () =>
+        repo.prepare({
+          ...PREPARE,
+          activityId: "activity-2",
+          termsDigest: "cd".repeat(32),
+        }),
+      /privacy event store full/
+    );
+  });
+
+  it("rejects direct identifiers as privacy subject references", () => {
+    const dir = tmp();
+    const dek = createPrivacyDek();
+    const repo = new FilePrivacyEventRepository({ dir, dek, nowSec: () => NOW });
+    assert.throws(
+      () =>
+        repo.prepare({
+          ...PREPARE,
+          dataPrincipalRef: "person@example.com",
+        }),
+      /opaque|dataPrincipalRef|subject/
+    );
+  });
+
   it("encrypts event payloads and recovers abandoned PREPARED as OUTCOME_UNKNOWN", () => {
     const dir = tmp();
     const dek = createPrivacyDek();
