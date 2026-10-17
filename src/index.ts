@@ -45,3 +45,5 @@ export * from "./store/privacy.js";
 export * from "./store/privacy-events.js";
 export * from "./privacy/runtime.js";
 export * from "./privacy/vault.js";
+export * from "./privacy/providers.js";
+export * from "./privacy/rights.js";
