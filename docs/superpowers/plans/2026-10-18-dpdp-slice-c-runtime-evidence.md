@@ -40,7 +40,7 @@
 - Produces:
 ```ts
 export interface PrivacyRuntimeDeps {
-  readonly loadPrivacy: () => PrivacyStore;
+  readonly loadPrivacy: () => PrivacySnapshot;
   readonly events: PrivacyEventRepository;
   readonly profile: PrivacyProfile;
   readonly nowSec?: () => number;
@@ -85,7 +85,7 @@ Use current `Authority.evaluate(operation, ingress, { consume: false })`; derive
 
 - [ ] **Step 3: Implement live recheck**
 
-`PrivacyRuntime` calls `loadPrivacy()` again during recheck so a consent withdrawal, activity deactivation, or hold change committed after preflight is visible before processing. It compares activity/basis identifiers and the exact trusted processing context; any withdrawal/deactivation denies.
+`PrivacyRuntime` calls `loadPrivacy()` again during recheck so a consent withdrawal, activity deactivation, or hold change committed after preflight is visible before processing. The loader returns the immutable `PrivacySnapshot` contract; the runtime never depends on the file-backed `PrivacyStore`. It compares activity/basis identifiers and the exact trusted processing context; any withdrawal/deactivation denies.
 
 - [ ] **Step 4: Run focused tests**
 
