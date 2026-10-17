@@ -40,3 +40,4 @@ export * from "./adapters/providers.js";
 
 export * from "./privacy/model.js";
 export * from "./privacy/engine.js";
+export * from "./privacy/dpdp.js";
