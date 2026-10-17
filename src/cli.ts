@@ -61,6 +61,7 @@ import type {
   VerifiedIdentity,
 } from "./index.js";
 import type { KeyObject } from "node:crypto";
+import { runPrivacyCommand } from "./cli/privacy.js";
 
 /**
  * Minimal operator CLI (prod-03). Manual argv, stdin/stdout only, no framework.
@@ -123,9 +124,33 @@ const COMMANDS = [
   "deny",
   "backup",
   "restore",
+  "privacy",
   "help",
   "version",
 ] as const;
+
+const PRIVACY_PATHS = new Set([
+  "init",
+  "notice/add",
+  "notice/list",
+  "consent/add",
+  "consent/list",
+  "consent/withdraw",
+  "basis/add",
+  "basis/list",
+  "basis/withdraw-consent",
+  "activity/add",
+  "activity/list",
+  "hold/add",
+  "hold/release",
+  "hold/list",
+  "check",
+  "summary",
+  "erase/plan",
+  "erase/apply",
+  "verify",
+  "rekey",
+]);
 
 const BOOLEAN_FLAGS = new Set([
   "yes",
@@ -166,6 +191,7 @@ export function helpText(): string {
     "  audit [--verify]                       verify hash chain (needs no passphrase)",
     "  backup --to DIR                        copy the store as one unit + anchor.json (refuses non-empty dest; stop writers first)",
     "  restore --from DIR                     copy a backup over fresh --dir, never merges; verifies chain + freshness + anchor",
+    "  privacy <subcommand>                    DPDP/privacy evidence, runtime checks, summaries, exact erasure and rekey",
     "  revoke (--grant ID | --recipient ALIAS)",
     "  review [--digest D]                  list pending proposals (sanitized) or show one in full",
     "  approve --digest D [--ttl-s S]       mint one one-time approval for a pending proposal (default 300s)",
@@ -216,14 +242,25 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = tokens;
   if (command === undefined) {
     throw new Error(
-      "usage: ptf [--dir D] <init|keygen|rekey|recipient|agent|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|revoke|review|approve|deny|help|version> ..."
+      "usage: ptf [--dir D] <init|keygen|rekey|recipient|agent|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|privacy|revoke|review|approve|deny|help|version> ..."
     );
   }
   if (!(COMMANDS as readonly string[]).includes(command)) {
     throw new Error(`unknown command: ${command}`);
   }
   const flags: Record<string, string | boolean> = {};
-  for (let i = 0; i < rest.length; i++) {
+  let flagStart = 0;
+  if (command === "privacy") {
+    while (flagStart < rest.length && !(rest[flagStart] as string).startsWith("--")) {
+      flagStart += 1;
+    }
+    const path = rest.slice(0, flagStart).join("/");
+    if (!PRIVACY_PATHS.has(path)) {
+      throw new Error(`unknown privacy subcommand: ${path || "(missing)"}`);
+    }
+    flags["path"] = path;
+  }
+  for (let i = flagStart; i < rest.length; i++) {
     const t = rest[i] as string;
     if (!t.startsWith("--")) {
       throw new Error(`unexpected positional argument: ${t}`);
@@ -319,6 +356,17 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
   audit: new Set(["verify"]),
   backup: new Set(["to"]),
   restore: new Set(["from"]),
+  privacy: new Set([
+    "path",
+    "file",
+    "id",
+    "proof-ref",
+    "asserted-by",
+    "subject-ref",
+    "owner",
+    "ids",
+    "yes",
+  ]),
   revoke: new Set(["grant", "recipient"]),
   review: new Set(["digest"]),
   approve: new Set(["digest", "ttl-s"]),
@@ -608,7 +656,11 @@ export async function run(
       command === "vault-rekey" ||
       ((command === "vault-put" || command === "vault-migrate") &&
         keystoreExists) ||
-      (command === "audit" && existsSync(join(dir, "personal-state.json"))),
+      (command === "audit" &&
+        (existsSync(join(dir, "personal-state.json")) ||
+          existsSync(join(dir, "privacy-state.json")))) ||
+      (command === "privacy" &&
+        (keystoreExists || flags["path"] !== "init")),
     prompt
   );
 
@@ -617,6 +669,23 @@ export async function run(
     /authority denied|no records satisfy|purpose denied|agent denied|record expired|unknown record|owner mismatch|holder must equal/.test(
       msg
     );
+
+  if (command === "privacy") {
+    const path = flags["path"];
+    if (typeof path !== "string") {
+      throw new Error("privacy: subcommand required");
+    }
+    return runPrivacyCommand({
+      dir,
+      path,
+      flags,
+      auth: ctx.auth,
+      audit: ctx.audit,
+      keys: ctx.keys,
+      io,
+      persistKeys: () => persistKeys(dir, env, ctx.keys, prompt),
+    });
+  }
 
   if (command === "recipient") {
     const alias = str(flags, "alias");
