@@ -56,6 +56,77 @@ export interface ProcessingRecipient {
   readonly role: PrivacyRecipientRole;
 }
 
+export interface NoticeEvidence {
+  readonly id: string;
+  readonly controllerId: string;
+  readonly dataPrincipalRef: string;
+  readonly purpose: string;
+  readonly dataCategories: readonly string[];
+  readonly noticeRef: string;
+  readonly noticeHash: string;
+  readonly presentedAt: number;
+  readonly assertedBy: string;
+  readonly language?: string;
+  readonly version?: string;
+}
+
+export interface ConsentEvidence {
+  readonly id: string;
+  readonly noticeId: string;
+  readonly controllerId: string;
+  readonly dataPrincipalRef: string;
+  readonly purpose: string;
+  readonly dataCategories: readonly string[];
+  readonly givenAt: number;
+  readonly method: string;
+  readonly proofRef: string;
+  readonly assertedBy: string;
+  readonly withdrawnAt?: number;
+  readonly withdrawalProofRef?: string;
+  readonly withdrawnBy?: string;
+}
+
+export type ProcessingBasisEvidence =
+  | {
+      readonly kind: "consent";
+      readonly id: string;
+      readonly controllerId: string;
+      readonly dataPrincipalRef: string;
+      readonly purpose: string;
+      readonly dataCategories: readonly string[];
+      readonly consentId: string;
+      readonly assertedBy: string;
+      readonly nbf?: number;
+      readonly exp?: number;
+      readonly active: boolean;
+    }
+  | {
+      readonly kind: "certain-legitimate-use";
+      readonly id: string;
+      readonly controllerId: string;
+      readonly purpose: string;
+      readonly dataCategories: readonly string[];
+      readonly provisionRef: string;
+      readonly evidenceRef: string;
+      readonly assertedBy: string;
+      readonly nbf?: number;
+      readonly exp?: number;
+      readonly active: boolean;
+    };
+
+export interface RetentionHold {
+  readonly id: string;
+  readonly dataPrincipalRef: string;
+  readonly recordIds: readonly string[];
+  readonly dataCategories: readonly string[];
+  readonly reasonRef: string;
+  readonly assertedBy: string;
+  readonly effectiveAt: number;
+  readonly retainUntil: number | null;
+  readonly releasedAt?: number;
+  readonly releasedBy?: string;
+}
+
 export interface ProcessingActivity {
   readonly id: string;
   readonly profileId: string;
@@ -68,6 +139,7 @@ export interface ProcessingActivity {
   readonly dataCategories: readonly string[];
   readonly recipients: readonly ProcessingRecipient[];
   readonly basisId: string;
+  readonly allowedTransferDestinations?: readonly string[];
   readonly nbf?: number;
   readonly exp?: number;
   readonly active: boolean;
@@ -91,9 +163,62 @@ export interface TrustedProcessingContext {
   readonly transferDestination?: string;
 }
 
+export const PRIVACY_DENY_REASONS = [
+  "no-processing-activity",
+  "activity-inactive",
+  "principal-mismatch",
+  "controller-mismatch",
+  "purpose-mismatch",
+  "action-mismatch",
+  "resource-mismatch",
+  "basis-missing",
+  "basis-inactive",
+  "basis-invalid",
+  "data-category-forbidden",
+  "recipient-forbidden",
+  "guardian-evidence-required",
+  "transfer-forbidden",
+  "retention-restricted",
+  "other",
+] as const;
+export type PrivacyDenyReason = (typeof PRIVACY_DENY_REASONS)[number];
+
+export type PrivacyProfileDecision =
+  | { readonly ok: true; readonly controlRefs: readonly string[] }
+  | { readonly ok: false; readonly reason: PrivacyDenyReason };
+
+export interface PrivacyProfile {
+  readonly id: string;
+  readonly revision: string;
+  validate(input: {
+    readonly activity: ProcessingActivity;
+    readonly basis: ProcessingBasisEvidence;
+    readonly notices: readonly NoticeEvidence[];
+    readonly consents: readonly ConsentEvidence[];
+    readonly context: TrustedProcessingContext;
+    readonly nowSec: number;
+  }): PrivacyProfileDecision;
+}
+
 export type PrivacyDecision =
-  | { readonly allow: true; readonly activityId: string; readonly basisId: string; readonly profileId: string; readonly controlRefs: readonly string[] }
+  | {
+      readonly allow: true;
+      readonly activityId: string;
+      readonly basisId: string;
+      readonly profileId: string;
+      readonly profileRevision: string;
+      readonly controlRefs: readonly string[];
+    }
   | { readonly allow: false; readonly reason: PrivacyDenyReason };
+
+export interface PrivacySnapshot {
+  readonly notices: readonly NoticeEvidence[];
+  readonly consents: readonly ConsentEvidence[];
+  readonly bases: readonly ProcessingBasisEvidence[];
+  readonly activities: readonly ProcessingActivity[];
+  readonly holds: readonly RetentionHold[];
+  readonly revision: number;
+}
 
 export function evaluateProcessing(input: {
   readonly activities: readonly ProcessingActivity[];
@@ -154,36 +279,6 @@ export const DPDP_PROFILE_REVISION = "2025-r1" as const;
 export const dpdpProfile: PrivacyProfile;
 ```
 
-Basis records are tagged:
-```ts
-type ProcessingBasisEvidence =
-  | {
-      readonly kind: "consent";
-      readonly id: string;
-      readonly controllerId: string;
-      readonly dataPrincipalRef: string;
-      readonly purpose: string;
-      readonly dataCategories: readonly string[];
-      readonly consentId: string;
-      readonly assertedBy: string;
-      readonly nbf?: number;
-      readonly exp?: number;
-      readonly active: boolean;
-    }
-  | {
-      readonly kind: "certain-legitimate-use";
-      readonly id: string;
-      readonly controllerId: string;
-      readonly purpose: string;
-      readonly dataCategories: readonly string[];
-      readonly provisionRef: string;
-      readonly evidenceRef: string;
-      readonly assertedBy: string;
-      readonly nbf?: number;
-      readonly exp?: number;
-      readonly active: boolean;
-    };
-```
 
 - [ ] **Step 1: Write failing profile tests**
 
@@ -301,10 +396,36 @@ export type ProcessingEventState =
   | "FAILED_FINAL"
   | "OUTCOME_UNKNOWN";
 
-export interface ProcessingEventRecord extends ProcessingEvent {
-  readonly state: ProcessingEventState;
+export interface ProcessingEventPrepare {
+  readonly profileId: string;
+  readonly profileRevision: string;
+  readonly dataPrincipalRef: string;
+  readonly authorityPrincipal: string;
+  readonly actor: string;
+  readonly controllerId: string;
+  readonly activityId: string;
+  readonly basisId: string;
+  readonly purpose: string;
+  readonly action: `/${string}`;
+  readonly resource: { readonly type: string; readonly id: string };
+  readonly dataCategories: readonly string[];
+  readonly recipients: readonly ProcessingRecipient[];
+  readonly termsDigest: string;
+  readonly authorityCitationIds: readonly string[];
   readonly preparedAt: number;
+}
+
+export interface ProcessingEventFinalize {
+  readonly finalizedAt: number;
+  readonly evidenceRef?: string;
+}
+
+export interface ProcessingEventRecord extends ProcessingEventPrepare {
+  readonly eventId: string;
+  readonly idempotencyKey: string;
+  readonly state: ProcessingEventState;
   readonly finalizedAt?: number;
+  readonly evidenceRef?: string;
 }
 
 export interface PrivacyEventRepository {
