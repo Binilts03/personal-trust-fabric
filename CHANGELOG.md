@@ -13,6 +13,8 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- DPDP privacy-enforcement architecture (ADR-0024): privacy is a narrowing layer beside Authority, with Processing Basis Evidence kept separate from Personal/Authority State; PTF Principal is distinct from an opaque Privacy Data Principal Reference; legal sufficiency stays external evidence and privacy mode remains explicit/backward-compatible. Implementation proceeds in verified slices.
+
 - P3P wire-shape alignment (SDK 1.3.0): `normalizeP3pReceipt` maps real
   `decodeReceipt` output (`status`/`reference`/`settlement`/`challengeId`/
   `timestamp`/`paymentMethod`) to PTF terms, dropping `paymentGateway`

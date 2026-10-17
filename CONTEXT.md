@@ -94,6 +94,49 @@ _Avoid_: Password file, wallet
 Every durable file carries a `revision` bumped atomically with the data; a stale handle's save fails closed instead of last-write-wins. One CLI/MCP writer per store is the supported topology; CAS is the backstop.
 _Avoid_: Locking, transactions (implies multi-writer support)
 
+
+### Privacy
+
+**Privacy Data Principal Reference**:
+An opaque, non-identifying host-owned reference to the individual whose personal data is being processed. Distinct from PTF Principal; never use an email, phone number, government identifier, or name as the reference itself.
+_Avoid_: Subject id, user id (too easy to confuse with direct identity or PTF Principal)
+
+**Processing Basis Evidence**:
+Operator-supplied evidence describing the privacy basis asserted for a Processing Activity. Evidence only; it never creates PTF authority or proves legal sufficiency by itself.
+_Avoid_: Permission, legal authorization
+
+**Notice Evidence**:
+Versioned evidence that a notice for a specific purpose/data scope was presented. PTF stores references/hashes and metadata, not a legal conclusion.
+_Avoid_: Consent (notice and consent are distinct)
+
+**Consent Evidence**:
+Evidence of affirmative consent bound to one notice, one Privacy Data Principal Reference, one purpose, and explicit data categories. Withdrawal changes privacy evidence state; it never mutates unrelated Authority State.
+_Avoid_: Standing Grant, Approval
+
+**Processing Activity**:
+Operator-declared class of personal-data processing: authority principal, controller, subject scope, action, resource type, purpose, data categories, recipients, and basis reference. It narrows processing and never grants authority.
+_Avoid_: Permission policy
+
+**Processing Recipient**:
+Configured recipient of personal data plus its privacy role (processor, fiduciary/controller, third party, or other). Recipient role is evidence and scope, never authority.
+_Avoid_: Recipient (without privacy role)
+
+**Privacy Decision**:
+Deterministic allow/deny result from privacy controls after authority preflight. An allow means configured privacy controls passed; it is never a statement of legal compliance.
+_Avoid_: Legal decision, compliance result
+
+**Processing Event**:
+Secret-free, crash-conservative evidence of a personal-data processing attempt. It is precommitted before the processing boundary and finalized to SUCCEEDED, FAILED_FINAL, or OUTCOME_UNKNOWN.
+_Avoid_: Audit proof of compliance
+
+**Retention Hold**:
+Operator-supplied reason/end condition that blocks exact-record erasure while independently requiring fresh authority and privacy approval for any use.
+_Avoid_: Retention permission
+
+**Privacy Profile**:
+Jurisdiction/version-specific validator over jurisdiction-neutral privacy primitives. Profiles validate configured evidence; they do not infer legal sufficiency.
+_Avoid_: Legal rules engine
+
 ### External
 
 **Mandate**:
