@@ -12,6 +12,10 @@ import {
   claimsSubset,
   createProposal,
   createVaultDek,
+  createPrivacyDek,
+  PrivacyStore,
+  savePrivacyStore,
+  FilePrivacyEventRepository,
   loadAuthority,
   restoreStore,
   saveAuthority,
@@ -98,6 +102,78 @@ function testIo(): {
     },
   };
 }
+
+describe("backup/restore privacy state", () => {
+  it("copies and verifies encrypted privacy configuration and processing events as one unit", () => {
+    const { dir: live, dek: vaultDek } = seedLive();
+    const privacyDek = createPrivacyDek();
+    const privacy = new PrivacyStore(() => NOW);
+    privacy.addNotice({
+      id: "notice-privacy",
+      controllerId: "acme",
+      dataPrincipalRef: "subject:opaque-backup",
+      purpose: "support",
+      dataCategories: ["email"],
+      noticeRef: "notice://backup",
+      noticeHash: "a".repeat(64),
+      presentedAt: NOW,
+      assertedBy: "privacy-office",
+    });
+    savePrivacyStore(live, privacy, { dek: privacyDek });
+    const events = new FilePrivacyEventRepository({
+      dir: live,
+      dek: privacyDek,
+      nowSec: () => NOW,
+    });
+    events.prepare({
+      profileId: "IN-DPDP-2025",
+      profileRevision: "2025-r1",
+      dataPrincipalRef: "subject:opaque-backup",
+      authorityPrincipal: P,
+      actor: A,
+      controllerId: "acme",
+      activityId: "activity-backup",
+      basisId: "basis-backup",
+      purpose: "support",
+      action: "/disclose",
+      resource: { type: "vault", id: "personal-state" },
+      dataCategories: ["email"],
+      recipients: [{ id: "verifier", role: "third-party" }],
+      termsDigest: "bc".repeat(32),
+      authorityCitationIds: ["g1"],
+      preparedAt: NOW,
+    });
+
+    const dest = join(tmpdir(), `ptf-backup-privacy-${Date.now()}`);
+    const summary = backupStore(live, dest, { nowSec: () => NOW });
+    assert.ok(summary.files.includes("privacy-state.json"));
+    assert.equal(summary.privacyEvents, 1);
+    assert.ok(
+      !readFileSync(join(dest, "privacy-state.json"), "utf8").includes(
+        "subject:opaque-backup"
+      )
+    );
+
+    const restored = join(tmpdir(), `ptf-backup-privacy-rest-${Date.now()}`);
+    const result = restoreStore(dest, restored, {
+      nowSec: () => NOW,
+      keys: {
+        [VAULT_DEK_ALIAS]: vaultDek,
+        "ptf/privacy-dek": privacyDek,
+      },
+    });
+    assert.ok(result.files.includes("privacy-state.json"));
+    const restoredEvents = new FilePrivacyEventRepository({
+      dir: restored,
+      dek: privacyDek,
+      nowSec: () => NOW,
+    });
+    assert.equal(
+      restoredEvents.listBySubject("subject:opaque-backup").length,
+      1
+    );
+  });
+});
 
 describe("backup/restore as code (operations runbook)", () => {
   it("backs up as one unit with anchor; clean restore verifies + anchor matches", () => {
