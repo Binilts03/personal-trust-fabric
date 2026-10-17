@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
   createPrivacyDek,
   loadPrivacyStore,
   savePrivacyStore,
+  FileAuditLog,
   type ConsentEvidence,
   type NoticeEvidence,
   type ProcessingActivity,
@@ -110,5 +111,35 @@ describe("encrypted privacy configuration store", () => {
     savePrivacyStore(dir, a, { dek });
     b.addBasis(BASIS);
     assert.throws(() => savePrivacyStore(dir, b, { dek }), /changed under us/);
+  });
+
+  it("fails closed when privacy state is rolled back behind generic audit freshness", () => {
+    const dir = tmp();
+    const dek = createPrivacyDek();
+    const audit = FileAuditLog.open(join(dir, "audit.jsonl"), () => NOW);
+    const store = new PrivacyStore(() => NOW);
+    store.addNotice(NOTICE);
+    savePrivacyStore(dir, store, { dek });
+    audit.append({
+      actor: "operator",
+      action: "privacy.notice.add",
+      stateRevisions: { privacy: store.loadedRevision() },
+    });
+    const oldBlob = readFileSync(join(dir, "privacy-state.json"), "utf8");
+
+    const live = loadPrivacyStore(dir, { dek });
+    live.addConsent(CONSENT);
+    savePrivacyStore(dir, live, { dek });
+    audit.append({
+      actor: "operator",
+      action: "privacy.consent.add",
+      stateRevisions: { privacy: live.loadedRevision() },
+    });
+
+    writeFileSync(join(dir, "privacy-state.json"), oldBlob);
+    assert.throws(
+      () => loadPrivacyStore(dir, { dek }),
+      /privacy store.*predates audit history|partial rollback/
+    );
   });
 });
