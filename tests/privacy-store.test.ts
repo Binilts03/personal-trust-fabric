@@ -95,6 +95,28 @@ describe("encrypted privacy configuration store", () => {
     assert.equal(again.snapshot().consents[0]?.withdrawnAt, NOW + 1);
   });
 
+  it("rejects direct identifiers where an opaque privacy subject reference is required", () => {
+    const store = new PrivacyStore(() => NOW);
+    assert.throws(
+      () =>
+        store.addNotice({
+          ...NOTICE,
+          id: "notice-direct",
+          dataPrincipalRef: "person@example.com",
+        }),
+      /opaque|dataPrincipalRef|subject/
+    );
+    assert.throws(
+      () =>
+        store.addConsent({
+          ...CONSENT,
+          id: "consent-direct",
+          dataPrincipalRef: "+919999999999",
+        }),
+      /opaque|dataPrincipalRef|subject/
+    );
+  });
+
   it("fails closed on wrong keys and stale writers", () => {
     const dir = tmp();
     const dek = createPrivacyDek();
