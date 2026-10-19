@@ -4,11 +4,10 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  PRIVACY_DEK_ALIAS,
-  FilePrivacyEventRepository,
-  loadPrivacyStore,
   openKeystore,
 } from "../src/index.js";
+import { PRIVACY_DEK_ALIAS, loadPrivacyStore } from "../src/store/privacy.js";
+import { FilePrivacyEventRepository } from "../src/store/privacy-events.js";
 import { parseArgs, run } from "../src/cli.js";
 
 const NOW = 1_700_000_000;
