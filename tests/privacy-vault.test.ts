@@ -292,6 +292,56 @@ describe("privacy-wrapped vault processing", () => {
     assert.equal(events.values.size, 0);
   });
 
+  it("does not inspect secret-record metadata before Authority preflight denies", async () => {
+    let metadataReads = 0;
+    let privacyReads = 0;
+    class TracedVault extends VaultStore {
+      override listMetadata(owner: string) {
+        metadataReads += 1;
+        return super.listMetadata(owner);
+      }
+    }
+    const denied = new Authority({ nowSec: () => NOW });
+    const runtime = new PrivacyRuntime({
+      loadPrivacy: () => {
+        privacyReads += 1;
+        return privacySnapshot(["pan"]);
+      },
+      events: new Events(),
+      profile,
+      nowSec: () => NOW,
+    });
+    await assert.rejects(
+      () => useCredentialWithPrivacy({
+        runtime,
+        gate: {
+          authority: denied,
+          ingress: INGRESS,
+          operation: {
+            action: { name: "/use" }, resource: { type: "vault-record", id: "missing" },
+            context: { claim: "pan" }, purpose: "support",
+          },
+          processing: {
+            authorityPrincipal: P, actor: A,
+            dataPrincipalRef: "subject:opaque-1",
+            controllerId: "acme", action: "/use",
+            resource: { type: "vault-record", id: "missing" },
+            purpose: "support", dataCategories: ["pan"], recipients: [],
+          },
+        },
+        vault: new TracedVault(() => NOW),
+        secret: {
+          ingress: INGRESS, recordId: "missing", purpose: "support",
+          authority: denied, nowSec: NOW, onConsumed: () => {},
+          use: async () => ({ receipt: "never" }),
+        },
+      }),
+      /authority denied/
+    );
+    assert.equal(metadataReads, 0);
+    assert.equal(privacyReads, 0);
+  });
+
   it("derives secret data category from vault metadata and never records the secret value", async () => {
     const events = new Events();
     const secretSnapshot: PrivacySnapshot = {
