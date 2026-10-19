@@ -12,10 +12,6 @@ import {
   claimsSubset,
   createProposal,
   createVaultDek,
-  createPrivacyDek,
-  PrivacyStore,
-  savePrivacyStore,
-  FilePrivacyEventRepository,
   loadAuthority,
   restoreStore,
   saveAuthority,
@@ -24,6 +20,8 @@ import {
   sealKeystore,
   VAULT_DEK_ALIAS,
 } from "../src/index.js";
+import { PrivacyStore, createPrivacyDek, savePrivacyStore } from "../src/store/privacy.js";
+import { FilePrivacyEventRepository } from "../src/store/privacy-events.js";
 import { run } from "../src/cli.js";
 
 const NOW = 1_700_000_000;
