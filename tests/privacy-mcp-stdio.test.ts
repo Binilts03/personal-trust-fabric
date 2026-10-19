@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,10 @@ import {
   saveVault,
   sealKeystore,
   claimsSubset,
+  paymentBounds,
+  signBytes,
+  FilePrivacyEventRepository,
+  openKeystore,
   PRIVACY_DEK_ALIAS,
   VAULT_DEK_ALIAS,
 } from "../src/index.js";
@@ -27,10 +31,16 @@ const SERVER = fileURLToPath(new URL("../src/mcp-server.js", import.meta.url));
 const P = "did:test:p";
 const A = "did:test:a";
 
-function setup(active: boolean): { dir: string; configPath: string } {
+function setup(active: boolean): {
+  dir: string;
+  configPath: string;
+  recipientDer: Uint8Array;
+  recipientPub: Uint8Array;
+} {
   const at = Math.floor(Date.now() / 1000);
   const dir = mkdtempSync(join(tmpdir(), "ptf-privacy-mcp-"));
   const principal = generateEd25519Keypair();
+  const recipient = generateEd25519Keypair();
   const auth = new Authority({ nowSec: () => at });
   auth.addGrant({
     id: "grant-privacy",
@@ -42,9 +52,20 @@ function setup(active: boolean): { dir: string; configPath: string } {
     bounds: claimsSubset(["email"]),
     exp: at + 300,
   });
+  auth.addGrant({
+    id: "grant-payment",
+    principal: P,
+    actor: { kind: "exact", id: A },
+    action: { name: "/pay" },
+    resource: { type: "ptf-resource", id: "invoice:1" },
+    purpose: "support",
+    bounds: paymentBounds({ amountMax: 5000, currency: "INR" }),
+    exp: at + 300,
+  });
   saveAuthority(dir, auth);
   const registry = new RecipientRegistry(() => at);
   registry.register(P, principal.publicKeyRaw, at);
+  registry.register("seller:1", recipient.publicKeyRaw, at);
   saveRegistry(dir, registry);
 
   const vaultDek = createVaultDek();
@@ -69,7 +90,7 @@ function setup(active: boolean): { dir: string; configPath: string } {
     id: "basis-support",
     controllerId: "acme",
     purpose: "support",
-    dataCategories: ["email"],
+    dataCategories: ["email", "payment"],
     provisionRef: "operator-asserted:s7",
     evidenceRef: "operator-evidence:1",
     assertedBy: "privacy-office",
@@ -86,6 +107,20 @@ function setup(active: boolean): { dir: string; configPath: string } {
     purpose: "support",
     dataCategories: ["email"],
     recipients: [{ id: "verifier", role: "third-party" }],
+    basisId: "basis-support",
+    active: true,
+  });
+  privacy.addActivity({
+    id: "act-payment",
+    profileId: "IN-DPDP-2025",
+    authorityPrincipal: P,
+    controllerId: "acme",
+    subjects: { kind: "exact", ref: "subject:opaque-1" },
+    action: "/pay",
+    resourceType: "ptf-resource",
+    purpose: "support",
+    dataCategories: ["payment"],
+    recipients: [{ id: "seller:1", role: "third-party" }],
     basisId: "basis-support",
     active: true,
   });
@@ -106,9 +141,13 @@ function setup(active: boolean): { dir: string; configPath: string } {
   writeFileSync(configPath, JSON.stringify({
     dataPrincipalRef: "subject:opaque-1",
     controllerId: "acme",
-    recipientRoles: { verifier: "third-party" },
+    recipientRoles: { verifier: "third-party", "seller:1": "third-party" },
+    actionCategories: { "/pay": ["payment"] },
   }));
-  return { dir, configPath };
+  const recipientDer = new Uint8Array(
+    recipient.privateKey.export({ format: "der", type: "pkcs8" })
+  );
+  return { dir, configPath, recipientDer, recipientPub: recipient.publicKeyRaw };
 }
 
 async function withRpc<T>(
@@ -193,6 +232,67 @@ describe("opt-in privacy disclosure over stdio",()=>{
       assert.equal(presented.disclosed[0],"email");
     });
     assert.equal(readdirSync(join(dir,"privacy-events")).length,1);
+  });
+
+  it("gates the actual MCP payment redemption and journal with privacy evidence", async () => {
+    const { dir, configPath, recipientDer, recipientPub } = setup(true);
+    await withRpc({
+      PTF_STORE_DIR: dir, PTF_PASSPHRASE: "privacy-test-pass",
+      PTF_MCP_PRINCIPAL: P, PTF_MCP_ACTOR: A,
+      PTF_MCP_PRIVACY_CONFIG: configPath,
+    }, async (call) => {
+      const proposal = resultData(await call("ptf_propose", {
+        cmd: "/pay", purpose: "support", resource: "invoice:1",
+        recipient: "seller:1", amount: 100, currency: "INR",
+      }));
+      assert.equal(proposal.allowed, true);
+      const challenge = resultData(await call("ptf_redeem", {
+        termsDigest: proposal.termsDigest,
+      }));
+      assert.equal(challenge.needProof, true);
+      const { createPrivateKey } = await import("node:crypto");
+      const privateKey = createPrivateKey({
+        key: Buffer.from(recipientDer), format: "der", type: "pkcs8",
+      });
+      const signature = signBytes(privateKey, new Uint8Array(Buffer.from(challenge.cidHex, "hex")));
+      const paid = resultData(await call("ptf_redeem", {
+        termsDigest: proposal.termsDigest,
+        recipientKeyHex: Buffer.from(recipientPub).toString("hex"),
+        recipientSigHex: Buffer.from(signature).toString("hex"),
+      }));
+      assert.equal(paid.amount, 100);
+      assert.ok(paid.receiptId);
+    });
+    const eventRepo = new FilePrivacyEventRepository({
+      dir,
+      dek: openKeystore(
+        JSON.parse(readFileSync(join(dir, "keystore.json"), "utf8")),
+        "privacy-test-pass"
+      )[PRIVACY_DEK_ALIAS] as Uint8Array,
+    });
+    const records = eventRepo.listBySubject("subject:opaque-1");
+    assert.ok(records.some((record) => record.action === "/pay" && record.state === "SUCCEEDED"));
+  });
+
+  it("denies payment in privacy mode when its operator category mapping is absent", async () => {
+    const { dir, configPath } = setup(true);
+    writeFileSync(configPath, JSON.stringify({
+      dataPrincipalRef: "subject:opaque-1",
+      controllerId: "acme",
+      recipientRoles: { "seller:1": "third-party" },
+    }));
+    await withRpc({
+      PTF_STORE_DIR: dir, PTF_PASSPHRASE: "privacy-test-pass",
+      PTF_MCP_PRINCIPAL: P, PTF_MCP_ACTOR: A,
+      PTF_MCP_PRIVACY_CONFIG: configPath,
+    }, async(call) => {
+      const result = resultData(await call("ptf_propose", {
+        cmd: "/pay", purpose: "support", resource: "invoice:1",
+        recipient: "seller:1", amount: 100, currency: "INR",
+      }));
+      assert.equal(result.allowed, false);
+      assert.equal(result.reason, "privacy denied");
+    });
   });
 
   it("preserves legacy disabled mode without requiring a privacy basis",async()=>{
