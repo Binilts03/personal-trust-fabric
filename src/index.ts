@@ -38,13 +38,6 @@ export * from "./store/vault.js";
 export * from "./profiles/data.js";
 export * from "./adapters/providers.js";
 
-export * from "./privacy/model.js";
-export * from "./privacy/engine.js";
-export * from "./privacy/dpdp.js";
-export * from "./store/privacy.js";
-export * from "./store/privacy-events.js";
-export * from "./privacy/runtime.js";
-export * from "./privacy/vault.js";
-export * from "./privacy/providers.js";
-export * from "./privacy/rights.js";
+// The privacy package owns its public, persistence-free contract.
+export * from "./privacy/api.js";
 export * from "./privacy/mcp.js";
