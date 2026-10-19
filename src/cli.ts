@@ -148,6 +148,8 @@ const PRIVACY_PATHS = new Set([
   "summary",
   "erase/plan",
   "erase/apply",
+  "events/reconcile",
+  "events/resolve",
   "verify",
   "rekey",
 ]);
@@ -365,6 +367,9 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "subject-ref",
     "owner",
     "ids",
+    "state",
+    "evidence-ref",
+    "mcp-config",
     "yes",
   ]),
   revoke: new Set(["grant", "recipient"]),
