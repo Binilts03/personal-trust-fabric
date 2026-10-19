@@ -10,6 +10,7 @@ import type {
   NoticeEvidence,
   ConsentEvidence,
 } from "./model.js";
+import { isOpaquePrivacySubjectRef } from "./model.js";
 
 function subjectMatches(sel: PrivacySubjectSelector, ref: string): boolean {
   switch (sel.kind) {
@@ -72,6 +73,9 @@ export function evaluateProcessing(input: {
   readonly profile: PrivacyProfile;
   readonly nowSec: number;
 }): PrivacyDecision {
+  if (!isOpaquePrivacySubjectRef(input.context.dataPrincipalRef)) {
+    return { allow: false, reason: "other" };
+  }
   const activity = pickActivity(input.activities, input.context, input.profile);
   if (activity === null) {
     return { allow: false, reason: "no-processing-activity" };
