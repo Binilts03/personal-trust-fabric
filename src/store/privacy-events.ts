@@ -103,15 +103,24 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
   private readonly dir: string;
   private readonly dek: Uint8Array;
   private readonly nowSec: () => number;
+  private readonly maxRecords: number;
 
   constructor(opts: {
     readonly dir: string;
     readonly dek: Uint8Array;
     readonly nowSec?: () => number;
+    readonly maxRecords?: number;
   }) {
+    if (
+      opts.maxRecords !== undefined &&
+      (!Number.isSafeInteger(opts.maxRecords) || opts.maxRecords < 1)
+    ) {
+      throw new Error("privacy event: maxRecords must be a positive integer");
+    }
     this.dir = opts.dir;
     this.dek = opts.dek;
     this.nowSec = opts.nowSec ?? (() => Math.floor(Date.now() / 1000));
+    this.maxRecords = opts.maxRecords ?? 5000;
   }
 
   prepare(input: ProcessingEventPrepare): ProcessingEventRecord {
@@ -124,6 +133,9 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
         throw new Error("privacy event: idempotency collision");
       }
       return cloneEvent(existing);
+    }
+    if (this.all().length >= this.maxRecords) {
+      throw new Error("privacy event store full — archive safely before creating another record");
     }
     const record: ProcessingEventRecord = {
       ...input,
@@ -172,7 +184,14 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
       if (current.state === to && isSameFinalize(current, patch)) {
         return cloneEvent(current);
       }
-      throw new Error("privacy event: terminal transition forbidden");
+      // A crash or ambiguous provider result may later be reconciled.
+      // FAILED_FINAL and SUCCEEDED are terminal; UNKNOWN may be resolved.
+      if (
+        current.state !== "OUTCOME_UNKNOWN" ||
+        (to !== "SUCCEEDED" && to !== "FAILED_FINAL")
+      ) {
+        throw new Error("privacy event: terminal transition forbidden");
+      }
     }
     if (!Number.isInteger(patch.finalizedAt) || patch.finalizedAt < 0) {
       throw new Error("privacy event: finalizedAt must be a non-negative epoch int");
