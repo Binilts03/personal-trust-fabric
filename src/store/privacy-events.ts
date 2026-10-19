@@ -126,6 +126,10 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
 
   prepare(input: ProcessingEventPrepare): ProcessingEventRecord {
     assertOpaquePrivacySubjectRef(input.dataPrincipalRef);
+    if (input.attemptRef !== undefined &&
+        !/^[A-Za-z0-9_.:-]{1,200}$/.test(input.attemptRef)) {
+      throw new Error("privacy event: invalid attempt reference");
+    }
     const key = stableKey(input);
     const eventId = eventIdFor(key);
     const path = eventFile(this.dir, eventId);
