@@ -3,7 +3,10 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  writeFileSync,
+  openSync,
+  closeSync,
+  fsyncSync,
+  writeSync,
 } from "node:fs";
 import { join } from "node:path";
 import { canonicalize, sha256Hex } from "../core/canonical.js";
@@ -155,11 +158,27 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
     };
     mkdirSync(join(this.dir, "privacy-events"), { recursive: true });
     try {
-      writeFileSync(path, sealRecord(record, this.dek), {
-        encoding: "utf8",
-        mode: 0o600,
-        flag: "wx",
-      });
+      // Match the durable proposal creation protocol: exclusive-create,
+      // write, fsync file, then best-effort fsync of directory metadata.
+      // A plain writeFileSync(..., "wx") is not a durable precommit.
+      const fd = openSync(path, "wx", 0o600);
+      try {
+        writeSync(fd, sealRecord(record, this.dek), null, "utf8");
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      try {
+        const dfd = openSync(join(this.dir, "privacy-events"), "r");
+        try {
+          fsyncSync(dfd);
+        } finally {
+          closeSync(dfd);
+        }
+      } catch {
+        // Windows or unusual filesystems do not support syncing folders.
+        // Same best-effort residual as the existing proposal-store path.
+      }
     } catch (error) {
       if (
         typeof error === "object" &&
