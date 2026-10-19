@@ -1,3 +1,17 @@
+/** Reference-host coverage declarations; not an attestation of a running process. */
+export const MCP_PRIVACY_GATED_PATHS = [
+  "ptf_request_data",
+  "ptf_present_data",
+  "ptf_propose:/pay",
+  "ptf_redeem:/pay",
+] as const;
+
+export const MCP_PRIVACY_UNCOVERED_PATHS = [
+  "ptf_request_action",
+  "custom-provider-adapters",
+  "operator-cli-pay",
+] as const;
+
 import type { AuthorityRequest, VerifiedIdentity } from "../core/authority.js";
 import {
   assertOpaquePrivacySubjectRef,
