@@ -9,6 +9,7 @@ import type {
   ProcessingBasisEvidence,
   RetentionHold,
 } from "../privacy/model.js";
+import { assertOpaquePrivacySubjectRef } from "../privacy/model.js";
 import { atomicWrite, checkFreshness } from "./files.js";
 import {
   assertSealedDek,
@@ -80,7 +81,7 @@ function cloneHold(v: RetentionHold): RetentionHold {
 function validateNotice(v: NoticeEvidence): void {
   required(v.id, "notice id");
   required(v.controllerId, "notice controllerId");
-  required(v.dataPrincipalRef, "notice dataPrincipalRef");
+  assertOpaquePrivacySubjectRef(v.dataPrincipalRef);
   required(v.purpose, "notice purpose");
   strings(v.dataCategories, "notice dataCategories");
   required(v.noticeRef, "notice noticeRef");
@@ -92,7 +93,7 @@ function validateConsent(v: ConsentEvidence): void {
   required(v.id, "consent id");
   required(v.noticeId, "consent noticeId");
   required(v.controllerId, "consent controllerId");
-  required(v.dataPrincipalRef, "consent dataPrincipalRef");
+  assertOpaquePrivacySubjectRef(v.dataPrincipalRef);
   required(v.purpose, "consent purpose");
   strings(v.dataCategories, "consent dataCategories");
   required(v.method, "consent method");
@@ -114,7 +115,7 @@ function validateBasis(v: ProcessingBasisEvidence): void {
   epoch(v.nbf, "basis nbf");
   epoch(v.exp, "basis exp");
   if (v.kind === "consent") {
-    required(v.dataPrincipalRef, "basis dataPrincipalRef");
+    assertOpaquePrivacySubjectRef(v.dataPrincipalRef);
     required(v.consentId, "basis consentId");
   } else {
     required(v.provisionRef, "basis provisionRef");
@@ -134,13 +135,16 @@ function validateActivity(v: ProcessingActivity): void {
   required(v.basisId, "activity basisId");
   epoch(v.nbf, "activity nbf");
   epoch(v.exp, "activity exp");
-  if (v.subjects.kind === "exact") required(v.subjects.ref, "activity subject ref");
-  if (v.subjects.kind === "set") strings(v.subjects.refs, "activity subject refs");
+  if (v.subjects.kind === "exact") assertOpaquePrivacySubjectRef(v.subjects.ref);
+  if (v.subjects.kind === "set") {
+    strings(v.subjects.refs, "activity subject refs");
+    for (const ref of v.subjects.refs) assertOpaquePrivacySubjectRef(ref);
+  }
   for (const r of v.recipients) required(r.id, "activity recipient id");
 }
 function validateHold(v: RetentionHold): void {
   required(v.id, "hold id");
-  required(v.dataPrincipalRef, "hold dataPrincipalRef");
+  assertOpaquePrivacySubjectRef(v.dataPrincipalRef);
   if (v.recordIds.length === 0 && v.dataCategories.length === 0) {
     throw new Error("privacy: hold requires recordIds or dataCategories");
   }
