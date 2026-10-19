@@ -129,7 +129,17 @@ export async function useCredentialWithPrivacy(opts: {
   readonly vault: VaultStore;
   readonly secret: SecretUseOptions;
 }): Promise<Awaited<ReturnType<typeof useCredential>>> {
-  const gate = requireSecretBinding(opts.gate, opts.vault, opts.secret);
+  // Authority must reject an unauthorised request BEFORE vault metadata is
+  // inspected; otherwise "unknown record" becomes an existence oracle.
+  const authorityFirst = opts.runtime.preflight(opts.gate);
+  if (!authorityFirst.allow) deny(authorityFirst);
+  let gate: PrivacyGateRequest;
+  try {
+    gate = requireSecretBinding(opts.gate, opts.vault, opts.secret);
+  } catch {
+    // Do not reveal existence of a Vault record to agent callers.
+    throw new Error("privacy denied");
+  }
   const first = opts.runtime.preflight(gate);
   if (!first.allow) deny(first);
 
