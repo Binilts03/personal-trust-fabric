@@ -22,9 +22,47 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run eval
-      - name: seam check (tests via public barrel; bins exempt)
+      - name: seam check (public tests; exact privacy persistence test exceptions)
         run: |
-          if grep -R 'from "\.\./src/[^"]*\.js"' tests --include="*.ts" | grep -v 'from "\.\./src/index\.js"' | grep -v 'from "\.\./src/cli\.js"' | grep -v 'from "\.\./src/mcp-server\.js"' | grep -v 'from "\.\./src/pdp-server\.js"'; then
+          # Storage internals are intentionally excluded from src/index.ts and
+          # ./privacy. Only named repository-owned persistence tests may import
+          # the two internal store implementations. All other tests must use
+          # the public barrel or the existing bin entrypoints.
+          if grep -R 'from "\.\./src/[^"]*\.js"' tests --include="*.ts" | grep -v 'from "\.\./src/index\.js"' | grep -v 'from "\.\./src/cli\.js"' | grep -v 'from "\.\./src/mcp-server\.js"' | grep -v 'from "\.\./src/pdp-server\.js"' | grep -Ev '^tests/(backup|privacy-cli|privacy-events|privacy-mcp-stdio|privacy-store)\.test\.ts:import \{ [A-Za-z0-9_, ]+ \} from "\.\./src/store/privacy(-events)?\.js";
+      - name: zero-dep check (core is node:crypto + relative only)
+        run: |
+          if grep -R 'from "' src/core --include="*.ts" | grep -v 'from "node:crypto"' | grep -v 'from "\./' | grep -v 'from "\.\./'; then
+            echo "FAIL: core has non-allowlisted import"; exit 1;
+          fi
+  docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: false
+          working-directory: docs
+      - name: Install gems
+        run: bundle install
+        working-directory: docs
+      - name: Build docs site (required — changes touching docs must keep this green)
+        run: bundle exec jekyll build --destination _site
+        working-directory: docs
+  secrets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@363923b901c911a9164f50b6c423f47c15372b1c # v3.97.4
+        with:
+          extra_args: --only-verified
+; then
             echo "FAIL: test reaches past public seam"; exit 1;
           fi
       - name: zero-dep check (core is node:crypto + relative only)
