@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { checkpoint } from "./anchor.js";
 import { gcChallenges } from "./challenges.js";
 import {
@@ -94,6 +95,24 @@ function readAuditEntries(dir: string): unknown[] {
     }
   }
   return out;
+}
+
+/**
+ * A backup-directory consistency manifest, included in the existing
+ * anchor checkpoint. This is NOT an independent external witness: anyone
+ * allowed to replace anchor.json can replace the manifest too.
+ */
+function privacyEventManifest(dir: string): { readonly count: number; readonly digest: string } | null {
+  const root = join(dir, "privacy-events");
+  if (!existsSync(root)) return null;
+  const names = readdirSync(root).filter((name) => name.endsWith(".json")).sort();
+  const hash = createHash("sha256");
+  for (const name of names) {
+    const contents = readFileSync(join(root, name));
+    const digest = createHash("sha256").update(contents).digest("hex");
+    hash.update(JSON.stringify([name, digest]) + "\\n", "utf8");
+  }
+  return { count: names.length, digest: hash.digest("hex") };
 }
 
 export interface BackupSummary {
@@ -205,9 +224,15 @@ export function backupStore(
   }
   const entries = readAuditEntries(srcDir);
   const anchor = checkpoint(entries, now());
-  writeFileSync(join(destDir, "anchor.json"), `${JSON.stringify(anchor)}\n`, {
-    mode: 0o600,
-  });
+  const eventManifest = privacyEventManifest(destDir);
+  writeFileSync(
+    join(destDir, "anchor.json"),
+    `${JSON.stringify({
+      ...anchor,
+      ...(eventManifest !== null ? { privacyEventsManifest: eventManifest } : {}),
+    })}\n`,
+    { mode: 0o600 }
+  );
   return { destDir, files, proposals, executions, privacyEvents, anchor };
 }
 
@@ -332,6 +357,9 @@ export function restoreStore(
   let anchorChecked = false;
   let anchorMatch = false;
   const anchorPath = join(backupDir, "anchor.json");
+  if (!existsSync(anchorPath) && existsSync(join(destDir, "privacy-events"))) {
+    throw new Error("restore: privacy event manifest missing (backup anchor absent)");
+  }
   if (existsSync(anchorPath)) {
     anchorChecked = true;
     let recorded: unknown;
@@ -340,7 +368,21 @@ export function restoreStore(
     } catch {
       throw new Error(`restore: anchor corrupt: ${anchorPath}`);
     }
-    const rec = recorded as { root?: unknown; count?: unknown };
+    const rec = recorded as {
+      root?: unknown;
+      count?: unknown;
+      privacyEventsManifest?: { count?: unknown; digest?: unknown };
+    };
+    const eventManifest = privacyEventManifest(destDir);
+    if (eventManifest !== null && (
+      rec.privacyEventsManifest?.count !== eventManifest.count ||
+      rec.privacyEventsManifest?.digest !== eventManifest.digest
+    )) {
+      throw new Error("restore: privacy event manifest mismatch or missing evidence");
+    }
+    if (eventManifest === null && rec.privacyEventsManifest !== undefined) {
+      throw new Error("restore: privacy event manifest mismatch (event directory missing)");
+    }
     const recomputed = checkpoint(readAuditEntries(destDir), now());
     anchorMatch =
       rec.root === recomputed.root && rec.count === recomputed.count;
