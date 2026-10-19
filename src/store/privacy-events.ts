@@ -15,6 +15,7 @@ import type {
   ProcessingEventState,
 } from "../privacy/model.js";
 import { atomicWrite } from "./files.js";
+import { assertOpaquePrivacySubjectRef } from "../privacy/model.js";
 import {
   openSnapshotEnvelope,
   readSealedEnvelopeKid,
@@ -124,6 +125,7 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
   }
 
   prepare(input: ProcessingEventPrepare): ProcessingEventRecord {
+    assertOpaquePrivacySubjectRef(input.dataPrincipalRef);
     const key = stableKey(input);
     const eventId = eventIdFor(key);
     const path = eventFile(this.dir, eventId);
