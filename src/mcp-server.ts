@@ -984,26 +984,20 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         markDenied(args.termsDigest);
         fail(`redeem failed: ${redeemed.reason}`);
       }
-      // Only now spend standing authority.
-      const decision = auth.evaluate(op, ingress, {
-        consume: true,
-        nowSec: now(),
-      });
-      if (!decision.allow) {
-        markDenied(args.termsDigest);
-        fail(`authority denied at redeem time: ${decision.reason}`);
-      }
-      // Persist the consumption BEFORE executing (ticket 05): a crash or a
-      // failing rail between persist and execute can only burn a use, never
-      // double-spend — the safe direction. CAS failure here fails the redeem
-      // closed before any money moves.
-      saveAuthority(opts.dir, auth);
-      // Journaled execution (ADR-0021): the execution record persists under
-      // a proposal-anchored idempotency key before the provider call, so a
-      // crash between effect and receipt reconciles to the same receipt
-      // instead of resubmitting. A reminted capability finds the SUCCEEDED
-      // record and returns it without touching the provider.
-      const journaled = await executeWithJournal({
+      // The privacy wrapper precommits an attempt before ANY consumption or
+      // provider effect. Legacy mode executes this exact closure directly.
+      const consumeAndExecute = async () => {
+        const decision = auth.evaluate(op, ingress, {
+          consume: true,
+          nowSec: now(),
+        });
+        if (!decision.allow) {
+          markDenied(args.termsDigest);
+          fail(`authority denied at redeem time: ${decision.reason}`);
+        }
+        // Existing authority CAS and provider journal remain authoritative.
+        saveAuthority(opts.dir, auth);
+        return executeWithJournal({
         dir: opts.dir,
         provider: executorAsProvider(executor, "payment", now),
         req: {
@@ -1019,6 +1013,18 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         nowSec: now(),
         at: now(),
       });
+      };
+      const journaled = opts.privacy === undefined
+        ? await consumeAndExecute()
+        : await (async () => {
+            const { runtime, gate } = privacyForPayment(keys, auth, ingress, demand);
+            return executeProtectedActionWithPrivacy({
+              runtime,
+              gate,
+              execute: consumeAndExecute,
+              attemptRef: args.termsDigest,
+            });
+          })();
       // Project the /pay receipt shape from the journal receipt. Amount and
       // currency come from the exact authorized terms verified above
       // (authorizedTermsCover inside the journal) — never invented.
