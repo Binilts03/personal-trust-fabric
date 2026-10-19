@@ -231,3 +231,18 @@ export interface PrivacyEventRepository {
   listBySubject(dataPrincipalRef: string): readonly ProcessingEventRecord[];
   recoverPrepared(nowSec: number): readonly ProcessingEventRecord[];
 }
+
+/**
+ * A syntax guard, not a proof of pseudonymity: the host must mint random
+ * references and keep the subject-to-person mapping outside PTF.
+ */
+export function isOpaquePrivacySubjectRef(value: unknown): value is string {
+  return typeof value === "string" &&
+    /^subject:[A-Za-z][A-Za-z0-9_-]{5,127}$/.test(value);
+}
+
+export function assertOpaquePrivacySubjectRef(value: unknown): asserts value is string {
+  if (!isOpaquePrivacySubjectRef(value)) {
+    throw new Error("privacy: opaque dataPrincipalRef required");
+  }
+}
