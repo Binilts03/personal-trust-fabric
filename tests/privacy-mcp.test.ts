@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   resolveMcpPrivacyConfig,
   makeMcpPrivacyDisclosureGate,
+  makeMcpPrivacyPaymentGate,
   type AuthorityRequest,
   type VerifiedIdentity,
 } from "../src/index.js";
@@ -38,6 +39,34 @@ describe("MCP privacy host binding", () => {
       { id: "seller:1", role: "third-party" },
     ]);
     assert.equal(gate.operation.context["verifier"], "seller:1");
+  });
+
+  it("derives the payment processing gate only from operator-approved categories and recipients", () => {
+    const config = resolveMcpPrivacyConfig({
+      dataPrincipalRef: "subject:opaque-1",
+      controllerId: "acme",
+      recipientRoles: { "seller:1": "third-party" },
+      actionCategories: { "/pay": ["payment"] },
+    });
+    const payment = makeMcpPrivacyPaymentGate(config, ingress, {
+      ...demand,
+      action: { name: "/pay" },
+      context: { recipient: "seller:1", amount: 120, currency: "INR" },
+    });
+    assert.deepEqual(payment.processing.dataCategories, ["payment"]);
+    assert.deepEqual(payment.processing.recipients, [{ id: "seller:1", role: "third-party" }]);
+    assert.equal(payment.processing.action, "/pay");
+    assert.throws(
+      () => makeMcpPrivacyPaymentGate(
+        resolveMcpPrivacyConfig({
+          dataPrincipalRef: "subject:opaque-1", controllerId: "acme",
+          recipientRoles: { "seller:1": "third-party" },
+        }),
+        ingress,
+        { ...demand, action: { name: "/pay" }, context: { recipient: "seller:1", amount: 120, currency: "INR" } }
+      ),
+      /privacy denied/
+    );
   });
 
   it("fails closed if the operator has not configured the recipient", () => {
