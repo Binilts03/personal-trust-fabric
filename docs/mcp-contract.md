@@ -74,10 +74,10 @@ See `examples/vault-protected-action.mjs` and `examples/mcp-client-config.json`.
   call; `ptf_authenticate` challenges are single-use, 120s TTL, in-memory
 - Server rejects any tool call with mismatched identity
 
-## Experimental DPDP disclosure privacy mode
+## Experimental DPDP privacy enforcement mode
 
 The stdio reference host accepts **operator-controlled** `PTF_MCP_PRIVACY_CONFIG` pointing to a protected JSON file. Configure its controller, opaque `subject:` reference, recipient role map and optional trusted subject assurance as documented in [DPDP privacy enforcement](privacy/dpdp.md). Enabling this mode requires an initialized encrypted PTF privacy store and an applicable Processing Activity/Basis Evidence **in addition to** agent authority.
 
-In this reference host the privacy gate applies to `ptf_request_data` (preflight) and `ptf_present_data` (live re-check, precommitted event, vault disclosure). It does not add agent-controlled legal-basis/controller/subject fields or change the tool schemas. Invalid/missing privacy configuration in explicit mode fails closed. Omitting the environment variable preserves prior MCP behavior.
+In this reference host the privacy gate covers `ptf_request_data` and `ptf_present_data` disclosures, plus `ptf_propose:/pay` and `ptf_redeem:/pay` (including the journaled payment executor). Payment processing additionally requires an operator-defined `actionCategories["/pay"]` and a matching active processing activity/basis. The precommitted privacy event precedes payment authority consumption or provider execution. No agent-controlled legal-basis/controller/subject fields are added to tool schemas. Explicit mode fails closed when configuration or evidence is unavailable. Omitting the environment variable preserves existing behavior. A startup stderr message reports enabled/disabled mode and its coverage without identifying subjects.
 
-**Limit:** This is not a universal privacy wrapper for `ptf_redeem`, `ptf_propose`, or `ptf_request_action`. Any host using those routes for personal-data processing must explicitly compose its processing with `PrivacyRuntime`. PTF cannot enforce against a host that bypasses the wrapper.
+**Limit:** Non-payment `ptf_request_action`, independently invoked adapter/provider paths and operator CLI actions are **not universally protected**. An integrator must explicitly wrap each personal-data processing path. A configured file is not proof that a running remote host actually uses it; `ptf privacy verify --mcp-config FILE` checks configuration and explicitly reports `runtimeAttested: false`.
