@@ -180,6 +180,33 @@ describe("privacy operator CLI", () => {
     );
   });
 
+  it("reports configured MCP coverage without claiming running-host attestation", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-privacy-verify-"));
+    const t = io();
+    const env = { PTF_PASSPHRASE: PASS };
+    await run(["--dir", dir, "init"], t.value, env);
+    await run(["--dir", dir, "privacy", "init"], t.value, env);
+    const config = jsonFile(dir, "mcp-operator.json", {
+      dataPrincipalRef: "subject:opaque-1",
+      controllerId: "acme",
+      recipientRoles: { verifier: "third-party" },
+    });
+    t.out.length = 0;
+    await run(["--dir", dir, "privacy", "verify"], t.value, env);
+    const baseline = JSON.parse(t.out.at(-1) as string);
+    assert.equal(baseline.enforcement.mode, "not-inspected");
+    assert.equal(baseline.enforcement.runtimeAttested, false);
+    t.out.length = 0;
+    await run([
+      "--dir", dir, "privacy", "verify", "--mcp-config", config,
+    ], t.value, env);
+    const diagnostic = JSON.parse(t.out.at(-1) as string);
+    assert.equal(diagnostic.enforcement.mode, "configured-reference-host");
+    assert.equal(diagnostic.enforcement.runtimeAttested, false);
+    assert.ok(diagnostic.enforcement.coveredPaths.includes("ptf_present_data"));
+    assert.ok(diagnostic.enforcement.uncoveredPaths.includes("ptf_request_action"));
+  });
+
   it("summarizes processing evidence without exposing subject data values", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ptf-privacy-cli-summary-"));
     const t = io();
