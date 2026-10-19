@@ -213,6 +213,33 @@ describe("privacy runtime ordering", () => {
     assert.throws(() => runtime.recheck(first, req), /privacy denied|basis-inactive/);
   });
 
+  it("rejects changed trusted privacy terms during live recheck even when Authority operation is identical", () => {
+    const runtime = new PrivacyRuntime({
+      loadPrivacy: () => snapshot(true),
+      events: new MemoryEvents(),
+      profile,
+      nowSec: () => NOW,
+    });
+    const req = {
+      authority: authority(true),
+      ingress: INGRESS,
+      operation: OPERATION,
+      processing: PROCESSING,
+    };
+    const first = runtime.preflight(req);
+    assert.equal(first.allow, true);
+    if (!first.allow) throw new Error("expected allow");
+
+    assert.throws(
+      () =>
+        runtime.recheck(first, {
+          ...req,
+          processing: { ...PROCESSING, dataCategories: [] },
+        }),
+      /privacy runtime: processing (context|terms) changed/
+    );
+  });
+
   it("prepares secret-free processing evidence from exact terms and authority citations", () => {
     const events = new MemoryEvents();
     const runtime = new PrivacyRuntime({
