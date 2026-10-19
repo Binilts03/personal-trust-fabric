@@ -32,7 +32,11 @@ import {
 import {
   PrivacyRuntime,
 } from "../privacy/runtime.js";
-import { resolveMcpPrivacyConfig } from "../privacy/mcp.js";
+import {
+  resolveMcpPrivacyConfig,
+  MCP_PRIVACY_GATED_PATHS,
+  MCP_PRIVACY_UNCOVERED_PATHS,
+} from "../privacy/mcp.js";
 import {
   planErasure,
   summarizeProcessing,
@@ -474,13 +478,8 @@ export async function runPrivacyCommand(ctx: PrivacyCliContext): Promise<number>
             ? "not-inspected"
             : "configured-reference-host",
           runtimeAttested: false,
-          coveredPaths: [
-            "ptf_request_data",
-            "ptf_present_data",
-            "ptf_propose:/pay",
-            "ptf_redeem:/pay",
-          ],
-          uncoveredPaths: ["ptf_request_action", "custom-provider-adapters", "operator-cli-pay"],
+          coveredPaths: [...MCP_PRIVACY_GATED_PATHS],
+          uncoveredPaths: [...MCP_PRIVACY_UNCOVERED_PATHS],
           note: configPath === undefined
             ? "No MCP operator config inspected: store verification is not enforcement proof"
             : "Configuration is valid, but this CLI cannot attest a separately running MCP host",
