@@ -689,8 +689,11 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       inputSchema: demandSchema,
     },
     async (args) => {
-      const { auth } = load();
+      const { auth, keys } = load();
       const ingress = resolveIngress();
+      if (opts.privacy !== undefined && args.cmd === "/disclose") {
+        fail("privacy mode: use ptf_request_data for disclosure proposals");
+      }
       prunePending();
       // Binding is derived server-side from the normalized operation +
       // the verified ingress: untrusted callers supply neither
@@ -719,26 +722,29 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         demand,
         citations: decision.allow ? decision.citations : [],
       });
-      if (decision.allow) {
-        // "pending" = authority would allow; still needs live re-check at
-        // redeem (standing grant) or human approval (CLI). Never "approved".
-        recordProposal(digest, demand, true);
-      } else {
-        recordProposal(digest, demand, false);
+      let privacyAllowed = true;
+      if (decision.allow && opts.privacy !== undefined) {
+        try {
+          const { runtime, gate } = privacyForPayment(keys, auth, ingress, demand);
+          privacyAllowed = runtime.preflight(gate).allow;
+        } catch {
+          privacyAllowed = false;
+        }
       }
+      const allowed = decision.allow && privacyAllowed;
+      recordProposal(digest, demand, allowed);
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              decision.allow
-                ? { allowed: true, termsDigest: digest, proposal: text }
-                : { allowed: false, reason: decision.reason, proposal: text },
-              null,
-              2
-            ),
-          },
-        ],
+        content: [{
+          type: "text",
+          text: JSON.stringify(
+            allowed
+              ? { allowed: true, termsDigest: digest, proposal: text }
+              : { allowed: false,
+                  reason: decision.allow ? "privacy denied" : decision.reason,
+                  proposal: text },
+            null, 2
+          ),
+        }],
       };
     }
   );
@@ -891,6 +897,15 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         if (!preview.allow) {
           markDenied(args.termsDigest);
           fail(`authority denied at challenge time: ${preview.reason}`);
+        }
+        if (opts.privacy !== undefined) {
+          try {
+            const { runtime, gate } = privacyForPayment(keys, auth, ingress, demand);
+            if (!runtime.preflight(gate).allow) fail("privacy denied");
+          } catch {
+            markDenied(args.termsDigest);
+            fail("privacy denied");
+          }
         }
         const cap = caps.issue(
           null,
