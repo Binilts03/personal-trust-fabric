@@ -986,6 +986,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       }
       // The privacy wrapper precommits an attempt before ANY consumption or
       // provider effect. Legacy mode executes this exact closure directly.
+      let consumedAuthorityId: string | undefined;
       const consumeAndExecute = async () => {
         const decision = auth.evaluate(op, ingress, {
           consume: true,
@@ -995,6 +996,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           markDenied(args.termsDigest);
           fail(`authority denied at redeem time: ${decision.reason}`);
         }
+        consumedAuthorityId = decision.citations[0]?.authorityId;
         // Existing authority CAS and provider journal remain authoritative.
         saveAuthority(opts.dir, auth);
         return executeWithJournal({
@@ -1045,8 +1047,8 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       audit.append({
         actor: agent,
         action: "redeem",
-        ...(decision.allow && decision.citations[0]?.authorityId !== undefined
-          ? { authorityId: decision.citations[0]?.authorityId as string }
+        ...(consumedAuthorityId !== undefined
+          ? { authorityId: consumedAuthorityId }
           : {}),
         capabilityId: receipt.capabilityId,
         detail: receipt.transaction,
