@@ -176,7 +176,7 @@ describe("privacy operator CLI", () => {
         "--id",pending.eventId,"--state","FAILED_FINAL",
         "--evidence-ref","external-journal:contrary","--yes"
       ],t.value,env),
-      /terminal/
+      /only OUTCOME_UNKNOWN/
     );
   });
 
