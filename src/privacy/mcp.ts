@@ -82,7 +82,7 @@ export function makeMcpPrivacyDisclosureGate(
   config: McpPrivacyConfig,
   ingress: VerifiedIdentity,
   demand: AuthorityRequest
-): PrivacyGateRequest {
+): Omit<PrivacyGateRequest, "authority"> {
   const claims = demand.context["claims"];
   const verifier = demand.context["verifier"];
   if (
@@ -123,5 +123,5 @@ export function makeMcpPrivacyDisclosureGate(
         ? { subjectAssurance: config.subjectAssurance }
         : {}),
     },
-  } as Omit<PrivacyGateRequest, "authority"> as PrivacyGateRequest;
+  };
 }
