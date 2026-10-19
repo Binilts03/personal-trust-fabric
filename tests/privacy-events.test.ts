@@ -63,6 +63,17 @@ describe("durable privacy processing events", () => {
     );
   });
 
+  it("records separate disclosure attempts with identical terms but different nonces", () => {
+    const dir = tmp();
+    const repo = new FilePrivacyEventRepository({
+      dir, dek: createPrivacyDek(), nowSec: () => NOW,
+    });
+    const first = repo.prepare({ ...PREPARE, attemptRef: "nonce:first" });
+    const second = repo.prepare({ ...PREPARE, attemptRef: "nonce:second" });
+    assert.notEqual(first.eventId, second.eventId);
+    assert.equal(repo.listBySubject("subject:opaque-1").length, 2);
+  });
+
   it("reconciles OUTCOME_UNKNOWN to a final observed result", () => {
     const dir = tmp();
     const dek = createPrivacyDek();
