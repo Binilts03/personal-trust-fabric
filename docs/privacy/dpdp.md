@@ -41,7 +41,11 @@ An enabled *stdio reference host* can use a separate locally protected JSON file
   "dataPrincipalRef": "subject:opaque-4a32",
   "controllerId": "example-india",
   "recipientRoles": {
-    "approved-processor": "data-processor"
+    "approved-processor": "data-processor",
+    "approved-merchant": "third-party"
+  },
+  "actionCategories": {
+    "/pay": ["payment"]
   },
   "subjectAssurance": {
     "classification": "adult",
@@ -53,9 +57,9 @@ An enabled *stdio reference host* can use a separate locally protected JSON file
 
 Set `PTF_MCP_PRIVACY_CONFIG=/absolute/path/to/privacy-config.json` in the host process environment. **Do not give the agent write access to the file or environment.** The configuration contains **no legal basis identifier** and no directly identifying Data Principal value. Legal basis/activity records are independently established by the operator in encrypted privacy state.
 
-In the reference MCP server, the opt-in mode currently gates **`ptf_request_data` and `ptf_present_data`**. It uses the existing, unchanged agent tool schemas. If privacy mode is explicitly configured but missing/invalid, the server or disclosure fails closed. Absence of this setting retains the existing PTF behavior.
+In the reference MCP server, the opt-in mode gates **`ptf_request_data` / `ptf_present_data`** disclosures and **`ptf_propose` / `ptf_redeem` payment processing**. A payment additionally requires operator-defined `actionCategories["/pay"]`, an approved recipient role, a live corresponding Processing Activity and an active Basis Evidence. A payment effect is wrapped so privacy evidence is precommitted **before authority consumption and journaled execution**. It uses existing agent tool schemas; neither the legal basis nor the Data Principal is accepted from agents. Missing/invalid configured controls fail closed. Absence of the setting retains the existing PTF behavior.
 
-**Limits of this MCP slice:** `ptf_propose`/`ptf_redeem` and general `ptf_request_action` are not automatically governed by this data-disclosure gate. Hosts using those routes to process personal data must enforce the privacy runtime explicitly. This reference is not a universal protection for arbitrary tool/provider calls.
+**Limits of this MCP slice:** the `/pay` pathway is gated only when the host explicitly enables privacy mode and configures its payment categories. General `ptf_request_action`, independently invoked provider adapters, operator CLI payment/disclosure paths and other custom host paths are **not automatically privacy-enforced**. A privacy profile is therefore not a universal interceptor. The last live privacy recheck is not an atomic cross-file/cross-provider fence against concurrent withdrawal; see [audit limits](../audit/limits.md).
 
 ## Data and privacy records
 
@@ -83,3 +87,9 @@ Commencement is phased. The rules specify that Rule 4 takes effect one year afte
 PTF does not replace complete notices/consent UX, lawful-basis review, grievance rights, enterprise-wide DSAR search, cross-system corrections/deletions, backup disposal, data-breach detection/notification, Significant Data Fiduciary assessment/audit, children's consent-verification service, DPO oversight, regulator communication, cross-border transfer legal review or processor contracts.
 
 **Security warning:** a malicious or compromised trusted host can bypass or misconfigure PTF. Runtime configuration is a control **only for traffic actually routed through it**. Store encryption is not protection from a host that legitimately holds the decryption keys.
+
+## Recovery and enforcement diagnostics
+
+Stop all live PTF processing writers before using `ptf privacy events reconcile --yes`. It marks PREPARED attempts as `OUTCOME_UNKNOWN`, never as success or proven non-effect. Compare the external provider and execution journal, then use `ptf privacy events resolve --id <event-id> --state SUCCEEDED|FAILED_FINAL --evidence-ref <external-proof-id> --yes`. The evidence reference is an operator-provided pointer, not independently verified attestation. Never infer non-effect from a timeout.
+
+`ptf privacy verify` inspects encryption/integrity; `ptf privacy verify --mcp-config /path/to/privacy-config.json` additionally validates the reference host configuration and displays **configured coverage**, but cannot prove a separately running MCP process actually enabled it. Verify startup environment and exercise real MCP processing with the end-to-end tests before asserting enforcement.
