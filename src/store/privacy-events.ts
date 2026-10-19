@@ -39,6 +39,9 @@ function eventIdFor(key: string): string {
 }
 
 function eventFile(dir: string, eventId: string): string {
+  if (!/^pev-[0-9a-f]{32}$/.test(eventId)) {
+    throw new Error("privacy event: invalid event id");
+  }
   return join(dir, "privacy-events", `${eventId}.json`);
 }
 
