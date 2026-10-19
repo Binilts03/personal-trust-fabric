@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   digestForOperation,
   type Authority,
@@ -163,9 +164,14 @@ export class PrivacyRuntime {
 
   prepareEvent(
     allowed: Extract<PrivacyGateResult, { allow: true }>,
-    req: PrivacyGateRequest
+    req: PrivacyGateRequest,
+    attemptRef: string = randomUUID()
   ): ProcessingEventRecord {
+    if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(attemptRef)) {
+      throw new Error("privacy runtime: invalid attempt reference");
+    }
     return this.events.prepare({
+      attemptRef,
       profileId: allowed.privacy.profileId,
       profileRevision: allowed.privacy.profileRevision,
       dataPrincipalRef: req.processing.dataPrincipalRef,
