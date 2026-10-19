@@ -35,6 +35,16 @@ import {
 import { readFileSync } from "node:fs";
 import { requestData, requestExecution } from "./profiles/data.js";
 import {
+  resolveMcpPrivacyConfig,
+  makeMcpPrivacyDisclosureGate,
+  type McpPrivacyConfig,
+} from "./privacy/mcp.js";
+import { PrivacyRuntime } from "./privacy/runtime.js";
+import { dpdpProfile } from "./privacy/dpdp.js";
+import { discloseWithPrivacy } from "./privacy/vault.js";
+import { FilePrivacyEventRepository } from "./store/privacy-events.js";
+import { loadPrivacyStore, readPrivacyKid, resolvePrivacyDek } from "./store/privacy.js";
+import {
   createProposal,
   gcChallenges,
   loadProposal,
@@ -112,6 +122,8 @@ export interface PtfServerOptions {
    * hosts supply their own PaymentExecutor (ticket 05).
    */
   readonly executor?: PaymentExecutor;
+  /** Operator-controlled context only; never provided by agent tool input. */
+  readonly privacy?: McpPrivacyConfig;
 }
 
 interface Proposal {
@@ -332,6 +344,32 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     name: "personal-trust-fabric",
     version: "0.1.0",
   });
+
+  const privacyForDisclosure = (
+    keys: Record<string, Uint8Array>,
+    auth: Authority,
+    ingress: VerifiedIdentity,
+    demand: AuthorityRequest
+  ): { runtime: PrivacyRuntime; gate: import("./privacy/runtime.js").PrivacyGateRequest } => {
+    if (opts.privacy === undefined) {
+      throw new Error("mcp privacy: not enabled");
+    }
+    const kid = readPrivacyKid(opts.dir);
+    if (kid === null) throw new Error("privacy denied");
+    const dek = resolvePrivacyDek(keys, kid);
+    const gate = {
+      ...makeMcpPrivacyDisclosureGate(opts.privacy, ingress, demand),
+      authority: auth,
+    };
+    const runtime = new PrivacyRuntime({
+      loadPrivacy: () =>
+        loadPrivacyStore(opts.dir, { keys, nowSec: now }).snapshot(),
+      events: new FilePrivacyEventRepository({ dir: opts.dir, dek, nowSec: now }),
+      profile: dpdpProfile,
+      nowSec: now,
+    });
+    return { runtime, gate };
+  };
   const pending = new Map<
     string,
     {
@@ -1021,11 +1059,33 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           `request_data rejected: ${err instanceof Error ? err.message : String(err)}`
         );
       }
-      if (out.decision.allow) {
-        recordProposal(out.digest, out.demand, true);
-      } else {
-        recordProposal(out.digest, out.demand, false);
+      if (out.decision.allow && opts.privacy !== undefined) {
+        let permitted = false;
+        try {
+          const { keys } = load();
+          const { runtime, gate } = privacyForDisclosure(
+            keys, auth, ingress, out.demand
+          );
+          permitted = runtime.preflight(gate).allow;
+        } catch {
+          // No privacy store/configuration/permission must never downgrade
+          // to the legacy disclosure path.
+          permitted = false;
+        }
+        if (!permitted) {
+          recordProposal(out.digest, out.demand, false);
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                allowed: false,
+                reason: "privacy denied",
+              }),
+            }],
+          };
+        }
       }
+      recordProposal(out.digest, out.demand, out.decision.allow);
       return {
         content: [
           {
@@ -1140,23 +1200,29 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         keys,
       });
       const holderPriv = privateKeyFromPkcs8(holderSeed as Uint8Array);
+      const disclosure = {
+        ingress,
+        purpose: demand.purpose,
+        requested: claimsRaw as string[],
+        verifier: verifierRaw as string,
+        nonce: args.nonce,
+        nowSec: now(),
+        authority: auth,
+        resource: { type: demand.resource.type, id: demand.resource.id },
+        holder: { id: demand.principal, privateKey: holderPriv },
+        audit,
+      };
       let pres: ReturnType<typeof readForPurpose>;
       try {
-        pres = readForPurpose(vault, {
-          ingress,
-          purpose: demand.purpose as string,
-          requested: claimsRaw as string[],
-          verifier: verifierRaw as string,
-          nonce: args.nonce,
-          nowSec: now(),
-          authority: auth,
-          resource: {
-            type: demand.resource.type,
-            id: demand.resource.id,
-          },
-          holder: { id: demand.principal, privateKey: holderPriv },
-          audit,
-        });
+        if (opts.privacy !== undefined) {
+          const { runtime, gate } = privacyForDisclosure(keys, auth, ingress, demand);
+          pres = await discloseWithPrivacy({
+            runtime, gate, vault, disclosure,
+            onAuthorityConsumed: (consumed) => saveAuthority(opts.dir, consumed),
+          });
+        } else {
+          pres = readForPurpose(vault, disclosure);
+        }
       } catch (err) {
         markDenied(args.termsDigest);
         throw err instanceof Error ? err : new Error(String(err));
@@ -1165,7 +1231,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       // Persist the consumed use BEFORE delivering (burn-before-deliver:
       // a crash burns a use without a second presentation — the safe
       // direction; single-present is enforced by the executed transition).
-      saveAuthority(opts.dir, auth);
+      if (opts.privacy === undefined) saveAuthority(opts.dir, auth);
       transitionProposal(
         opts.dir,
         args.termsDigest,
@@ -1421,7 +1487,27 @@ async function main(): Promise<void> {
       "mcp-server: PTF_MCP_ACTOR is required unless agents.json exists (registry session mode)"
     );
   }
-  const server = createPtfServer({ dir, env, principal, actor });
+  const privacyConfigFile = env["PTF_MCP_PRIVACY_CONFIG"];
+  let privacy: McpPrivacyConfig | undefined;
+  if (privacyConfigFile !== undefined) {
+    if (privacyConfigFile.length === 0) {
+      throw new Error("mcp privacy: empty PTF_MCP_PRIVACY_CONFIG");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(privacyConfigFile, "utf8")) as unknown;
+    } catch {
+      throw new Error("mcp privacy: invalid operator configuration");
+    }
+    privacy = resolveMcpPrivacyConfig(parsed);
+    if (!existsSync(join(dir, "privacy-state.json"))) {
+      throw new Error("mcp privacy: enabled but privacy state missing");
+    }
+  }
+  const server = createPtfServer({
+    dir, env, principal, actor,
+    ...(privacy !== undefined ? { privacy } : {}),
+  });
   await server.connect(new StdioServerTransport());
 }
 
