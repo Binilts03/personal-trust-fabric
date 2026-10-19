@@ -77,7 +77,7 @@ export async function discloseWithPrivacy(opts: {
     throw new Error("privacy denied");
   }
 
-  const event = opts.runtime.prepareEvent(live, gate);
+  const event = opts.runtime.prepareEvent(live, gate, opts.disclosure.nonce);
   try {
     const presentation = readForPurpose(opts.vault, opts.disclosure);
     await opts.onAuthorityConsumed(opts.disclosure.authority);
