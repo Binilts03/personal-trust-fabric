@@ -203,6 +203,8 @@ export interface ProcessingEventPrepare {
   readonly recipients: readonly ProcessingRecipient[];
   readonly termsDigest: string;
   readonly authorityCitationIds: readonly string[];
+  /** Stable per-attempt identifier; unique for each new effect, reused on retry. */
+  readonly attemptRef?: string;
   readonly preparedAt: number;
 }
 
