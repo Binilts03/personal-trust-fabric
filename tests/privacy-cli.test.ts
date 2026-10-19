@@ -129,6 +129,57 @@ describe("privacy operator CLI", () => {
     assert.ok(ks[PRIVACY_DEK_ALIAS] instanceof Uint8Array);
   });
 
+  it("requires explicit offline operator recovery and evidence-bound reconciliation", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-privacy-reconcile-"));
+    const t = io();
+    const env = { PTF_PASSPHRASE: PASS };
+    await run(["--dir", dir, "init"], t.value, env);
+    await run(["--dir", dir, "privacy", "init"], t.value, env);
+    const eventRepo = new FilePrivacyEventRepository({
+      dir, dek: keys(dir)[PRIVACY_DEK_ALIAS] as Uint8Array, nowSec: () => NOW,
+    });
+    const pending = eventRepo.prepare({
+      profileId: "IN-DPDP-2025", profileRevision: "2025-r1",
+      dataPrincipalRef: "subject:opaque-1", authorityPrincipal: "owner",
+      actor: "agent", controllerId: "acme", activityId: "act", basisId: "basis",
+      purpose: "support", action: "/disclose",
+      resource: { type: "vault", id: "personal-state" },
+      dataCategories: ["email"],
+      recipients: [{ id: "verifier", role: "third-party" }],
+      termsDigest: "ab".repeat(32), authorityCitationIds: ["g1"], preparedAt: NOW,
+    });
+    await assert.rejects(
+      () => run(["--dir",dir,"privacy","events","reconcile"],t.value,env),
+      /--yes/
+    );
+    assert.equal(eventRepo.load(pending.eventId)?.state, "PREPARED");
+    assert.equal(await run(
+      ["--dir",dir,"privacy","events","reconcile","--yes"],t.value,env
+    ),0);
+    assert.equal(eventRepo.load(pending.eventId)?.state, "OUTCOME_UNKNOWN");
+    await assert.rejects(
+      () => run([
+        "--dir",dir,"privacy","events","resolve",
+        "--id",pending.eventId,"--state","SUCCEEDED","--yes"
+      ],t.value,env),
+      /evidence-ref/
+    );
+    assert.equal(await run([
+      "--dir",dir,"privacy","events","resolve",
+      "--id",pending.eventId,"--state","SUCCEEDED",
+      "--evidence-ref","external-journal:confirmed-1","--yes"
+    ],t.value,env),0);
+    assert.equal(eventRepo.load(pending.eventId)?.state,"SUCCEEDED");
+    await assert.rejects(
+      () => run([
+        "--dir",dir,"privacy","events","resolve",
+        "--id",pending.eventId,"--state","FAILED_FINAL",
+        "--evidence-ref","external-journal:contrary","--yes"
+      ],t.value,env),
+      /terminal/
+    );
+  });
+
   it("summarizes processing evidence without exposing subject data values", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ptf-privacy-cli-summary-"));
     const t = io();
