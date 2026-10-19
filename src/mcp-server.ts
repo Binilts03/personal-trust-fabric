@@ -357,11 +357,14 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     demand: AuthorityRequest
   ): { runtime: PrivacyRuntime; gate: PrivacyGateRequest } => {
     if (opts.privacy === undefined) throw new Error("privacy denied");
-    const binding = demand.action.name === "/pay"
-      ? makeMcpPrivacyPaymentGate(opts.privacy, ingress, demand)
-      : demand.action.name === "/disclose"
-        ? makeMcpPrivacyDisclosureGate(opts.privacy, ingress, demand)
-        : (() => { throw new Error("privacy denied"); })();
+    let binding: Omit<PrivacyGateRequest, "authority">;
+    if (demand.action.name === "/pay") {
+      binding = makeMcpPrivacyPaymentGate(opts.privacy, ingress, demand);
+    } else if (demand.action.name === "/disclose") {
+      binding = makeMcpPrivacyDisclosureGate(opts.privacy, ingress, demand);
+    } else {
+      throw new Error("privacy denied");
+    }
     const kid = readPrivacyKid(opts.dir);
     if (kid === null) throw new Error("privacy denied");
     const dek = resolvePrivacyDek(keys, kid);
