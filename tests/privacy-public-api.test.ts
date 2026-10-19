@@ -22,5 +22,10 @@ describe("curated privacy package surface", () => {
     assert.ok(!api.includes("../store/privacy"));
     assert.ok(!api.includes("FilePrivacyEventRepository"));
     assert.ok(!api.includes("PrivacyStore"));
+    const index = readFileSync(join(ROOT, "src", "index.ts"), "utf8");
+    assert.ok(!index.includes('./store/privacy.js'));
+    assert.ok(!index.includes('./store/privacy-events.js'));
+    assert.ok(index.includes('./privacy/api.js'));
+
   });
 });
