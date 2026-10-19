@@ -42,7 +42,7 @@ import {
   MCP_PRIVACY_UNCOVERED_PATHS,
   type McpPrivacyConfig,
 } from "./privacy/mcp.js";
-import { PrivacyRuntime } from "./privacy/runtime.js";
+import { PrivacyRuntime, type PrivacyGateRequest } from "./privacy/runtime.js";
 import { dpdpProfile } from "./privacy/dpdp.js";
 import { discloseWithPrivacy } from "./privacy/vault.js";
 import { executeProtectedActionWithPrivacy } from "./privacy/providers.js";
@@ -349,14 +349,19 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     version: "0.1.0",
   });
 
-  const privacyForPayment = (
+  /** Both MCP processing tiers share one private host-owned runtime. */
+  const privacyForOperation = (
     keys: Record<string, Uint8Array>,
     auth: Authority,
     ingress: VerifiedIdentity,
     demand: AuthorityRequest
-  ): { runtime: PrivacyRuntime; gate: import("./privacy/runtime.js").PrivacyGateRequest } => {
+  ): { runtime: PrivacyRuntime; gate: PrivacyGateRequest } => {
     if (opts.privacy === undefined) throw new Error("privacy denied");
-    const binding = makeMcpPrivacyPaymentGate(opts.privacy, ingress, demand);
+    const binding = demand.action.name === "/pay"
+      ? makeMcpPrivacyPaymentGate(opts.privacy, ingress, demand)
+      : demand.action.name === "/disclose"
+        ? makeMcpPrivacyDisclosureGate(opts.privacy, ingress, demand)
+        : (() => { throw new Error("privacy denied"); })();
     const kid = readPrivacyKid(opts.dir);
     if (kid === null) throw new Error("privacy denied");
     const dek = resolvePrivacyDek(keys, kid);
@@ -369,32 +374,6 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         nowSec: now,
       }),
     };
-  };
-
-  const privacyForDisclosure = (
-    keys: Record<string, Uint8Array>,
-    auth: Authority,
-    ingress: VerifiedIdentity,
-    demand: AuthorityRequest
-  ): { runtime: PrivacyRuntime; gate: import("./privacy/runtime.js").PrivacyGateRequest } => {
-    if (opts.privacy === undefined) {
-      throw new Error("mcp privacy: not enabled");
-    }
-    const kid = readPrivacyKid(opts.dir);
-    if (kid === null) throw new Error("privacy denied");
-    const dek = resolvePrivacyDek(keys, kid);
-    const gate = {
-      ...makeMcpPrivacyDisclosureGate(opts.privacy, ingress, demand),
-      authority: auth,
-    };
-    const runtime = new PrivacyRuntime({
-      loadPrivacy: () =>
-        loadPrivacyStore(opts.dir, { keys, nowSec: now }).snapshot(),
-      events: new FilePrivacyEventRepository({ dir: opts.dir, dek, nowSec: now }),
-      profile: dpdpProfile,
-      nowSec: now,
-    });
-    return { runtime, gate };
   };
   const pending = new Map<
     string,
@@ -727,7 +706,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       let privacyAllowed = true;
       if (decision.allow && opts.privacy !== undefined) {
         try {
-          const { runtime, gate } = privacyForPayment(keys, auth, ingress, demand);
+          const { runtime, gate } = privacyForOperation(keys, auth, ingress, demand);
           privacyAllowed = runtime.preflight(gate).allow;
         } catch {
           privacyAllowed = false;
@@ -902,7 +881,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         }
         if (opts.privacy !== undefined) {
           try {
-            const { runtime, gate } = privacyForPayment(keys, auth, ingress, demand);
+            const { runtime, gate } = privacyForOperation(keys, auth, ingress, demand);
             if (!runtime.preflight(gate).allow) fail("privacy denied");
           } catch {
             markDenied(args.termsDigest);
@@ -1021,7 +1000,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       const journaled = opts.privacy === undefined
         ? await consumeAndExecute()
         : await (async () => {
-            const { runtime, gate } = privacyForPayment(keys, auth, ingress, demand);
+            const { runtime, gate } = privacyForOperation(keys, auth, ingress, demand);
             return executeProtectedActionWithPrivacy({
               runtime,
               gate,
@@ -1112,7 +1091,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         let permitted = false;
         try {
           const { keys } = load();
-          const { runtime, gate } = privacyForDisclosure(
+          const { runtime, gate } = privacyForOperation(
             keys, auth, ingress, out.demand
           );
           permitted = runtime.preflight(gate).allow;
@@ -1264,7 +1243,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       let pres: ReturnType<typeof readForPurpose>;
       try {
         if (opts.privacy !== undefined) {
-          const { runtime, gate } = privacyForDisclosure(keys, auth, ingress, demand);
+          const { runtime, gate } = privacyForOperation(keys, auth, ingress, demand);
           pres = await discloseWithPrivacy({
             runtime, gate, vault, disclosure,
             onAuthorityConsumed: (consumed) => saveAuthority(opts.dir, consumed),
