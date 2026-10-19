@@ -4,16 +4,13 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  PrivacyStore,
-  createPrivacyDek,
-  loadPrivacyStore,
-  savePrivacyStore,
   FileAuditLog,
   type ConsentEvidence,
   type NoticeEvidence,
   type ProcessingActivity,
   type ProcessingBasisEvidence,
 } from "../src/index.js";
+import { PrivacyStore, createPrivacyDek, loadPrivacyStore, savePrivacyStore } from "../src/store/privacy.js";
 
 const NOW = 1_700_000_000;
 function tmp(): string {
