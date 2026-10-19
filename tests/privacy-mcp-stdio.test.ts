@@ -7,25 +7,22 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   Authority,
-  PrivacyStore,
   VaultStore,
   RecipientRegistry,
-  createPrivacyDek,
   createVaultDek,
   generateEd25519Keypair,
   saveAuthority,
-  savePrivacyStore,
   saveRegistry,
   saveVault,
   sealKeystore,
   claimsSubset,
   paymentBounds,
   signBytes,
-  FilePrivacyEventRepository,
   openKeystore,
-  PRIVACY_DEK_ALIAS,
   VAULT_DEK_ALIAS,
 } from "../src/index.js";
+import { PrivacyStore, createPrivacyDek, savePrivacyStore, PRIVACY_DEK_ALIAS } from "../src/store/privacy.js";
+import { FilePrivacyEventRepository } from "../src/store/privacy-events.js";
 
 const SERVER = fileURLToPath(new URL("../src/mcp-server.js", import.meta.url));
 const P = "did:test:p";
