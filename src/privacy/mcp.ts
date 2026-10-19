@@ -10,6 +10,8 @@ export interface McpPrivacyConfig {
   readonly dataPrincipalRef: string;
   readonly controllerId: string;
   readonly recipientRoles: Readonly<Record<string, PrivacyRecipientRole>>;
+  /** Operator-owned data-category classification for non-disclosure actions. */
+  readonly actionCategories?: Readonly<Record<string, readonly string[]>>;
   readonly subjectAssurance?: SubjectAssurance;
 }
 
@@ -27,7 +29,7 @@ function required(value: unknown): value is string {
 export function resolveMcpPrivacyConfig(value: unknown): McpPrivacyConfig {
   const raw = record(value);
   for (const name of Object.keys(raw)) {
-    if (!["dataPrincipalRef", "controllerId", "recipientRoles", "subjectAssurance"].includes(name)) {
+    if (!["dataPrincipalRef", "controllerId", "recipientRoles", "subjectAssurance", "actionCategories"].includes(name)) {
       throw new Error("mcp privacy: unexpected operator configuration field");
     }
   }
@@ -44,12 +46,26 @@ export function resolveMcpPrivacyConfig(value: unknown): McpPrivacyConfig {
     }
     roles[id] = role as PrivacyRecipientRole;
   }
+  const rawActions = raw["actionCategories"];
+  let actionCategories: Record<string, readonly string[]> | undefined;
+  if (rawActions !== undefined) {
+    actionCategories = {};
+    for (const [action, categories] of Object.entries(record(rawActions))) {
+      if (!/^\/[A-Za-z][A-Za-z0-9/_-]*$/.test(action) ||
+          !Array.isArray(categories) || categories.length === 0 ||
+          !categories.every(required)) {
+        throw new Error("mcp privacy: invalid action categories");
+      }
+      actionCategories[action] = [...categories] as string[];
+    }
+  }
   const assurance = raw["subjectAssurance"];
   if (assurance === undefined) {
     return {
       dataPrincipalRef: raw["dataPrincipalRef"],
       controllerId: raw["controllerId"],
       recipientRoles: roles,
+      ...(actionCategories !== undefined ? { actionCategories } : {}),
     };
   }
   const parsed = record(assurance);
@@ -65,6 +81,7 @@ export function resolveMcpPrivacyConfig(value: unknown): McpPrivacyConfig {
     dataPrincipalRef: raw["dataPrincipalRef"],
     controllerId: raw["controllerId"],
     recipientRoles: roles,
+    ...(actionCategories !== undefined ? { actionCategories } : {}),
     subjectAssurance: {
       classification: parsed["classification"] as SubjectAssurance["classification"],
       proofRef: parsed["proofRef"],
@@ -119,6 +136,54 @@ export function makeMcpPrivacyDisclosureGate(
       purpose: demand.purpose ?? "",
       dataCategories: claims,
       recipients: [{ id: verifier, role }],
+      ...(config.subjectAssurance !== undefined
+        ? { subjectAssurance: config.subjectAssurance }
+        : {}),
+    },
+  };
+}
+
+/** Payment privacy context is NEVER inferred from agent-provided categories. */
+export function makeMcpPrivacyPaymentGate(
+  config: McpPrivacyConfig,
+  ingress: VerifiedIdentity,
+  demand: AuthorityRequest
+): Omit<PrivacyGateRequest, "authority"> {
+  const recipient = demand.context["recipient"];
+  const categories = config.actionCategories?.["/pay"];
+  if (
+    demand.principal !== ingress.principal ||
+    demand.actor !== ingress.id ||
+    demand.action.name !== "/pay" ||
+    !required(demand.purpose) ||
+    !required(recipient) ||
+    categories === undefined ||
+    categories.length === 0
+  ) {
+    throw new Error("privacy denied");
+  }
+  const role = Object.hasOwn(config.recipientRoles, recipient)
+    ? config.recipientRoles[recipient]
+    : undefined;
+  if (role === undefined) throw new Error("privacy denied");
+  return {
+    ingress,
+    operation: {
+      action: demand.action,
+      resource: demand.resource,
+      context: demand.context,
+      purpose: demand.purpose,
+    },
+    processing: {
+      authorityPrincipal: ingress.principal,
+      actor: ingress.id,
+      dataPrincipalRef: config.dataPrincipalRef,
+      controllerId: config.controllerId,
+      action: "/pay",
+      resource: { type: demand.resource.type, id: demand.resource.id },
+      purpose: demand.purpose,
+      dataCategories: [...categories],
+      recipients: [{ id: recipient, role }],
       ...(config.subjectAssurance !== undefined
         ? { subjectAssurance: config.subjectAssurance }
         : {}),
