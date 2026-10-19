@@ -19,7 +19,15 @@ These are historical slice checkpoints, **not** a claim that the individual SHA 
 | D — host integration | `578573a2f3bcf13cbafe01be3ace2175bde8edc3` | MCP protected disclosure and payment wrapper integration; evidence precedes authority consumption and journaled payment |
 | E — adversarial repairs | `2c3af1d20896916402a3adc26b0f0a08e1e5d890` | Identifier denial, event state reconciliation, direct-identifier and traversal refusal, proof-of-attempt identity, bounded storage, backup manifest, offline operator recovery, diagnostics, curated exports, structural cleanups |
 
-Slices were implemented incrementally as separate commits. Earlier partial red CI runs are **not** evidence of a broken final branch; they are retained as failure reproductions for the named issues.
+Slices were implemented incrementally as separate commits. The exact checkpoint CI receipts were:
+
+- A — [39063887108](https://github.com/Binilts03/personal-trust-fabric/actions/runs/39063887108): **COMPLETED/SUCCESS** at `822212e5`.
+- B — [39064539814](https://github.com/Binilts03/personal-trust-fabric/actions/runs/39064539814): **COMPLETED/SUCCESS** at `2b411318`.
+- C — [39065178747](https://github.com/Binilts03/personal-trust-fabric/actions/runs/39065178747): **COMPLETED/SUCCESS** at `b10a1bcf`.
+- D — [39300196081](https://github.com/Binilts03/personal-trust-fabric/actions/runs/39300196081): **COMPLETED/FAILURE** at `578573a2`; this is an **intermediate RED** caused by the payment wrapper's out-of-scope authority citation, addressed by subsequent `71cdae2a` and later fixes. Do not label the D checkpoint green.
+- E — [39302542942](https://github.com/Binilts03/personal-trust-fabric/actions/runs/39302542942): **COMPLETED/SUCCESS** at `2c3af1d2`.
+
+The precise tests and output for each run remain in GitHub Actions. Intermediate RED runs are preserved as failure evidence and are not represented as passing. The complete final-branch green gates supersede the D intermediate run only for the later head, not retroactively at the failing SHA.
 
 ## Automated verification evidence
 
