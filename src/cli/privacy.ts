@@ -32,6 +32,7 @@ import {
 import {
   PrivacyRuntime,
 } from "../privacy/runtime.js";
+import { resolveMcpPrivacyConfig } from "../privacy/mcp.js";
 import {
   planErasure,
   summarizeProcessing,
@@ -460,10 +461,30 @@ export async function runPrivacyCommand(ctx: PrivacyCliContext): Promise<number>
       const dek = privacyDek(ctx);
       const store = loadStore(ctx);
       const eventCount = verifyPrivacyEvents(ctx.dir, dek);
+      const configPath = optional(ctx.flags, "mcp-config");
+      if (configPath !== undefined) {
+        resolveMcpPrivacyConfig(readJson(configPath));
+      }
       printJson(ctx, {
         privacyRevision: store.loadedRevision(),
         processingEvents: eventCount,
         verified: true,
+        enforcement: {
+          mode: configPath === undefined
+            ? "not-inspected"
+            : "configured-reference-host",
+          runtimeAttested: false,
+          coveredPaths: [
+            "ptf_request_data",
+            "ptf_present_data",
+            "ptf_propose:/pay",
+            "ptf_redeem:/pay",
+          ],
+          uncoveredPaths: ["ptf_request_action", "custom-provider-adapters", "operator-cli-pay"],
+          note: configPath === undefined
+            ? "No MCP operator config inspected: store verification is not enforcement proof"
+            : "Configuration is valid, but this CLI cannot attest a separately running MCP host",
+        },
       });
       return 0;
     }
