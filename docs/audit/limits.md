@@ -363,3 +363,15 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   where possible (`PTF_PASSPHRASE_FILE`, TTY prompt); env remains supported
   legacy, and HSM/KMS custody stays a host seam (issuance needs the private
   key in-process — external signers cover proof-signing only).
+
+## DPDP privacy enforcement (experimental)
+
+- A PTF Standing Grant is **not statutory data-processing consent**. Privacy Basis Evidence and Notice/Consent Evidence are independent operator assertions. PTF checks configured fields and runtime scope; it **does not decide whether a basis is legally valid** or prove compliance with the DPDP Act.
+- A syntactically opaque `subject:` reference is not proof of pseudonymity or random generation. The trusted host must securely map references to individuals and must never write direct identifiers to privacy event metadata, logs or agent messages.
+- The MCP reference host gates `ptf_request_data` and `ptf_present_data` only, when `PTF_MCP_PRIVACY_CONFIG` is set. Other routes that process personal data require explicit integration. Hosts bypassing the privacy runtime are outside this control.
+- Operator-controlled privacy configuration and the keystore may be compromised; a compromised host can bypass the gate, fabricate evidence and access decrypted state. Local audit chaining cannot prove genuine external execution or independent legal review.
+- Processing Events track PTF-mediated attempts, not enterprise-wide or processor-side processing. An `OUTCOME_UNKNOWN` event cannot be counted as confirmed processing or confirmed non-processing. External systems, backups and independent audit logs need separate retention/erasure controls.
+- Retention holds are operator asserted and do not create processing authority. PTF does not infer legal retention periods or automatically delete external copies/backups. DSAR coverage, breach detection/notification, processor contracts, transfers, children's verification, grievance handling, DPIA/independent audit and registered statutory Consent Manager obligations remain outside this subsystem.
+- File-backed event persistence does not provide general multi-process transaction isolation or guarantees of exactly-once external processing. Operators must reconcile ambiguous effects and preserve the existing journal discipline.
+
+See [DPDP profile](../privacy/dpdp.md) for a precisely scoped operator setup and legal source links.
