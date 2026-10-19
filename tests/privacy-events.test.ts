@@ -4,10 +4,10 @@ import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  FilePrivacyEventRepository,
-  createPrivacyDek,
   type ProcessingEventPrepare,
 } from "../src/index.js";
+import { createPrivacyDek } from "../src/store/privacy.js";
+import { FilePrivacyEventRepository } from "../src/store/privacy-events.js";
 
 const NOW = 1_700_000_000;
 function tmp(): string {
