@@ -38,6 +38,8 @@ import {
   resolveMcpPrivacyConfig,
   makeMcpPrivacyDisclosureGate,
   makeMcpPrivacyPaymentGate,
+  MCP_PRIVACY_GATED_PATHS,
+  MCP_PRIVACY_UNCOVERED_PATHS,
   type McpPrivacyConfig,
 } from "./privacy/mcp.js";
 import { PrivacyRuntime } from "./privacy/runtime.js";
@@ -1551,6 +1553,13 @@ async function main(): Promise<void> {
       throw new Error("mcp privacy: enabled but privacy state missing");
     }
   }
+  // Stdio MCP protocol uses stdout. Operator health/coverage reports use
+  // stderr and disclose no subject, controller, recipient or basis details.
+  const privacyStatus = privacy === undefined
+    ? "DISABLED (legacy authority-only behavior)"
+    : `ENABLED (scoped: ${MCP_PRIVACY_GATED_PATHS.join(", ")};
+uncovered: ${MCP_PRIVACY_UNCOVERED_PATHS.join(", ")})`;
+  process.stderr.write(`[ptf-mcp] privacy: ${privacyStatus}\n`);
   const server = createPtfServer({
     dir, env, principal, actor,
     ...(privacy !== undefined ? { privacy } : {}),
