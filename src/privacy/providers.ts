@@ -18,6 +18,7 @@ export async function executeProtectedActionWithPrivacy(opts: {
   readonly runtime: PrivacyRuntime;
   readonly gate: PrivacyGateRequest;
   readonly execute: () => Promise<ExecutionReceipt>;
+  readonly attemptRef?: string;
 }): Promise<ExecutionReceipt> {
   const first = opts.runtime.preflight(opts.gate);
   if (!first.allow) deny(first);
@@ -29,7 +30,7 @@ export async function executeProtectedActionWithPrivacy(opts: {
     throw new Error("privacy denied");
   }
 
-  const event = opts.runtime.prepareEvent(live, opts.gate);
+  const event = opts.runtime.prepareEvent(live, opts.gate, opts.attemptRef);
   try {
     const receipt = await opts.execute();
     opts.runtime.finalizeEvent(event.eventId, "SUCCEEDED", {
