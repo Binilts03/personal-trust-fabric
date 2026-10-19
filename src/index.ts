@@ -47,3 +47,4 @@ export * from "./privacy/runtime.js";
 export * from "./privacy/vault.js";
 export * from "./privacy/providers.js";
 export * from "./privacy/rights.js";
+export * from "./privacy/mcp.js";
