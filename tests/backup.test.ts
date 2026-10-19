@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -171,6 +171,23 @@ describe("backup/restore privacy state", () => {
     assert.equal(
       restoredEvents.listBySubject("subject:opaque-backup").length,
       1
+    );
+
+    // Deleting a whole event from an otherwise valid encrypted backup must
+    // be detected. Decryption of the remaining files alone is not enough.
+    const filenames = readdirSync(join(dest, "privacy-events"));
+    assert.equal(filenames.length, 1);
+    unlinkSync(join(dest, "privacy-events", filenames[0] as string));
+    const tamperedRestore = join(tmpdir(), `ptf-privacy-event-missing-${Date.now()}`);
+    assert.throws(
+      () => restoreStore(dest, tamperedRestore, {
+        nowSec: () => NOW,
+        keys: {
+          [VAULT_DEK_ALIAS]: vaultDek,
+          "ptf/privacy-dek": privacyDek,
+        },
+      }),
+      /privacy event.*(manifest|integrity|missing|mismatch)/
     );
   });
 });
