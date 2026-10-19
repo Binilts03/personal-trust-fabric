@@ -37,11 +37,13 @@ import { requestData, requestExecution } from "./profiles/data.js";
 import {
   resolveMcpPrivacyConfig,
   makeMcpPrivacyDisclosureGate,
+  makeMcpPrivacyPaymentGate,
   type McpPrivacyConfig,
 } from "./privacy/mcp.js";
 import { PrivacyRuntime } from "./privacy/runtime.js";
 import { dpdpProfile } from "./privacy/dpdp.js";
 import { discloseWithPrivacy } from "./privacy/vault.js";
+import { executeProtectedActionWithPrivacy } from "./privacy/providers.js";
 import { FilePrivacyEventRepository } from "./store/privacy-events.js";
 import { loadPrivacyStore, readPrivacyKid, resolvePrivacyDek } from "./store/privacy.js";
 import {
@@ -344,6 +346,28 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     name: "personal-trust-fabric",
     version: "0.1.0",
   });
+
+  const privacyForPayment = (
+    keys: Record<string, Uint8Array>,
+    auth: Authority,
+    ingress: VerifiedIdentity,
+    demand: AuthorityRequest
+  ): { runtime: PrivacyRuntime; gate: import("./privacy/runtime.js").PrivacyGateRequest } => {
+    if (opts.privacy === undefined) throw new Error("privacy denied");
+    const binding = makeMcpPrivacyPaymentGate(opts.privacy, ingress, demand);
+    const kid = readPrivacyKid(opts.dir);
+    if (kid === null) throw new Error("privacy denied");
+    const dek = resolvePrivacyDek(keys, kid);
+    return {
+      gate: { ...binding, authority: auth },
+      runtime: new PrivacyRuntime({
+        loadPrivacy: () => loadPrivacyStore(opts.dir, { keys, nowSec: now }).snapshot(),
+        events: new FilePrivacyEventRepository({ dir: opts.dir, dek, nowSec: now }),
+        profile: dpdpProfile,
+        nowSec: now,
+      }),
+    };
+  };
 
   const privacyForDisclosure = (
     keys: Record<string, Uint8Array>,
