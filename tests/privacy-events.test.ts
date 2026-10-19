@@ -119,6 +119,17 @@ describe("durable privacy processing events", () => {
     );
   });
 
+  it("rejects path-like and malformed event identifiers before file access", () => {
+    const repo = new FilePrivacyEventRepository({
+      dir: tmp(), dek: createPrivacyDek(), nowSec: () => NOW,
+    });
+    assert.throws(() => repo.load("../authority"), /event.*id|invalid/i);
+    assert.throws(
+      () => repo.transition("../../authority", "SUCCEEDED", { finalizedAt: NOW }),
+      /event.*id|invalid/i
+    );
+  });
+
   it("rejects direct identifiers as privacy subject references", () => {
     const dir = tmp();
     const dek = createPrivacyDek();
