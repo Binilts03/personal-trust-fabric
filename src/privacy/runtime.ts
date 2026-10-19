@@ -5,6 +5,7 @@ import {
   type VerifiedIdentity,
 } from "../core/authority.js";
 import { evaluateProcessing } from "./engine.js";
+import { canonicalize, sha256Hex } from "../core/canonical.js";
 import type {
   PrivacyDecision,
   PrivacyDenyReason,
@@ -35,6 +36,7 @@ export type PrivacyGateResult =
       readonly allow: true;
       readonly privacy: Extract<PrivacyDecision, { allow: true }>;
       readonly termsDigest: string;
+      readonly processingDigest: string;
       readonly authorityCitationIds: readonly string[];
     }
   | {
@@ -129,6 +131,7 @@ export class PrivacyRuntime {
       allow: true,
       privacy,
       termsDigest: digestForOperation(boundForDigest(req)),
+      processingDigest: sha256Hex(canonicalize(req.processing)),
       authorityCitationIds: authority.citations.map((c) => c.authorityId),
     };
   }
@@ -147,12 +150,13 @@ export class PrivacyRuntime {
     }
     if (
       live.termsDigest !== prior.termsDigest ||
+      live.processingDigest !== prior.processingDigest ||
       live.privacy.activityId !== prior.privacy.activityId ||
       live.privacy.basisId !== prior.privacy.basisId ||
       live.privacy.profileId !== prior.privacy.profileId ||
       live.privacy.profileRevision !== prior.privacy.profileRevision
     ) {
-      throw new Error("privacy runtime: processing basis changed since preflight");
+      throw new Error("privacy runtime: processing context changed since preflight");
     }
     return live;
   }
