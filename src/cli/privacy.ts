@@ -398,6 +398,64 @@ export async function runPrivacyCommand(ctx: PrivacyCliContext): Promise<number>
       return 0;
     }
 
+    case "events/reconcile": {
+      // This is an OFFLINE recovery procedure. A sweep against a live writer
+      // could classify an in-flight operation as ambiguous. No auto-startup
+      // sweep: operators must quiesce hosts and explicitly acknowledge.
+      if (ctx.flags["yes"] !== true) {
+        throw new Error("privacy events reconcile requires stopped writers and --yes");
+      }
+      const recovered = repo(ctx).recoverPrepared(ctx.io.now());
+      ctx.audit.append({
+        actor: "operator",
+        action: "privacy.events.reconcile",
+        detail: `count:${recovered.length}`,
+      });
+      printJson(ctx, {
+        recovered: recovered.length,
+        eventIds: recovered.map((r) => r.eventId),
+        status: "OUTCOME_UNKNOWN",
+        note: "Effects require independent journal/provider reconciliation",
+      });
+      return 0;
+    }
+
+    case "events/resolve": {
+      if (ctx.flags["yes"] !== true) {
+        throw new Error("privacy events resolve requires stopped writers and --yes");
+      }
+      const eventId = flag(ctx.flags, "id");
+      const state = flag(ctx.flags, "state");
+      const evidenceRef = flag(ctx.flags, "evidence-ref");
+      if (state !== "SUCCEEDED" && state !== "FAILED_FINAL") {
+        throw new Error("privacy events resolve: state must be SUCCEEDED or FAILED_FINAL");
+      }
+      if (!/^[A-Za-z0-9._:/#-]{1,200}$/.test(evidenceRef)) {
+        throw new Error("privacy events resolve: evidence-ref must be an opaque identifier");
+      }
+      const events = repo(ctx);
+      const current = events.load(eventId);
+      if (current === null) throw new Error("privacy events resolve: unknown event");
+      if (current.state !== "OUTCOME_UNKNOWN") {
+        throw new Error("privacy events resolve: only OUTCOME_UNKNOWN may be resolved");
+      }
+      const resolved = events.transition(eventId, state, {
+        finalizedAt: ctx.io.now(),
+        evidenceRef,
+      });
+      ctx.audit.append({
+        actor: "operator",
+        action: "privacy.events.resolve",
+        detail: `${eventId}:${resolved.state}`,
+      });
+      printJson(ctx, {
+        eventId: resolved.eventId,
+        state: resolved.state,
+        evidenceRef: resolved.evidenceRef,
+      });
+      return 0;
+    }
+
     case "verify": {
       const dek = privacyDek(ctx);
       const store = loadStore(ctx);
