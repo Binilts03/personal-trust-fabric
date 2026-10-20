@@ -33,14 +33,37 @@ import {
   type AgentChallenge,
 } from "./index.js";
 import { readFileSync } from "node:fs";
+import type { KeyObject } from "node:crypto";
 import { requestData, requestExecution } from "./profiles/data.js";
+import {
+  resolveMcpPrivacyConfig,
+  MCP_PRIVACY_GATED_PATHS,
+  MCP_PRIVACY_UNCOVERED_PATHS,
+  type McpPrivacyConfig,
+} from "./privacy/mcp.js";
+import {
+  inspectProposalJournal,
+  privacyForOperation,
+  replayPaymentAttempt,
+} from "./privacy/mcp-host.js";
+import { discloseWithPrivacy } from "./privacy/vault.js";
+import {
+  executeProtectedActionWithPrivacy,
+  PrivacyPreEffectError,
+} from "./privacy/providers.js";
+import {
+  PrivacyEventConflictError,
+  PrivacyOutcomeUnknownError,
+} from "./privacy/errors.js";
 import {
   createProposal,
   gcChallenges,
   loadProposal,
+  recoverExecutedProposal,
   transitionProposal,
 } from "./store/challenges.js";
 import { FileReplay } from "./store/repositories.js";
+import { loadPrivacyStore } from "./store/privacy.js";
 import type {
   ActorSelector,
   AuthorityOperation,
@@ -112,6 +135,8 @@ export interface PtfServerOptions {
    * hosts supply their own PaymentExecutor (ticket 05).
    */
   readonly executor?: PaymentExecutor;
+  /** Operator-controlled context only; never provided by agent tool input. */
+  readonly privacy?: McpPrivacyConfig;
 }
 
 interface Proposal {
@@ -124,12 +149,12 @@ interface Proposal {
 const demandSchema = z
   .object({
     cmd: z.enum(["/pay", "/disclose"]),
-    purpose: z.string().min(1),
-    resource: z.string().min(1),
-    recipient: z.string().min(1),
+    purpose: z.string().min(1).max(500),
+    resource: z.string().min(1).max(500),
+    recipient: z.string().min(1).max(500),
     amount: z.number().int().positive().optional(),
-    currency: z.string().optional(),
-    claims: z.array(z.string()).optional(),
+    currency: z.string().max(16).optional(),
+    claims: z.array(z.string().min(1).max(200)).max(50).optional(),
   })
   .superRefine((v, ctx) => {
     if (v.cmd === "/pay") {
@@ -146,6 +171,125 @@ const demandSchema = z
 
 function fail(message: string): never {
   throw new Error(message);
+}
+
+/** Agent-facing MCP text payload shared by the sanitized result builders. */
+type McpTextResult = {
+  content: { type: "text"; text: string }[];
+};
+
+/** Shared input shape: every proposal tool is addressed by terms digest. */
+const termsDigestInput = z.object({
+  termsDigest: z
+    .string()
+    .length(64)
+    .regex(/^[0-9a-f]+$/),
+});
+
+/**
+ * The journal row for these terms never reached the provider: no money
+ * moved. The authority use for the attempt was already spent, so the same
+ * terms cannot be retried under the same grant.
+ */
+function paymentNotSubmittedResult(termsDigest: string): McpTextResult {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            status: "not_submitted",
+            termsDigest,
+            instruction:
+              "The execution journal shows a prepared but never submitted attempt for these terms, so no payment was made. The authority use for this attempt was already spent and cannot be reused. Ask the operator for a new grant, then propose new terms; do not retry the same terms.",
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+}
+
+/**
+ * A post-effect failure is not a denial. Return a non-terminal, sanitized
+ * result so the agent reconciles the journal/evidence instead of treating
+ * the operation as failed and proposing new terms.
+ */
+function privacyOutcomeUnknownResult(
+  termsDigest: string,
+  kind: "payment" | "disclosure"
+): McpTextResult {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            status: "outcome_unknown",
+            termsDigest,
+            instruction:
+              kind === "payment"
+                ? "The payment may have been effected. Re-run ptf_redeem with the same termsDigest; a journaled success returns the existing receipt. Do not propose new terms."
+                : "The disclosure may have been consumed. Inspect the privacy event and verify with the recipient before retrying. Do not treat this as a denial.",
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+}
+
+function privacyEvidenceConflictResult(
+  termsDigest: string,
+  state: string
+): McpTextResult {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            status: "evidence_conflict",
+            termsDigest,
+            processingState: state,
+            instruction:
+              "Existing processing evidence already covers this attempt; no new effect was started. Reconcile that evidence or the execution journal before retrying.",
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+}
+
+/**
+ * The execution journal for these terms is unsettled, unreadable, or no
+ * longer matches the proposal. No new effect was started and no new
+ * challenge was issued: issuing one would burn authority on an operation
+ * whose outcome is already unknown. The agent must reconcile the journal
+ * (provider query or operator) instead of retrying blind.
+ */
+function paymentJournalUnsettledResult(termsDigest: string): McpTextResult {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            status: "outcome_unknown",
+            termsDigest,
+            instruction:
+              "The execution journal for these terms is unsettled, unreadable, or no longer matches the proposal. No new effect and no new challenge was started. Reconcile the execution journal (provider query or operator) before retrying; do not propose new terms.",
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
 }
 
 /**
@@ -332,6 +476,26 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     name: "personal-trust-fabric",
     version: "0.1.0",
   });
+
+  /** One routing hook; policy construction lives in privacy/mcp-host.ts. */
+  const privacyForConfiguredOperation = (
+    keys: Record<string, Uint8Array>,
+    auth: Authority,
+    ingress: VerifiedIdentity,
+    demand: AuthorityRequest
+  ) => {
+    if (opts.privacy === undefined) throw new Error("privacy denied");
+    return privacyForOperation({
+      dir: opts.dir,
+      keys,
+      auth,
+      ingress,
+      demand,
+      config: opts.privacy,
+      now,
+    });
+  };
+
   const pending = new Map<
     string,
     {
@@ -448,6 +612,323 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     } catch {
       // Already terminal, expired, or unreadable — leave it.
     }
+  };
+
+  /**
+   * Journal-aware status for read-only tools. A completed execution is
+   * conclusive even when the proposal transition never landed (the crash
+   * window this recovery path exists for). Ambiguity is surfaced as
+   * outcome_unknown, never as a denial.
+   */
+  const journalView = (
+    digest: string,
+    demand: Proposal["demand"]
+  ):
+    | { readonly status: "executed"; readonly receipt: Record<string, unknown> }
+    | { readonly status: "failed" }
+    | { readonly status: "not_submitted" }
+    | { readonly status: "outcome_unknown" }
+    | null => {
+    const replay = inspectProposalJournal(opts.dir, digest, demand);
+    switch (replay.kind) {
+      case "none":
+        return null;
+      case "succeeded":
+        return {
+          status: "executed",
+          receipt: replay.receipt as unknown as Record<string, unknown>,
+        };
+      case "failed_final":
+        return { status: "failed" };
+      case "unknown":
+        // A prepared-but-never-submitted row is a fact, not an ambiguity:
+        // no money moved and the authority use is spent.
+        return replay.reason === "unsubmitted"
+          ? { status: "not_submitted" }
+          : { status: "outcome_unknown" };
+    }
+  };
+
+  /**
+   * Shared status payload for the read-only proposal tools. A journal-backed
+   * success is reported as executed even when the proposal transition was
+   * interrupted.
+   */
+  const proposalStatusPayload = (digest: string): Record<string, unknown> => {
+    const found = readStored(digest);
+    if (found === null) return { status: "unknown" };
+    if (found.status === "executed") {
+      return { status: found.status, receipt: found.receipt };
+    }
+    return journalView(digest, found.demand) ?? { status: found.status };
+  };
+
+  const proposalStatusResult = (digest: string): McpTextResult => ({
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(proposalStatusPayload(digest), null, 2),
+      },
+    ],
+  });
+
+  /**
+   * The stored `/pay` demand for a proposal, re-asserted against the
+   * verified ingress and re-derived from the file it was stored in. Every
+   * mismatch fails closed before any authority, privacy, or effect work.
+   */
+  const readPaymentDemand = (
+    proposal: StoredProposal,
+    termsDigest: string,
+    ingress: VerifiedIdentity
+  ): {
+    readonly demand: AuthorityRequest;
+    readonly op: AuthorityOperation;
+    readonly amount: number;
+    readonly currency: string;
+    readonly recipient: string;
+    readonly resource: string;
+    readonly purpose: string;
+    readonly agent: string;
+  } => {
+    const demand = { ...proposal.demand, termsDigest };
+    // Identity re-assert (ADR-0023): the stored demand must belong to
+    // this verified ingress — no cross-agent redemption, and the audit
+    // trail attributes the actor that was actually evaluated.
+    if (demand.principal !== ingress.principal || demand.actor !== ingress.id) {
+      fail("proposal identity mismatch: propose again");
+    }
+    // Re-evaluate under the verified ingress: strip the stored bound form
+    // back to the identity-free operation and let the engine rebind.
+    const {
+      termsDigest: _storedDigest,
+      principal: _storedPrincipal,
+      actor: _storedActor,
+      actorChain: _storedChain,
+      ...op
+    } = demand;
+    void _storedDigest;
+    void _storedPrincipal;
+    void _storedActor;
+    void _storedChain;
+    // Tamper re-derivation (ADR-0018, same as present): the file must
+    // still describe the exact terms its key claims. Recomputed over the
+    // stored bound form verbatim, exactly as propose stored it.
+    const { termsDigest: _fileDigest, ...fileBound } = demand;
+    void _fileDigest;
+    if (digestForOperation(fileBound) !== termsDigest) {
+      fail("proposal terms changed: propose again");
+    }
+    if (demand.action.name !== "/pay") {
+      fail(
+        "redeem supports /pay demands only in v1 (present disclosures via the CLI)"
+      );
+    }
+    const amount: unknown = demand.context["amount"];
+    const currency: unknown = demand.context["currency"];
+    const recipient: unknown = demand.context["recipient"];
+    if (
+      typeof amount !== "number" ||
+      !Number.isFinite(amount) ||
+      !(amount > 0)
+    ) {
+      fail("pending demand is malformed (amount/currency required)");
+    }
+    if (typeof currency !== "string" || currency.length === 0) {
+      fail("pending demand is malformed (amount/currency required)");
+    }
+    if (typeof recipient !== "string" || recipient.length === 0) {
+      fail("pending demand is malformed (recipient required)");
+    }
+    return {
+      demand,
+      op,
+      amount,
+      currency,
+      recipient,
+      resource: demand.resource.id,
+      purpose: demand.purpose ?? "payment",
+      agent: demand.actor,
+    };
+  };
+
+  /**
+   * Issue the recipient challenge for a pending `/pay` proposal: a
+   * non-consuming authority dry-run, the privacy preflight, and a
+   * single-use capability the recipient has to sign. Nothing is consumed
+   * and nothing is effected here.
+   */
+  const issueRecipientChallenge = (input: {
+    readonly termsDigest: string;
+    readonly demand: AuthorityRequest;
+    readonly op: AuthorityOperation;
+    readonly ingress: VerifiedIdentity;
+    readonly auth: Authority;
+    readonly keys: Record<string, Uint8Array>;
+    readonly caps: Capabilities;
+    readonly principalPriv: KeyObject;
+    readonly amount: number;
+    readonly currency: string;
+    readonly recipient: string;
+    readonly resource: string;
+    readonly purpose: string;
+    readonly agent: string;
+  }): McpTextResult => {
+    // Dry-run first: no signed capability leaves the server unless live
+    // authority would allow it. Still no consumption here.
+    const preview = input.auth.evaluate(input.op, input.ingress, {
+      nowSec: now(),
+    });
+    if (!preview.allow) {
+      markDenied(input.termsDigest);
+      fail(`authority denied at challenge time: ${preview.reason}`);
+    }
+    if (opts.privacy !== undefined) {
+      try {
+        const { runtime, gate } = privacyForConfiguredOperation(
+          input.keys,
+          input.auth,
+          input.ingress,
+          input.demand
+        );
+        if (!runtime.preflight(gate).allow) fail("privacy denied");
+      } catch {
+        markDenied(input.termsDigest);
+        fail("privacy denied");
+      }
+    }
+    const cap = input.caps.issue(
+      null,
+      {
+        iss: input.demand.principal,
+        aud: input.agent,
+        sub: input.demand.principal,
+        cmd: input.demand.action.name,
+        pol: [["<=", ".amount", input.amount]],
+        purpose: input.purpose,
+        resource: input.resource,
+        recipient: input.recipient,
+        amountMax: input.amount,
+        currency: input.currency,
+        exp: now() + 300,
+        maxUses: 1,
+        termsDigest: input.termsDigest,
+      },
+      input.principalPriv
+    );
+    const cidHex = leafCidHex(cap);
+    prunePending();
+    pending.set(input.termsDigest, {
+      cap,
+      demand: input.demand,
+      until: now() + 120,
+    });
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            { needProof: true, cidHex, recipient: input.recipient },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  };
+
+  /**
+   * Journal-first recovery for a `/pay` retry. The replay itself lives in
+   * the privacy host wiring; this hook maps the outcome to the agent-facing
+   * result and records the local bookkeeping (audit entry, proposal repair).
+   */
+  const recoverJournaledPayment = (input: {
+    readonly termsDigest: string;
+    readonly demand: Proposal["demand"];
+    readonly ingress: VerifiedIdentity;
+    readonly agent: string;
+    readonly keys: Record<string, Uint8Array>;
+    readonly auth: Authority;
+    readonly reg: RecipientRegistry;
+    readonly audit: FileAuditLog;
+  }): McpTextResult | null => {
+    const outcome = replayPaymentAttempt({
+      dir: opts.dir,
+      keys: input.keys,
+      auth: input.auth,
+      ingress: input.ingress,
+      demand: input.demand,
+      config: opts.privacy,
+      now,
+    });
+    if (outcome.kind === "none") return null;
+    if (outcome.kind === "unknown") {
+      // Live, reconciled, corrupt, or field-mismatched evidence is not a
+      // denial and must not trigger a new challenge: a fresh capability
+      // would burn authority on an operation whose outcome is unknown.
+      return outcome.reason === "unsubmitted"
+        ? paymentNotSubmittedResult(input.termsDigest)
+        : paymentJournalUnsettledResult(input.termsDigest);
+    }
+    if (outcome.kind === "failed_final") {
+      fail("payment failed finally: propose new terms");
+    }
+    if (outcome.kind === "evidence_conflict") {
+      return privacyEvidenceConflictResult(input.termsDigest, outcome.state);
+    }
+    const receipt = outcome.receipt as unknown as Record<string, unknown>;
+    // Store-revision bindings keep the rollback detector honest in exactly
+    // the window this recovery path exists for: the effect happened, so the
+    // authority revision that covered it must stay referenced.
+    const privacyRevision = (): number | undefined => {
+      if (opts.privacy === undefined) return undefined;
+      try {
+        return loadPrivacyStore(opts.dir, {
+          keys: input.keys,
+          nowSec: now,
+        }).loadedRevision();
+      } catch {
+        return undefined;
+      }
+    };
+    try {
+      if (outcome.evidence === "gap") {
+        // The payment is proven by the journal; the processing evidence is
+        // not. Record the gap for the operator instead of hiding it.
+        input.audit.append({
+          actor: input.agent,
+          action: "privacy-evidence-gap",
+          capabilityId: outcome.receipt.capabilityId,
+          detail: outcome.receipt.receiptId,
+        });
+      }
+      const revision = privacyRevision();
+      input.audit.append({
+        actor: input.agent,
+        action: "redeem",
+        capabilityId: outcome.receipt.capabilityId,
+        detail: outcome.receipt.transaction,
+        authorityRev: input.auth.loadedRevision(),
+        registryRev: input.reg.loadedRevision(),
+        ...(revision !== undefined
+          ? { stateRevisions: { privacy: revision } }
+          : {}),
+      });
+      recoverExecutedProposal(
+        opts.dir,
+        input.termsDigest,
+        outcome.receipt,
+        now()
+      );
+    } catch {
+      // The journal still proves the effect; leave the proposal pending for
+      // another idempotent replay instead of reporting a denial.
+    }
+    return {
+      content: [
+        { type: "text" as const, text: JSON.stringify(receipt, null, 2) },
+      ],
+    };
   };
 
   const recordProposal = (
@@ -627,8 +1108,11 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       inputSchema: demandSchema,
     },
     async (args) => {
-      const { auth } = load();
+      const { auth, keys } = load();
       const ingress = resolveIngress();
+      if (opts.privacy !== undefined && args.cmd === "/disclose") {
+        fail("privacy mode: use ptf_request_data for disclosure proposals");
+      }
       prunePending();
       // Binding is derived server-side from the normalized operation +
       // the verified ingress: untrusted callers supply neither
@@ -657,21 +1141,34 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         demand,
         citations: decision.allow ? decision.citations : [],
       });
-      if (decision.allow) {
-        // "pending" = authority would allow; still needs live re-check at
-        // redeem (standing grant) or human approval (CLI). Never "approved".
-        recordProposal(digest, demand, true);
-      } else {
-        recordProposal(digest, demand, false);
+      let privacyAllowed = true;
+      if (decision.allow && opts.privacy !== undefined) {
+        try {
+          const { runtime, gate } = privacyForConfiguredOperation(
+            keys,
+            auth,
+            ingress,
+            demand
+          );
+          privacyAllowed = runtime.preflight(gate).allow;
+        } catch {
+          privacyAllowed = false;
+        }
       }
+      const allowed = decision.allow && privacyAllowed;
+      recordProposal(digest, demand, allowed);
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify(
-              decision.allow
+              allowed
                 ? { allowed: true, termsDigest: digest, proposal: text }
-                : { allowed: false, reason: decision.reason, proposal: text },
+                : {
+                    allowed: false,
+                    reason: decision.allow ? "privacy denied" : decision.reason,
+                    proposal: text,
+                  },
               null,
               2
             ),
@@ -685,33 +1182,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_check",
     {
       description:
-        "Check a proposal's status by terms digest (pending = authority would allow, awaiting live redeem; denied/executed are terminal).",
-      inputSchema: z.object({ termsDigest: z.string().min(16) }),
+        "Check a proposal's status by terms digest (pending = authority would allow, awaiting live redeem; denied/executed/failed are terminal; outcome_unknown means inspect the execution journal before retrying).",
+      inputSchema: termsDigestInput,
     },
-    async (args) => {
-      const found = readStored(args.termsDigest);
-      if (found === null) {
-        return {
-          content: [
-            { type: "text", text: JSON.stringify({ status: "unknown" }) },
-          ],
-        };
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              found.status === "executed"
-                ? { status: found.status, receipt: found.receipt }
-                : { status: found.status },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
+    async (args) => proposalStatusResult(args.termsDigest)
   );
 
   server.registerTool(
@@ -719,10 +1193,17 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     {
       description:
         "Redeem a pending proposal. Without a proof this checks live authority (dry-run) and returns its id to sign (challenge); with a recipient proof it authorizes the capability first, then spends live authority, executes, and returns a receipt. Payment demands only. Accepts any /pay proposal in the shared store regardless of which propose tool created it; re-redeeming executed terms returns the stored receipt without re-executing. Fails closed on anything stale.",
-      inputSchema: z.object({
-        termsDigest: z.string().min(16),
-        recipientKeyHex: z.string().min(64).optional(),
-        recipientSigHex: z.string().min(128).optional(),
+      inputSchema: termsDigestInput.extend({
+        recipientKeyHex: z
+          .string()
+          .length(64)
+          .regex(/^[0-9a-f]+$/)
+          .optional(),
+        recipientSigHex: z
+          .string()
+          .length(128)
+          .regex(/^[0-9a-f]+$/)
+          .optional(),
       }),
     },
     async (args) => {
@@ -740,69 +1221,36 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           ],
         };
       }
+      const { auth, reg, audit, keys } = load();
+      const ingress = resolveIngress();
+      const {
+        demand,
+        op,
+        amount,
+        currency,
+        recipient,
+        resource,
+        purpose,
+        agent,
+      } = readPaymentDemand(proposal, args.termsDigest, ingress);
+      // Journal-first recovery: a completed payment is conclusive even when
+      // the proposal transition or Processing Event finalization was
+      // interrupted. It runs before any authority preview/challenge, so a
+      // retry never spends another use or asks for another recipient proof.
+      const recovered = recoverJournaledPayment({
+        termsDigest: args.termsDigest,
+        demand,
+        ingress,
+        agent,
+        keys,
+        auth,
+        reg,
+        audit,
+      });
+      if (recovered !== null) return recovered;
       if (proposal.status === "denied") {
         fail("proposal denied: propose again");
       }
-      const { auth, reg, audit, keys } = load();
-      const ingress = resolveIngress();
-      const demand = { ...proposal.demand, termsDigest: args.termsDigest };
-      // Identity re-assert (ADR-0023): the stored demand must belong to
-      // this verified ingress — no cross-agent redemption, and the audit
-      // trail attributes the actor that was actually evaluated.
-      if (
-        demand.principal !== ingress.principal ||
-        demand.actor !== ingress.id
-      ) {
-        fail("proposal identity mismatch: propose again");
-      }
-      // Re-evaluate under the verified ingress: strip the stored bound form
-      // back to the identity-free operation and let the engine rebind.
-      const {
-        termsDigest: _storedDigest,
-        principal: _storedPrincipal,
-        actor: _storedActor,
-        actorChain: _storedChain,
-        ...op
-      } = demand;
-      void _storedDigest;
-      void _storedPrincipal;
-      void _storedActor;
-      void _storedChain;
-      // Tamper re-derivation (ADR-0018, same as present): the file must
-      // still describe the exact terms its key claims. Recomputed over the
-      // stored bound form verbatim, exactly as propose stored it.
-      const { termsDigest: _fileDigest, ...fileBound } = demand;
-      void _fileDigest;
-      if (digestForOperation(fileBound) !== args.termsDigest) {
-        fail("proposal terms changed: propose again");
-      }
-      if (demand.action.name !== "/pay") {
-        fail(
-          "redeem supports /pay demands only in v1 (present disclosures via the CLI)"
-        );
-      }
-      const amountRaw: unknown = demand.context["amount"];
-      const currencyRaw: unknown = demand.context["currency"];
-      const recipientRaw: unknown = demand.context["recipient"];
-      if (
-        typeof amountRaw !== "number" ||
-        !Number.isFinite(amountRaw) ||
-        !(amountRaw > 0)
-      ) {
-        fail("pending demand is malformed (amount/currency required)");
-      }
-      if (typeof currencyRaw !== "string" || currencyRaw.length === 0) {
-        fail("pending demand is malformed (amount/currency required)");
-      }
-      if (typeof recipientRaw !== "string" || recipientRaw.length === 0) {
-        fail("pending demand is malformed (recipient required)");
-      }
-      const amount: number = amountRaw;
-      const currency: string = currencyRaw;
-      const recipient: string = recipientRaw;
-      const resource: string = demand.resource.id;
-      const purpose: string = demand.purpose ?? "payment";
-      const agent: string = demand.actor;
       const seed = keys[demand.principal];
       if (seed === undefined)
         fail(`server holds no key for principal ${demand.principal}`);
@@ -823,51 +1271,22 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
             "redeem needs both recipientKeyHex and recipientSigHex, or neither"
           );
         }
-        // Dry-run first: no signed capability leaves the server unless live
-        // authority would allow it. Still no consumption here.
-        const preview = auth.evaluate(op, ingress, { nowSec: now() });
-        if (!preview.allow) {
-          markDenied(args.termsDigest);
-          fail(`authority denied at challenge time: ${preview.reason}`);
-        }
-        const cap = caps.issue(
-          null,
-          {
-            iss: demand.principal,
-            aud: agent,
-            sub: demand.principal,
-            cmd: demand.action.name,
-            pol: [["<=", ".amount", amount]],
-            purpose,
-            resource,
-            recipient,
-            amountMax: amount,
-            currency,
-            exp: now() + 300,
-            maxUses: 1,
-            termsDigest: args.termsDigest,
-          },
-          principalPriv
-        );
-        const cidHex = leafCidHex(cap);
-        prunePending();
-        pending.set(args.termsDigest, {
-          cap,
+        return issueRecipientChallenge({
+          termsDigest: args.termsDigest,
           demand,
-          until: now() + 120,
+          op,
+          ingress,
+          auth,
+          keys,
+          caps,
+          principalPriv,
+          amount,
+          currency,
+          recipient,
+          resource,
+          purpose,
+          agent,
         });
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                { needProof: true, cidHex, recipient },
-                null,
-                2
-              ),
-            },
-          ],
-        };
       }
       const challenge = pending.get(args.termsDigest);
       pending.delete(args.termsDigest);
@@ -907,41 +1326,74 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         markDenied(args.termsDigest);
         fail(`redeem failed: ${redeemed.reason}`);
       }
-      // Only now spend standing authority.
-      const decision = auth.evaluate(op, ingress, {
-        consume: true,
-        nowSec: now(),
-      });
-      if (!decision.allow) {
-        markDenied(args.termsDigest);
-        fail(`authority denied at redeem time: ${decision.reason}`);
+      // The privacy wrapper precommits an attempt before ANY consumption or
+      // provider effect. Legacy mode executes this exact closure directly.
+      let consumedAuthorityId: string | undefined;
+      const consumeAndExecute = async (
+        markEffectStarted: () => void = () => {}
+      ) => {
+        const decision = auth.evaluate(op, ingress, {
+          consume: true,
+          nowSec: now(),
+        });
+        if (!decision.allow) {
+          markDenied(args.termsDigest);
+          throw new PrivacyPreEffectError(
+            `authority denied at redeem time: ${decision.reason}`
+          );
+        }
+        consumedAuthorityId = decision.citations[0]?.authorityId;
+        // Existing authority CAS and provider journal remain authoritative.
+        saveAuthority(opts.dir, auth);
+        return executeWithJournal({
+          dir: opts.dir,
+          provider: executorAsProvider(executor, "payment", now),
+          req: {
+            capabilityId: leafCidHex(challenge.cap),
+            termsDigest: args.termsDigest,
+            action: "/pay",
+            recipient,
+            resource,
+            purpose,
+            context: { amount, currency },
+          },
+          redemption: redeemed,
+          nowSec: now(),
+          at: now(),
+          onEffectStart: markEffectStarted,
+        });
+      };
+      let journaled: Awaited<ReturnType<typeof consumeAndExecute>>;
+      if (opts.privacy === undefined) {
+        journaled = await consumeAndExecute();
+      } else {
+        try {
+          const scoped = privacyForConfiguredOperation(
+            keys,
+            auth,
+            ingress,
+            demand
+          );
+          journaled = await executeProtectedActionWithPrivacy({
+            runtime: scoped.runtime,
+            gate: scoped.gate,
+            execute: consumeAndExecute,
+            attemptRef: args.termsDigest,
+          });
+        } catch (error) {
+          if (error instanceof PrivacyOutcomeUnknownError) {
+            return privacyOutcomeUnknownResult(args.termsDigest, "payment");
+          }
+          if (error instanceof PrivacyEventConflictError) {
+            return privacyEvidenceConflictResult(args.termsDigest, error.state);
+          }
+          // Never leak store paths, key ids, journal details or configuration
+          // detail to the agent-facing error surface. Reaching this branch
+          // means the wrapper proved the failure was pre-effect.
+          markDenied(args.termsDigest);
+          fail("privacy denied");
+        }
       }
-      // Persist the consumption BEFORE executing (ticket 05): a crash or a
-      // failing rail between persist and execute can only burn a use, never
-      // double-spend — the safe direction. CAS failure here fails the redeem
-      // closed before any money moves.
-      saveAuthority(opts.dir, auth);
-      // Journaled execution (ADR-0021): the execution record persists under
-      // a proposal-anchored idempotency key before the provider call, so a
-      // crash between effect and receipt reconciles to the same receipt
-      // instead of resubmitting. A reminted capability finds the SUCCEEDED
-      // record and returns it without touching the provider.
-      const journaled = await executeWithJournal({
-        dir: opts.dir,
-        provider: executorAsProvider(executor, "payment", now),
-        req: {
-          capabilityId: leafCidHex(challenge.cap),
-          termsDigest: args.termsDigest,
-          action: "/pay",
-          recipient,
-          resource,
-          purpose,
-          context: { amount, currency },
-        },
-        redemption: redeemed,
-        nowSec: now(),
-        at: now(),
-      });
       // Project the /pay receipt shape from the journal receipt. Amount and
       // currency come from the exact authorized terms verified above
       // (authorizedTermsCover inside the journal) — never invented.
@@ -962,8 +1414,8 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       audit.append({
         actor: agent,
         action: "redeem",
-        ...(decision.allow && decision.citations[0]?.authorityId !== undefined
-          ? { authorityId: decision.citations[0]?.authorityId as string }
+        ...(consumedAuthorityId !== undefined
+          ? { authorityId: consumedAuthorityId }
           : {}),
         capabilityId: receipt.capabilityId,
         detail: receipt.transaction,
@@ -994,14 +1446,14 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       description:
         "Propose a disclosure (dry-run). Evaluates /disclose authority without spending it and returns exact terms for human approval. Present an allowed proposal via ptf_present_data.",
       inputSchema: z.object({
-        purpose: z.string().min(1),
-        resource: z.string().min(1),
-        verifier: z.string().min(1),
-        claims: z.array(z.string().min(1)).min(1),
+        purpose: z.string().min(1).max(500),
+        resource: z.string().min(1).max(500),
+        verifier: z.string().min(1).max(500),
+        claims: z.array(z.string().min(1).max(200)).min(1).max(50),
       }),
     },
     async (args) => {
-      const { auth } = load();
+      const { auth, keys } = load();
       const ingress = resolveIngress();
       let out: ReturnType<typeof requestData>;
       try {
@@ -1021,11 +1473,37 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           `request_data rejected: ${err instanceof Error ? err.message : String(err)}`
         );
       }
-      if (out.decision.allow) {
-        recordProposal(out.digest, out.demand, true);
-      } else {
-        recordProposal(out.digest, out.demand, false);
+      if (out.decision.allow && opts.privacy !== undefined) {
+        let permitted = false;
+        try {
+          const { runtime, gate } = privacyForConfiguredOperation(
+            keys,
+            auth,
+            ingress,
+            out.demand
+          );
+          permitted = runtime.preflight(gate).allow;
+        } catch {
+          // No privacy store/configuration/permission must never downgrade
+          // to the legacy disclosure path.
+          permitted = false;
+        }
+        if (!permitted) {
+          recordProposal(out.digest, out.demand, false);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  allowed: false,
+                  reason: "privacy denied",
+                }),
+              },
+            ],
+          };
+        }
       }
+      recordProposal(out.digest, out.demand, out.decision.allow);
       return {
         content: [
           {
@@ -1055,10 +1533,9 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_present_data",
     {
       description:
-        "Present a pending /disclose proposal as a holder-signed presentation (read-only: a read, no uses consumed). Fails closed unless the proposal is pending and unexpired. Nonce-uniqueness + freshness enforcement is verifier duty (Disclose.verify maxAgeSec default 300). /disclose only; pay via ptf_redeem.",
-      inputSchema: z.object({
-        termsDigest: z.string().min(16),
-        nonce: z.string().min(16),
+        "Present a pending /disclose proposal as a holder-signed presentation (consumes one authority use; no funds move). Fails closed unless the proposal is pending and unexpired. Nonce-uniqueness + freshness enforcement is verifier duty (Disclose.verify maxAgeSec default 300). /disclose only; pay via ptf_redeem.",
+      inputSchema: termsDigestInput.extend({
+        nonce: z.string().min(16).max(512),
       }),
     },
     async (args) => {
@@ -1140,24 +1617,49 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         keys,
       });
       const holderPriv = privateKeyFromPkcs8(holderSeed as Uint8Array);
+      const disclosure = {
+        ingress,
+        purpose: demand.purpose,
+        requested: claimsRaw as string[],
+        verifier: verifierRaw as string,
+        nonce: args.nonce,
+        nowSec: now(),
+        authority: auth,
+        resource: { type: demand.resource.type, id: demand.resource.id },
+        holder: { id: demand.principal, privateKey: holderPriv },
+        audit,
+      };
       let pres: ReturnType<typeof readForPurpose>;
       try {
-        pres = readForPurpose(vault, {
-          ingress,
-          purpose: demand.purpose as string,
-          requested: claimsRaw as string[],
-          verifier: verifierRaw as string,
-          nonce: args.nonce,
-          nowSec: now(),
-          authority: auth,
-          resource: {
-            type: demand.resource.type,
-            id: demand.resource.id,
-          },
-          holder: { id: demand.principal, privateKey: holderPriv },
-          audit,
-        });
+        if (opts.privacy !== undefined) {
+          const { runtime, gate } = privacyForConfiguredOperation(
+            keys,
+            auth,
+            ingress,
+            demand
+          );
+          pres = await discloseWithPrivacy({
+            runtime,
+            gate,
+            vault,
+            disclosure,
+            onAuthorityConsumed: (consumed) =>
+              saveAuthority(opts.dir, consumed),
+          });
+        } else {
+          pres = readForPurpose(vault, disclosure);
+        }
       } catch (err) {
+        if (opts.privacy !== undefined) {
+          if (err instanceof PrivacyOutcomeUnknownError) {
+            return privacyOutcomeUnknownResult(args.termsDigest, "disclosure");
+          }
+          if (err instanceof PrivacyEventConflictError) {
+            return privacyEvidenceConflictResult(args.termsDigest, err.state);
+          }
+          markDenied(args.termsDigest);
+          fail("privacy denied");
+        }
         markDenied(args.termsDigest);
         throw err instanceof Error ? err : new Error(String(err));
       }
@@ -1165,7 +1667,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       // Persist the consumed use BEFORE delivering (burn-before-deliver:
       // a crash burns a use without a second presentation — the safe
       // direction; single-present is enforced by the executed transition).
-      saveAuthority(opts.dir, auth);
+      if (opts.privacy === undefined) saveAuthority(opts.dir, auth);
       transitionProposal(
         opts.dir,
         args.termsDigest,
@@ -1195,7 +1697,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
                 // data delivery, not a payment authorization. Display this
                 // notice wherever the presentation is shown.
                 notice:
-                  "read-only /disclose presentation, not a payment authorization: holder-signed data delivery only — no uses consumed, no funds moved",
+                  "presentation consumes one authority use; not a payment authorization: holder-signed data delivery only - no funds moved",
                 termsDigest: args.termsDigest,
                 disclosed,
                 presentation,
@@ -1213,20 +1715,31 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_request_action",
     {
       description:
-        "Propose any /-path action (dry-run, disclose tier excluded). Redeem stays /pay-only via ptf_redeem.",
+        "Propose any /-path action (dry-run, disclose tier excluded). Redeem stays /pay-only via ptf_redeem. Unavailable in privacy mode.",
       inputSchema: z.object({
-        cmd: z.string().min(2).regex(/^\//),
-        purpose: z.string().min(1).optional(),
-        resource: z.string().min(1),
-        resourceType: z.string().min(1).optional(),
-        context: z.record(z.string(), z.unknown()).optional(),
-        recipient: z.string().min(1).optional(),
+        cmd: z.string().min(2).max(200).regex(/^\//),
+        purpose: z.string().min(1).max(500).optional(),
+        resource: z.string().min(1).max(500),
+        resourceType: z.string().min(1).max(200).optional(),
+        context: z
+          .record(z.string().max(100), z.unknown())
+          .refine((value) => JSON.stringify(value).length <= 16_384, {
+            message: "context exceeds 16 KiB",
+          })
+          .optional(),
+        recipient: z.string().min(1).max(500).optional(),
         amount: z.number().int().positive().optional(),
-        currency: z.string().min(1).optional(),
-        claims: z.array(z.string().min(1)).optional(),
+        currency: z.string().min(1).max(16).optional(),
+        claims: z.array(z.string().min(1).max(200)).max(50).optional(),
       }),
     },
     async (args) => {
+      // The reference host only enforces the pay/disclose privacy gates.
+      // An arbitrary action proposal cannot be gated safely here, so fail
+      // closed instead of reporting it as merely "uncovered".
+      if (opts.privacy !== undefined) {
+        fail("privacy mode: ptf_request_action is not supported");
+      }
       const { auth } = load();
       const ingress = resolveIngress();
       // Caller-supplied context passes through untouched; the top-level
@@ -1298,33 +1811,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_get_receipt",
     {
       description:
-        "Look up a proposal/receipt by terms digest. Durable across restarts (ADR-0017); unknown when absent or expired.",
-      inputSchema: z.object({ termsDigest: z.string().min(16) }),
+        "Look up a proposal/receipt by terms digest. Durable across restarts (ADR-0017); journal-backed successes are visible even if the proposal transition was interrupted; unknown when absent or expired.",
+      inputSchema: termsDigestInput,
     },
-    async (args) => {
-      const found = readStored(args.termsDigest);
-      if (found === null) {
-        return {
-          content: [
-            { type: "text", text: JSON.stringify({ status: "unknown" }) },
-          ],
-        };
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              found.status === "executed"
-                ? { status: found.status, receipt: found.receipt }
-                : { status: found.status },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
+    async (args) => proposalStatusResult(args.termsDigest)
   );
 
   server.registerTool(
@@ -1421,7 +1911,38 @@ async function main(): Promise<void> {
       "mcp-server: PTF_MCP_ACTOR is required unless agents.json exists (registry session mode)"
     );
   }
-  const server = createPtfServer({ dir, env, principal, actor });
+  const privacyConfigFile = env["PTF_MCP_PRIVACY_CONFIG"];
+  let privacy: McpPrivacyConfig | undefined;
+  if (privacyConfigFile !== undefined) {
+    if (privacyConfigFile.length === 0) {
+      throw new Error("mcp privacy: empty PTF_MCP_PRIVACY_CONFIG");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(privacyConfigFile, "utf8")) as unknown;
+    } catch {
+      throw new Error("mcp privacy: invalid operator configuration");
+    }
+    privacy = resolveMcpPrivacyConfig(parsed);
+    if (!existsSync(join(dir, "privacy-state.json"))) {
+      throw new Error("mcp privacy: enabled but privacy state missing");
+    }
+  }
+  // Stdio MCP protocol uses stdout. Operator health/coverage reports use
+  // stderr and disclose no subject, controller, recipient or basis details.
+  const privacyStatus =
+    privacy === undefined
+      ? "DISABLED (legacy authority-only behavior)"
+      : `ENABLED (scoped: ${MCP_PRIVACY_GATED_PATHS.join(", ")};
+uncovered: ${MCP_PRIVACY_UNCOVERED_PATHS.join(", ")})`;
+  process.stderr.write(`[ptf-mcp] privacy: ${privacyStatus}\n`);
+  const server = createPtfServer({
+    dir,
+    env,
+    principal,
+    actor,
+    ...(privacy !== undefined ? { privacy } : {}),
+  });
   await server.connect(new StdioServerTransport());
 }
 

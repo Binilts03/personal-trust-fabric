@@ -182,6 +182,8 @@ export interface AuditEvent {
   readonly registryRev?: number;
   readonly vaultRev?: number;
   readonly agentRev?: number;
+  /** Generic additive freshness bindings for extension-owned durable state. */
+  readonly stateRevisions?: Readonly<Record<string, number>>;
 }
 
 export interface AuditEntry extends Required<
@@ -194,6 +196,7 @@ export interface AuditEntry extends Required<
   readonly registryRev?: number;
   readonly vaultRev?: number;
   readonly agentRev?: number;
+  readonly stateRevisions?: Readonly<Record<string, number>>;
   readonly seq: number;
   readonly prevHash: string;
   readonly hash: string;
@@ -214,11 +217,37 @@ function entryHash(
 }
 
 /**
+ * The one state-revision rule, shared by the writer and the reader. The
+ * writer keeps its two distinct error messages; the reader only needs to
+ * know whether the shape is valid.
+ */
+function stateRevisionsProblem(value: unknown): "shape" | "entry" | null {
+  if (value === undefined) return null;
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.keys(value as Record<string, unknown>).length > 32
+  ) {
+    return "shape";
+  }
+  const valid = Object.entries(value as Record<string, unknown>).every(
+    ([name, revision]) =>
+      /^[A-Za-z0-9._:-]{1,64}$/.test(name) &&
+      typeof revision === "number" &&
+      Number.isInteger(revision) &&
+      revision >= 0
+  );
+  return valid ? null : "entry";
+}
+
+/**
  * Append-only hash-chained audit. Unkeyed = tamper-detection; keyed (HMAC) =
  * tamper-evidence against readers without the key. The key must live outside
  * logs and code (OS keychain in production) — a host obligation. Genuine
  * third-party verifiability still needs independent anchoring (see ADR-0006).
  */
+
 export class Audit {
   private readonly entries: AuditEntry[] = [];
   private readonly nowSec: () => number;
@@ -237,7 +266,12 @@ export class Audit {
   }
 
   append(event: AuditEvent): AuditEntry {
-    for (const field of ["authorityRev", "registryRev", "vaultRev"] as const) {
+    for (const field of [
+      "authorityRev",
+      "registryRev",
+      "vaultRev",
+      "agentRev",
+    ] as const) {
       const v: unknown = event[field];
       if (
         v !== undefined &&
@@ -245,6 +279,17 @@ export class Audit {
       ) {
         throw new Error(`audit: ${field} must be a non-negative integer`);
       }
+    }
+    const stateRevisions = stateRevisionsProblem(event.stateRevisions);
+    if (stateRevisions === "shape") {
+      throw new Error(
+        "audit: stateRevisions must be an object with <=32 entries"
+      );
+    }
+    if (stateRevisions === "entry") {
+      throw new Error(
+        "audit: stateRevisions keys must be safe names and values non-negative integers"
+      );
     }
     const prev =
       this.entries.length === 0
@@ -270,6 +315,10 @@ export class Audit {
         ? { registryRev: event.registryRev }
         : {}),
       ...(event.vaultRev !== undefined ? { vaultRev: event.vaultRev } : {}),
+      ...(event.agentRev !== undefined ? { agentRev: event.agentRev } : {}),
+      ...(event.stateRevisions !== undefined
+        ? { stateRevisions: { ...event.stateRevisions } }
+        : {}),
     };
     const entry: AuditEntry = {
       ...body,
@@ -306,7 +355,12 @@ export class Audit {
       (raw["vaultRev"] !== undefined &&
         (typeof raw["vaultRev"] !== "number" ||
           !Number.isInteger(raw["vaultRev"] as number) ||
-          (raw["vaultRev"] as number) < 0))
+          (raw["vaultRev"] as number) < 0)) ||
+      (raw["agentRev"] !== undefined &&
+        (typeof raw["agentRev"] !== "number" ||
+          !Number.isInteger(raw["agentRev"] as number) ||
+          (raw["agentRev"] as number) < 0)) ||
+      stateRevisionsProblem(raw["stateRevisions"]) !== null
     ) {
       throw new Error("audit: malformed entry");
     }

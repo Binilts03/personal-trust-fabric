@@ -204,11 +204,27 @@ release day. This project adheres to Semantic Versioning.
   the digest is the idempotency key
   (re-propose returns stored; executed immutable; denied re-opens on fresh
   allow). Recipient challenges stay in-memory (live key material).
+- DPDP privacy-enforcement architecture (ADR-0024): privacy is a narrowing layer beside Authority, with Processing Basis Evidence kept separate from Personal/Authority State; PTF Principal is distinct from an opaque Privacy Data Principal Reference; legal sufficiency stays external evidence and privacy mode remains explicit/backward-compatible. Implementation proceeds in verified slices.
+- DPDP privacy-enforcement mode (reference host): encrypted privacy state and Processing Events, operator CLI (`ptf privacy ...`), configured MCP gates for `ptf_request_data`, `ptf_present_data`, `/pay` propose/redeem, and fail-closed denial of generic `ptf_request_action`; retention holds and subject-bound exact-record erasure; rights summary with current consent state and record eligibility; operator correction evidence recorded after a versioned vault correction; offline recovery that adopts only journal-proven outcomes. The supported library surface is the curated `./privacy` subpath (`src/privacy/api.ts`); file-backed privacy stores remain internal and are covered by exact, file-scoped seam exemptions. Operator JSON is validated fail-closed (including `active`, basis kind, subject selector and recipient roles), and holds block matching records regardless of `--subject-ref`. Known boundaries remain documented in `docs/audit/limits.md` (notably the non-atomic withdrawal race, the 5,000-event file-store scan cap, missing event-store CAS, legacy unbound vault records, and operator CLI/provider adapters outside the reference host).
+- Journal-first payment recovery (reference MCP host): a retry of the same exact `/pay` terms now consults the execution journal before any live-authority preview, challenge, or consumption. A conclusive `SUCCEEDED` record returns the same external receipt, finalizes the Processing Event idempotently (reconstructing a missing event from the still-valid privacy decision, reporting a terminal event conflict as `evidence_conflict`), and repairs the proposal to `executed` - no second effect, no second authority use, no new recipient proof. A live, reconciled, corrupt, or field-mismatched record is ambiguous: no challenge is issued, no authority is consumed, and the agent is told to reconcile the journal. `ptf_check` and `ptf_get_receipt` are journal-aware.
 
-Backward-compatible, additive only: no breaking API changes to the existing
-CLI/MCP surface or `src/api.ts` — except the documented behavior change
-that proposals now survive restarts (ADR-0017; previously check → unknown
-after restart).
+Backward-compatible in shape: the existing CLI/MCP surface and `src/api.ts`
+keep their command set, tool set, and root exports. The behaviour changes in
+this release are enumerated in `### Changed` below — they are not silent
+additions, and each one is listed there with its trigger.
+
+### Changed
+
+- Privacy evidence now distinguishes attempt identity: `/pay` binds the terms digest, `/use` defaults to a fresh UUID with optional caller retry reference, and `/disclose` hashes the verifier nonce. A terminal Processing Event can no longer start a new external effect; the runtime refuses and points to journal reconciliation.
+- Vault records can carry an immutable opaque `dataPrincipalRef` (`vault-put --subject-ref`). Erasure plans only records bound to the requested subject and marks legacy/unbound records `unscoped`; `erase apply` refuses unbound or held records and re-plans immediately before deletion. Summary reports `not-computed` rather than a false empty eligibility list when no owner/holds were supplied.
+- Correction evidence now runs through the DPDP processing engine (`/correct` activity, active basis, subject/owner binding) and requires an opaque `--request-ref` plus `--previous-version` proof that the record version advanced by exactly one.
+- `privacy events reconcile` now matches the journal on exact terms, action, resource, purpose and single destination, refuses duplicate terminal rows, no longer keys on caller-chosen attempt refs, and supports explicit `--include-unknown` revisiting. Each adopted outcome is individually audited.
+- Reference MCP privacy mode now maps privacy-store/journal failures to a generic `privacy denied` (no store paths, DEK ids or journal detail), lists `ptf_request_action` as denied, and corrects the presentation notice to say it consumes one authority use.
+- Backup restore now refuses a pre-release backup containing `privacy-events/` without a privacy-events manifest instead of restoring unmanifested events on trust.
+- A `/pay` retry now recovers a journaled success before asking for a challenge: the receipt comes back directly, no authority use is spent, and no second recipient proof is required. An unsettled journal is reported as `outcome_unknown` before any challenge is issued, so a blind retry can no longer burn an authority use.
+- MCP tool inputs are now bounded, **including when privacy mode is disabled**: `termsDigest` must be exactly 64 hex characters (previously any string of 16+ characters), `recipientKeyHex`/`recipientSigHex` must be exact-length hex, `purpose`/`resource`/`recipient` are capped at 500 characters, `currency` at 16, `claims` at 50 items, `nonce` at 512, and `ptf_request_action` context at 16 KiB. Valid terms, digests, keys, and signatures are unchanged; malformed or pathological agent input is now rejected at the schema instead of reaching the engine. Rationale and the "no new authority semantics" boundary are recorded in ADR-0024 and the design note in §7.6; the operator-visible contract is in `docs/mcp-contract.md`.
+- The operator CLI now rejects `--path` for `ptf privacy ...`: the privacy subcommand is positional and validated up front, so a flag can no longer re-target a different operator action.
+- The agent-facing payment vocabulary gains `not_submitted`: the execution journal shows a prepared but never submitted attempt, so no money moved, and the authority use for that attempt was already spent. The instruction asks for a new grant and new terms instead of silently retrying the same terms.
 
 ### Fixed
 

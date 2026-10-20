@@ -751,6 +751,8 @@ export async function executeWithJournal(opts: {
   readonly maxAttempts?: number;
   readonly nowSec?: number;
   readonly at?: number;
+  /** Called immediately before the provider submit boundary. */
+  readonly onEffectStart?: () => void;
 }): Promise<ExecutionReceipt> {
   const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
   const at = opts.at ?? nowSec;
@@ -781,6 +783,10 @@ export async function executeWithJournal(opts: {
       );
     }
     if (rec.state === "RECONCILED") {
+      // A quarantined record may already have effected: callers classifying
+      // privacy evidence must treat this as an unknown outcome, not a
+      // provable pre-effect failure.
+      opts.onEffectStart?.();
       throw new AmbiguousExecutionError(
         rec.executionId,
         "journal: execution quarantined — manual reconciliation required"
@@ -823,6 +829,9 @@ export async function executeWithJournal(opts: {
     );
   }
   if (rec.state === "SUBMITTED_UNKNOWN") {
+    // The prior attempt crossed the submit boundary; any failure to resolve
+    // it from here is ambiguous, never a provable pre-effect failure.
+    opts.onEffectStart?.();
     if (opts.query === undefined) {
       throw new AmbiguousExecutionError(
         rec.executionId,
@@ -927,6 +936,7 @@ export async function executeWithJournal(opts: {
   }
 
   rec = J.transition(opts.dir, rec.executionId, "SUBMITTING", {}, nowSec);
+  opts.onEffectStart?.();
   const reqWithKey: ProviderRequest = {
     ...opts.req,
     metadata: { ...(opts.req.metadata ?? {}), idempotencyKey: key },

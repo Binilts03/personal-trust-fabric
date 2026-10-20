@@ -43,13 +43,13 @@ fight them.
 
 Owned visual assets are intentionally minimal.
 
-| Token | Value | Role |
-| --- | --- | --- |
-| GitHub dark | `#0D1117` | social preview background |
-| GitHub light | `#FFFFFF` | light neutral reference |
-| Dark foreground | `#F0F6FC` | social preview type |
-| Muted dark | `#8B949E` | secondary social preview type |
-| Signal orange | `#FF6A1A` | the single brand accent |
+| Token           | Value     | Role                          |
+| --------------- | --------- | ----------------------------- |
+| GitHub dark     | `#0D1117` | social preview background     |
+| GitHub light    | `#FFFFFF` | light neutral reference       |
+| Dark foreground | `#F0F6FC` | social preview type           |
+| Muted dark      | `#8B949E` | secondary social preview type |
+| Signal orange   | `#FF6A1A` | the single brand accent       |
 
 Signal orange marks the authority boundary or decisive transition. It is not a
 gradient color and should not become general decoration.
@@ -75,6 +75,7 @@ identity.
 The brand region is left-aligned and reading-first.
 
 Do not introduce:
+
 - centered SaaS heroes;
 - rows of equal feature cards;
 - pill badges used as decoration;
@@ -118,6 +119,7 @@ Preferred language:
 - "Protected state stays behind the boundary."
 
 Avoid:
+
 - presenting PTF as a payment platform, wallet, PSP, settlement service, or
   generic agent framework;
 - vague claims such as "secure", "production-grade", or "enterprise-ready"

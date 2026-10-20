@@ -37,3 +37,6 @@ export * from "./store/anchor.js";
 export * from "./store/vault.js";
 export * from "./profiles/data.js";
 export * from "./adapters/providers.js";
+
+// The privacy package owns its public, persistence-free contract.
+export * from "./privacy/api.js";

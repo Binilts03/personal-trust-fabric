@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { atomicWrite } from "./files.js";
+import { atomicWrite, parseStoreFile } from "./files.js";
 
 /**
  * Operator-managed agent registry (ADR-0023, roadmap G5).
@@ -205,17 +205,7 @@ function agentsPath(dir: string): string {
 }
 
 function parseAgentsFile(path: string): unknown {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    throw new Error(`agents store missing: ${path}`);
-  }
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    throw new Error(`agents store corrupt: ${path}`);
-  }
+  return parseStoreFile(path, "agents");
 }
 
 /** CAS-guarded save mirroring authority/registry files. */

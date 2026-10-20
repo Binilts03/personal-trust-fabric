@@ -1,6 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+  readdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -20,6 +27,12 @@ import {
   sealKeystore,
   VAULT_DEK_ALIAS,
 } from "../src/index.js";
+import {
+  PrivacyStore,
+  createPrivacyDek,
+  savePrivacyStore,
+} from "../src/store/privacy.js";
+import { FilePrivacyEventRepository } from "../src/store/privacy-events.js";
 import { run } from "../src/cli.js";
 
 const NOW = 1_700_000_000;
@@ -98,6 +111,99 @@ function testIo(): {
     },
   };
 }
+
+describe("backup/restore privacy state", () => {
+  it("copies and verifies encrypted privacy configuration and processing events as one unit", () => {
+    const { dir: live, dek: vaultDek } = seedLive();
+    const privacyDek = createPrivacyDek();
+    const privacy = new PrivacyStore(() => NOW);
+    privacy.addNotice({
+      id: "notice-privacy",
+      controllerId: "acme",
+      dataPrincipalRef: "subject:opaque-backup",
+      purpose: "support",
+      dataCategories: ["email"],
+      noticeRef: "notice://backup",
+      noticeHash: "a".repeat(64),
+      presentedAt: NOW,
+      assertedBy: "privacy-office",
+    });
+    savePrivacyStore(live, privacy, { dek: privacyDek });
+    const events = new FilePrivacyEventRepository({
+      dir: live,
+      dek: privacyDek,
+      nowSec: () => NOW,
+    });
+    events.prepare({
+      profileId: "IN-DPDP-2025",
+      profileRevision: "2025-r1",
+      dataPrincipalRef: "subject:opaque-backup",
+      authorityPrincipal: P,
+      actor: A,
+      controllerId: "acme",
+      activityId: "activity-backup",
+      basisId: "basis-backup",
+      purpose: "support",
+      action: "/disclose",
+      resource: { type: "vault", id: "personal-state" },
+      dataCategories: ["email"],
+      recipients: [{ id: "verifier", role: "third-party" }],
+      termsDigest: "bc".repeat(32),
+      authorityCitationIds: ["g1"],
+      preparedAt: NOW,
+    });
+
+    const dest = join(tmpdir(), `ptf-backup-privacy-${Date.now()}`);
+    const summary = backupStore(live, dest, { nowSec: () => NOW });
+    assert.ok(summary.files.includes("privacy-state.json"));
+    assert.equal(summary.privacyEvents, 1);
+    assert.ok(
+      !readFileSync(join(dest, "privacy-state.json"), "utf8").includes(
+        "subject:opaque-backup"
+      )
+    );
+
+    const restored = join(tmpdir(), `ptf-backup-privacy-rest-${Date.now()}`);
+    const result = restoreStore(dest, restored, {
+      nowSec: () => NOW,
+      keys: {
+        [VAULT_DEK_ALIAS]: vaultDek,
+        "ptf/privacy-dek": privacyDek,
+      },
+    });
+    assert.ok(result.files.includes("privacy-state.json"));
+    const restoredEvents = new FilePrivacyEventRepository({
+      dir: restored,
+      dek: privacyDek,
+      nowSec: () => NOW,
+    });
+    assert.equal(
+      restoredEvents.listBySubject("subject:opaque-backup").length,
+      1
+    );
+
+    // Deleting a whole event from an otherwise valid encrypted backup must
+    // be detected. Decryption of the remaining files alone is not enough.
+    const filenames = readdirSync(join(dest, "privacy-events"));
+    assert.equal(filenames.length, 1);
+    unlinkSync(join(dest, "privacy-events", filenames[0] as string));
+    const tamperedRestore = join(
+      tmpdir(),
+      `ptf-privacy-event-missing-${Date.now()}`
+    );
+    assert.throws(
+      () =>
+        restoreStore(dest, tamperedRestore, {
+          nowSec: () => NOW,
+          keys: {
+            [VAULT_DEK_ALIAS]: vaultDek,
+            "ptf/privacy-dek": privacyDek,
+          },
+        }),
+      /privacy event.*(manifest|integrity|missing|mismatch)/
+    );
+  });
+});
 
 describe("backup/restore as code (operations runbook)", () => {
   it("backs up as one unit with anchor; clean restore verifies + anchor matches", () => {

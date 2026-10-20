@@ -171,7 +171,15 @@ async function redeemOnce(
     name: "ptf_redeem",
     arguments: { termsDigest: digest },
   });
-  const { cidHex } = JSON.parse(textOf(ch)) as { cidHex?: string };
+  assert.equal(failed(ch), false);
+  const first = JSON.parse(textOf(ch)) as {
+    cidHex?: string;
+    transaction?: string;
+  };
+  // Journal replay: a completed effect returns the stored receipt straight
+  // away - no new challenge, no new proof, no second effect.
+  if (typeof first.transaction === "string") return first.transaction;
+  const { cidHex } = first;
   assert.ok(cidHex);
   const priv = createPrivateKey({
     key: Buffer.from(
@@ -407,15 +415,26 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
       delete (rec as Record<string, unknown>)["receiptAt"];
       writeFileSync(execPath, JSON.stringify(rec));
       // The stdio surface has no provider query: the reminted redemption
-      // must refuse to guess rather than blind-retry, naming reconcile,
-      // and the record stays unknown.
+      // must refuse to guess rather than blind-retry. It refuses EARLIER
+      // now - no challenge is issued for an unsettled journal, so no
+      // authority use is burned on an operation whose outcome is unknown.
+      // The response names the reconciliation, and the record stays unknown.
       const ch = await rpc.call("tools/call", {
         name: "ptf_redeem",
         arguments: { termsDigest: digest },
       });
       assert.equal(failed(ch), false);
-      const { cidHex } = JSON.parse(textOf(ch)) as { cidHex?: string };
-      assert.ok(cidHex);
+      const body = JSON.parse(textOf(ch)) as {
+        status?: string;
+        cidHex?: string;
+        instruction?: string;
+      };
+      assert.equal(body.status, "outcome_unknown");
+      assert.equal(body.cidHex, undefined);
+      assert.match(textOf(ch), /[Rr]econcile/);
+      // A proof-carrying retry cannot blind-resubmit either: the journal is
+      // consulted before any challenge or capability handling, so the same
+      // non-terminal reconcile-required answer comes back.
       const priv = createPrivateKey({
         key: Buffer.from(
           recipient.privateKey.export({ format: "der", type: "pkcs8" })
@@ -423,7 +442,10 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
         format: "der",
         type: "pkcs8",
       });
-      const sig = signBytes(priv, new Uint8Array(Buffer.from(cidHex, "hex")));
+      const sig = signBytes(
+        priv,
+        new Uint8Array(Buffer.from("00".repeat(32), "hex"))
+      );
       const done = await rpc.call("tools/call", {
         name: "ptf_redeem",
         arguments: {
@@ -432,12 +454,22 @@ describe("MCP crash matrix: effects reconcile, never resubmit (PR-A)", () => {
           recipientSigHex: Buffer.from(sig).toString("hex"),
         },
       });
-      assert.equal(failed(done), true);
-      assert.ok(textOf(done).includes("reconcile"));
+      assert.equal(failed(done), false);
+      assert.equal(
+        (JSON.parse(textOf(done)) as { status?: string }).status,
+        "outcome_unknown"
+      );
       const reread = JSON.parse(readFileSync(execPath, "utf8")) as {
         state: string;
       };
       assert.equal(reread.state, "SUBMITTED_UNKNOWN");
+      // The refused retry must not have consumed another authority use.
+      const used = Object.fromEntries(
+        loadAuthority(dir, {
+          nowSec: () => Math.floor(Date.now() / 1000),
+        }).snapshot().used
+      );
+      assert.equal(used["g-reusable"], 1);
     } finally {
       rpc.close();
     }

@@ -227,3 +227,11 @@ detail remains in `limits.md`:
       irreversible effects independently (`limits.md` WebMCP row).
 - [ ] Image digest recorded at release time is the pin; image unsigned
       until the owner enables Sigstore for images.
+
+## DPDP privacy-mode operations (experimental)
+
+Enable privacy only after operator review of Processing Activities and Basis Evidence. Initialise with `ptf privacy init`; inspect `ptf privacy --help` and [the DPDP profile guide](../privacy/dpdp.md) for required JSON and consent/retention limitations. Ensure the PTF Authority grant is independently valid. Protect the operator JSON file and the `PTF_MCP_PRIVACY_CONFIG` environment variable from agents. Omit that variable entirely to retain legacy MCP behavior.
+
+During recovery, **stop all processing writers** and run `ptf privacy events reconcile --yes` to conservatively mark remaining PREPARED attempts OUTCOME_UNKNOWN. Investigate each against the external execution journal/provider and resolve using `ptf privacy events resolve --id ID --state SUCCEEDED|FAILED_FINAL --evidence-ref REF --yes` only when independent evidence supports the classification. Do **not** interpret a privacy `OUTCOME_UNKNOWN` event as a failed disclosure/effect. Backup/restore must include `privacy-state.json`, `privacy-events/` and the matching privacy DEK material as one coherent unit. Do not restore an old privacy snapshot independently of authority, consent withdrawal and audit history.
+
+Erasure plans operate on exact PTF Vault record IDs. `--subject-ref` selects records bound to that opaque subject; legacy unbound records appear as `unscoped`. Holds match record IDs and data categories, **not** the subject reference. Verify each proposed record's association with the Data Principal externally before `erase apply`. Check active holds and independently handle downstream processors and historical backup erasure under the organisation's retention schedule. This reference does not automatically send notifications to the Data Protection Board or Data Principals.

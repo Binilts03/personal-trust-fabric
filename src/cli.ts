@@ -61,6 +61,7 @@ import type {
   VerifiedIdentity,
 } from "./index.js";
 import type { KeyObject } from "node:crypto";
+import { runPrivacyCommand } from "./cli/privacy.js";
 
 /**
  * Minimal operator CLI (prod-03). Manual argv, stdin/stdout only, no framework.
@@ -123,12 +124,40 @@ const COMMANDS = [
   "deny",
   "backup",
   "restore",
+  "privacy",
   "help",
   "version",
 ] as const;
 
+const PRIVACY_PATHS = new Set([
+  "init",
+  "notice/add",
+  "notice/list",
+  "consent/add",
+  "consent/list",
+  "consent/withdraw",
+  "basis/add",
+  "basis/list",
+  "basis/withdraw-consent",
+  "activity/add",
+  "activity/list",
+  "hold/add",
+  "hold/release",
+  "hold/list",
+  "check",
+  "summary",
+  "erase/plan",
+  "erase/apply",
+  "events/reconcile",
+  "events/resolve",
+  "correction",
+  "verify",
+  "rekey",
+]);
+
 const BOOLEAN_FLAGS = new Set([
   "yes",
+  "include-unknown",
   "verify",
   "list",
   "help",
@@ -157,7 +186,7 @@ export function helpText(): string {
     "         --any-agent is an explicit wildcard (audited, deliberate) — prefer --agent / --actor-set",
     "  pay --principal P --agent A --recipient R --amount N --currency C --resource R [--purpose T] [--yes]",
     "  disclose --holder H --verifier V --claims a,b --credential JSON [--allowed a,b] [--yes]",
-    "  vault-put --id ID --owner O --type T --sensitivity general|sensitive|secret --source S --purposes p1,p2 --agents a1,a2 --value-file PATH [--expires-at EPOCH]",
+    "  vault-put --id ID --owner O --type T --sensitivity general|sensitive|secret --source S --purposes p1,p2 --agents a1,a2 --value-file PATH [--subject-ref REF] [--expires-at EPOCH]",
     "         value from a 0600 file only (never argv: argv leaks into shell history/process list); one trailing newline stripped; values never print or audit",
     "  vault-read --holder H --agent A --purpose P --claims a,b --verifier V [--nonce N]",
     "         prints disclosed claim NAMES only (ids-only audit); secrets never leave via read (use in-host useCredential)",
@@ -166,6 +195,16 @@ export function helpText(): string {
     "  audit [--verify]                       verify hash chain (needs no passphrase)",
     "  backup --to DIR                        copy the store as one unit + anchor.json (refuses non-empty dest; stop writers first)",
     "  restore --from DIR                     copy a backup over fresh --dir, never merges; verifies chain + freshness + anchor",
+    "  privacy <subcommand>                    DPDP/privacy evidence, runtime checks, summaries, exact erasure and rekey",
+    "  privacy basis withdraw-consent --id CONSENT_ID",
+    "                                         withdraw a CONSENT record (the id is a consent id, not a basis id)",
+    "  privacy consent withdraw --id CONSENT_ID   withdraw a consent record directly",
+    "  privacy verify [--mcp-config FILE]      verify encrypted privacy store and inspect host configuration (not live attestation)",
+    "  privacy events reconcile --yes [--include-unknown]  OFFLINE ONLY: resolve PREPARED attempts from exact journal proof, else OUTCOME_UNKNOWN; stop writers first",
+    "  privacy events resolve --id ID --state SUCCEEDED|FAILED_FINAL --evidence-ref REF --yes",
+    "                                         reconcile ambiguous processing from independently verified evidence",
+    "  privacy correction --id ID --owner OWNER --subject-ref REF --activity-id ID --basis-id ID --request-ref REF --previous-version N",
+    "                                         record evidence after an operator vault-put correction (never reads values)",
     "  revoke (--grant ID | --recipient ALIAS)",
     "  review [--digest D]                  list pending proposals (sanitized) or show one in full",
     "  approve --digest D [--ttl-s S]       mint one one-time approval for a pending proposal (default 300s)",
@@ -216,14 +255,29 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = tokens;
   if (command === undefined) {
     throw new Error(
-      "usage: ptf [--dir D] <init|keygen|rekey|recipient|agent|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|revoke|review|approve|deny|help|version> ..."
+      "usage: ptf [--dir D] <init|keygen|rekey|recipient|agent|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|privacy|revoke|review|approve|deny|help|version> ..."
     );
   }
   if (!(COMMANDS as readonly string[]).includes(command)) {
     throw new Error(`unknown command: ${command}`);
   }
   const flags: Record<string, string | boolean> = {};
-  for (let i = 0; i < rest.length; i++) {
+  let flagStart = 0;
+  let privacyPath: string | undefined;
+  if (command === "privacy") {
+    while (
+      flagStart < rest.length &&
+      !(rest[flagStart] as string).startsWith("--")
+    ) {
+      flagStart += 1;
+    }
+    const path = rest.slice(0, flagStart).join("/");
+    if (!PRIVACY_PATHS.has(path)) {
+      throw new Error(`unknown privacy subcommand: ${path || "(missing)"}`);
+    }
+    privacyPath = path;
+  }
+  for (let i = flagStart; i < rest.length; i++) {
     const t = rest[i] as string;
     if (!t.startsWith("--")) {
       throw new Error(`unexpected positional argument: ${t}`);
@@ -250,6 +304,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
         );
       }
     }
+  }
+  if (privacyPath !== undefined) {
+    // The privacy subcommand is positional and was validated above. It is
+    // set after the flag loop so no `--path` flag can re-target it.
+    flags["path"] = privacyPath;
   }
   return { command, dir, flags };
 }
@@ -303,6 +362,7 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "source",
     "purposes",
     "agents",
+    "subject-ref",
     "value-file",
     "expires-at",
   ]),
@@ -319,6 +379,24 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
   audit: new Set(["verify"]),
   backup: new Set(["to"]),
   restore: new Set(["from"]),
+  privacy: new Set([
+    "file",
+    "id",
+    "proof-ref",
+    "asserted-by",
+    "subject-ref",
+    "owner",
+    "ids",
+    "state",
+    "evidence-ref",
+    "activity-id",
+    "basis-id",
+    "request-ref",
+    "previous-version",
+    "include-unknown",
+    "mcp-config",
+    "yes",
+  ]),
   revoke: new Set(["grant", "recipient"]),
   review: new Set(["digest"]),
   approve: new Set(["digest", "ttl-s"]),
@@ -608,7 +686,10 @@ export async function run(
       command === "vault-rekey" ||
       ((command === "vault-put" || command === "vault-migrate") &&
         keystoreExists) ||
-      (command === "audit" && existsSync(join(dir, "personal-state.json"))),
+      (command === "audit" &&
+        (existsSync(join(dir, "personal-state.json")) ||
+          existsSync(join(dir, "privacy-state.json")))) ||
+      (command === "privacy" && (keystoreExists || flags["path"] !== "init")),
     prompt
   );
 
@@ -617,6 +698,23 @@ export async function run(
     /authority denied|no records satisfy|purpose denied|agent denied|record expired|unknown record|owner mismatch|holder must equal/.test(
       msg
     );
+
+  if (command === "privacy") {
+    const path = flags["path"];
+    if (typeof path !== "string") {
+      throw new Error("privacy: subcommand required");
+    }
+    return runPrivacyCommand({
+      dir,
+      path,
+      flags,
+      auth: ctx.auth,
+      audit: ctx.audit,
+      keys: ctx.keys,
+      io,
+      persistKeys: () => persistKeys(dir, env, ctx.keys, prompt),
+    });
+  }
 
   if (command === "recipient") {
     const alias = str(flags, "alias");
@@ -1055,6 +1153,7 @@ export async function run(
     const type = str(flags, "type");
     const sensitivity = parseSensitivity(str(flags, "sensitivity"));
     const source = str(flags, "source");
+    const subjectRef = opt(flags, "subject-ref");
     const purposes = str(flags, "purposes").split(",");
     if (purposes.some((x) => x.length === 0)) {
       throw new Error("usage: --purposes must be a non-empty comma list");
@@ -1118,6 +1217,7 @@ export async function run(
         value,
         sensitivity,
         source,
+        ...(subjectRef !== undefined ? { dataPrincipalRef: subjectRef } : {}),
         allowedPurposes: purposes,
         allowedAgents: agents,
         ...(expiresAt !== null ? { expiresAt } : {}),
