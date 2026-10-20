@@ -76,6 +76,20 @@ function boundForDigest(req: PrivacyGateRequest) {
   };
 }
 
+/**
+ * Turn a denied gate into the coarse, agent-facing failure the privacy
+ * surface uses. The detailed reason stays on the operator/audit surface.
+ */
+export function denyGate(
+  result: Exclude<PrivacyGateResult, { allow: true }>
+): never {
+  throw new Error(
+    result.publicReason === "authority-denied"
+      ? "authority denied"
+      : "privacy denied"
+  );
+}
+
 export class PrivacyRuntime {
   private readonly loadPrivacy: () => PrivacySnapshot;
   private readonly events: PrivacyEventRepository;
@@ -226,6 +240,22 @@ export class PrivacyRuntime {
       readonly createIfMissing?: boolean;
     }
   ): "finalized" | "absent" {
+    const event = this.locateAttemptEvent(req, opts);
+    if (event === null) {
+      if (opts.createIfMissing !== true) return "absent";
+      return this.finalizeReconstructedEvent(req, opts);
+    }
+    return this.finalizeAttemptEvent(event, opts);
+  }
+
+  /**
+   * The single event that covers this exact attempt, or null when there is
+   * none. More than one match is ambiguous evidence, never a choice.
+   */
+  private locateAttemptEvent(
+    req: PrivacyGateRequest,
+    opts: { readonly termsDigest: string; readonly attemptRef: string }
+  ): ProcessingEventRecord | null {
     const find = this.events.findByAttempt;
     if (find === undefined) {
       throw new Error("privacy runtime: attempt lookup unsupported");
@@ -234,62 +264,91 @@ export class PrivacyRuntime {
     if (matches.length > 1) {
       throw new Error("privacy runtime: ambiguous attempt evidence");
     }
-    let event = matches[0];
-    if (
-      event !== undefined &&
-      (event.authorityPrincipal !== req.ingress.principal ||
-        event.actor !== req.ingress.id ||
-        event.dataPrincipalRef !== req.processing.dataPrincipalRef ||
-        event.controllerId !== req.processing.controllerId ||
-        event.action !== req.processing.action ||
-        event.resource.type !== req.processing.resource.type ||
-        event.resource.id !== req.processing.resource.id ||
-        event.purpose !== req.processing.purpose)
-    ) {
+    const event = matches[0];
+    if (event === undefined) return null;
+    const expected = [
+      event.authorityPrincipal === req.ingress.principal,
+      event.actor === req.ingress.id,
+      event.dataPrincipalRef === req.processing.dataPrincipalRef,
+      event.controllerId === req.processing.controllerId,
+      event.action === req.processing.action,
+      event.resource.type === req.processing.resource.type,
+      event.resource.id === req.processing.resource.id,
+      event.purpose === req.processing.purpose,
+    ];
+    if (!expected.every((same) => same)) {
       throw new Error("privacy runtime: attempt evidence identity mismatch");
     }
-    if (event === undefined) {
-      if (opts.createIfMissing !== true) return "absent";
-      if (digestForOperation(boundForDigest(req)) !== opts.termsDigest) {
-        throw new Error(
-          "privacy runtime: terms mismatch for recovered evidence"
-        );
-      }
-      const privacy = this.evaluatePrivacy(req);
-      if (!privacy.allow) {
-        throw new Error(
-          "privacy runtime: privacy denied for recovered evidence"
-        );
-      }
-      let authorityCitationIds: string[] = [];
-      try {
-        const authority = req.authority.evaluate(req.operation, req.ingress, {
-          consume: false,
-          nowSec: this.nowSec(),
-        });
-        if (authority.allow) {
-          authorityCitationIds = authority.citations.map((c) => c.authorityId);
-        }
-      } catch {
-        // A consumed or unreadable authority cannot supply citations; the
-        // journal receipt remains the effect evidence.
-      }
-      const recovered = {
-        allow: true as const,
-        privacy,
-        termsDigest: opts.termsDigest,
-        processingDigest: sha256Hex(canonicalize(req.processing)),
-        authorityCitationIds,
-      };
-      event = this.events.prepare(
-        this.eventInput(
-          recovered,
-          req,
-          opts.attemptRef,
-          opts.preparedAt ?? this.nowSec()
-        )
-      );
+    return event;
+  }
+
+  /**
+   * Rebuild a missing event for an attempt whose effect the journal already
+   * proved. The privacy decision must still hold; authority citations are
+   * best-effort because the grant may already be spent.
+   */
+  private finalizeReconstructedEvent(
+    req: PrivacyGateRequest,
+    opts: {
+      readonly termsDigest: string;
+      readonly attemptRef: string;
+      readonly state: "SUCCEEDED" | "FAILED_FINAL";
+      readonly finalizedAt: number;
+      readonly evidenceRef?: string;
+      readonly preparedAt?: number;
     }
+  ): "finalized" {
+    if (digestForOperation(boundForDigest(req)) !== opts.termsDigest) {
+      throw new Error("privacy runtime: terms mismatch for recovered evidence");
+    }
+    const privacy = this.evaluatePrivacy(req);
+    if (!privacy.allow) {
+      throw new Error("privacy runtime: privacy denied for recovered evidence");
+    }
+    const recovered = {
+      allow: true as const,
+      privacy,
+      termsDigest: opts.termsDigest,
+      processingDigest: sha256Hex(canonicalize(req.processing)),
+      authorityCitationIds: this.recoverableCitationIds(req),
+    };
+    const event = this.events.prepare(
+      this.eventInput(
+        recovered,
+        req,
+        opts.attemptRef,
+        opts.preparedAt ?? this.nowSec()
+      )
+    );
+    return this.finalizeAttemptEvent(event, opts);
+  }
+
+  /** Citations the live authority can still prove, if any. */
+  private recoverableCitationIds(req: PrivacyGateRequest): string[] {
+    try {
+      const authority = req.authority.evaluate(req.operation, req.ingress, {
+        consume: false,
+        nowSec: this.nowSec(),
+      });
+      return authority.allow
+        ? authority.citations.map((c) => c.authorityId)
+        : [];
+    } catch {
+      // A consumed or unreadable authority cannot supply citations; the
+      // journal receipt remains the effect evidence.
+      return [];
+    }
+  }
+
+  /** Terminal evidence is never overwritten; only open states resolve. */
+  private finalizeAttemptEvent(
+    event: ProcessingEventRecord,
+    opts: {
+      readonly state: "SUCCEEDED" | "FAILED_FINAL";
+      readonly finalizedAt: number;
+      readonly evidenceRef?: string;
+    }
+  ): "finalized" {
     if (event.state === opts.state) return "finalized";
     if (event.state !== "PREPARED" && event.state !== "OUTCOME_UNKNOWN") {
       throw new PrivacyEventConflictError(event.eventId, event.state);

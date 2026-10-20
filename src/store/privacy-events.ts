@@ -290,22 +290,33 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
   }
 
   private all(): ProcessingEventRecord[] {
-    const root = join(this.dir, "privacy-events");
-    if (!existsSync(root)) return [];
-    return readdirSync(root)
-      .filter((name) => name.endsWith(".json"))
-      .sort()
+    const { root, names } = privacyEventFiles(this.dir);
+    return names
       .map((name) => openRecord(join(root, name), this.dek))
       .map(cloneEvent);
   }
 }
 
+/** Durable event file names for one privacy-event store, sorted. */
+function privacyEventFiles(dir: string): {
+  readonly root: string;
+  readonly names: readonly string[];
+} {
+  const root = join(dir, "privacy-events");
+  if (!existsSync(root)) return { root, names: [] };
+  return {
+    root,
+    names: readdirSync(root)
+      .filter((name) => name.endsWith(".json"))
+      .sort(),
+  };
+}
+
 /** Verify every durable event by decrypting/validating it. */
 export function verifyPrivacyEvents(dir: string, dek: Uint8Array): number {
-  const root = join(dir, "privacy-events");
-  if (!existsSync(root)) return 0;
+  const { root, names } = privacyEventFiles(dir);
   let count = 0;
-  for (const name of readdirSync(root).filter((n) => n.endsWith(".json"))) {
+  for (const name of names) {
     openRecord(join(root, name), dek);
     count += 1;
   }
@@ -324,12 +335,9 @@ export function rotatePrivacyEventsDek(
     readonly newDek: Uint8Array;
   }
 ): number {
-  const root = join(dir, "privacy-events");
-  if (!existsSync(root)) return 0;
+  const { root, names } = privacyEventFiles(dir);
   let count = 0;
-  for (const name of readdirSync(root)
-    .filter((n) => n.endsWith(".json"))
-    .sort()) {
+  for (const name of names) {
     const path = join(root, name);
     let parsed: unknown;
     try {

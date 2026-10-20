@@ -216,23 +216,29 @@ function entryHash(
     .digest("hex");
 }
 
-function validStateRevisions(value: unknown): boolean {
-  if (value === undefined) return true;
+/**
+ * The one state-revision rule, shared by the writer and the reader. The
+ * writer keeps its two distinct error messages; the reader only needs to
+ * know whether the shape is valid.
+ */
+function stateRevisionsProblem(value: unknown): "shape" | "entry" | null {
+  if (value === undefined) return null;
   if (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
     Object.keys(value as Record<string, unknown>).length > 32
   ) {
-    return false;
+    return "shape";
   }
-  return Object.entries(value as Record<string, unknown>).every(
+  const valid = Object.entries(value as Record<string, unknown>).every(
     ([name, revision]) =>
       /^[A-Za-z0-9._:-]{1,64}$/.test(name) &&
       typeof revision === "number" &&
       Number.isInteger(revision) &&
       revision >= 0
   );
+  return valid ? null : "entry";
 }
 
 /**
@@ -274,28 +280,16 @@ export class Audit {
         throw new Error(`audit: ${field} must be a non-negative integer`);
       }
     }
-    if (event.stateRevisions !== undefined) {
-      if (
-        typeof event.stateRevisions !== "object" ||
-        event.stateRevisions === null ||
-        Array.isArray(event.stateRevisions) ||
-        Object.keys(event.stateRevisions).length > 32
-      ) {
-        throw new Error(
-          "audit: stateRevisions must be an object with <=32 entries"
-        );
-      }
-      for (const [name, revision] of Object.entries(event.stateRevisions)) {
-        if (
-          !/^[A-Za-z0-9._:-]{1,64}$/.test(name) ||
-          !Number.isInteger(revision) ||
-          revision < 0
-        ) {
-          throw new Error(
-            "audit: stateRevisions keys must be safe names and values non-negative integers"
-          );
-        }
-      }
+    const stateRevisions = stateRevisionsProblem(event.stateRevisions);
+    if (stateRevisions === "shape") {
+      throw new Error(
+        "audit: stateRevisions must be an object with <=32 entries"
+      );
+    }
+    if (stateRevisions === "entry") {
+      throw new Error(
+        "audit: stateRevisions keys must be safe names and values non-negative integers"
+      );
     }
     const prev =
       this.entries.length === 0
@@ -366,7 +360,7 @@ export class Audit {
         (typeof raw["agentRev"] !== "number" ||
           !Number.isInteger(raw["agentRev"] as number) ||
           (raw["agentRev"] as number) < 0)) ||
-      !validStateRevisions(raw["stateRevisions"])
+      stateRevisionsProblem(raw["stateRevisions"]) !== null
     ) {
       throw new Error("audit: malformed entry");
     }

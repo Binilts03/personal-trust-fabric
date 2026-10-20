@@ -118,6 +118,65 @@ Local gate executed on Windows/PowerShell and Git Bash against
 
 The earlier 465-test receipt is historical and must not be applied to this head.
 
+## Fallow codebase-intelligence review (2026-10-21)
+
+`fallow` 3.34.1 (`npx fallow audit --base 7b52d61`) was run over the
+base-to-head diff, and a repo-local `.fallowrc.json` was added so the tool
+sees this repository's real entry points (`node --test` suites, the CLI/MCP
+binaries, the example hosts) instead of guessing a bundler layout.
+
+Findings the session introduced by this PR, and their disposition:
+
+| Finding                                                                                                               | Disposition                                                                                                                                                                                                                                                                                                                            |
+| --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 19 test files reported as unused (the tool did not know the test runner)                                              | Fixed by `.fallowrc.json` (entry points + `dist` ignore). Dead-code findings for the changed set: **0**.                                                                                                                                                                                                                               |
+| `src/privacy/providers.ts` re-exported `PrivacyOutcomeUnknownError` with no consumer                                  | Removed (the curated `./privacy` surface already exports it).                                                                                                                                                                                                                                                                          |
+| `ptf_check` and `ptf_get_receipt` carried identical 33-line handlers                                                  | Extracted one shared status payload (`proposalStatusPayload`/`proposalStatusResult`).                                                                                                                                                                                                                                                  |
+| `transitionProposal` and `recoverExecutedProposal` duplicated the live-proposal prologue                              | Extracted `loadLiveProposal`.                                                                                                                                                                                                                                                                                                          |
+| The new journal-replay helpers were complexity hotspots (cyclomatic 20-23)                                            | Split into single-purpose functions (`receiptFromRecord`, `sameTerms`, `classify`, `locateAttemptEvent`, `finalizeAttemptEvent`, `recoverJournaledPayment`, `issueRecipientChallenge`, `readPaymentDemand`); the highest new function is now cyclomatic 13.                                                                            |
+| Duplication inside the PR's own new modules (the DEK/envelope guards, the privacy CLI switch, the vault record types) | The JSON-envelope guard and the vault record types are shared now; `src/cli/privacy.ts` is split into `privacy.ts` (router), `privacy-evidence.ts`, `privacy-rights.ts`, `privacy-shared.ts`; the vault's protected-use surface moved to `vault-protected-use.ts` + `vault-types.ts`. Duplication groups introduced by this PR: **0**. |
+
+The remaining fallow complexity findings are pre-existing legacy functions
+(`src/cli.ts` `run`, `src/core/execute.ts`, `src/store/backup.ts`,
+`src/adapters/providers.ts` `executeWithJournal`, `src/store/vault-store.ts`
+`disclose`/`useSecret`) that this PR only touched at the edges; they are
+tracked as P4 refactoring candidates, not as merge blockers. The design's
+§18.3 file-size ceiling is now honoured by the new privacy modules:
+`src/cli/privacy.ts` is 173 lines (evidence 140, rights 425, shared 193) and
+`src/store/vault-store.ts` is 600 lines (protected use and shared types moved
+out), each within the ~500-600 line ceiling.
+
+## Independent review round (2026-10-21) and disposition
+
+Three independent reviews ran against `bb2d13f`:
+
+- **Standards**: REQUEST CHANGES - one MAJOR (the changelog claimed
+  "backward-compatible, additive only" while shipping documented behaviour
+  changes, and the MCP input bounds had no changelog entry) and five MINOR
+  findings. All are repaired: the changelog now enumerates the real
+  exceptions (MCP input bounds, journal-first replay, the `--path` CLI
+  guard); the review-gate seam-exemption claim is corrected; the duplicated
+  `stateRevisions` validation in `src/core/execute.ts` is shared; the
+  `ptf privacy --path` flag override (a validation bypass) is closed with a
+  regression test; the journal-expectation duplication and a double
+  `load()` in `ptf_request_data` are gone; and the two files above the
+  design's size ceiling are split.
+- **Spec**: APPROVE - no BLOCKER, no MAJOR. Its MINOR findings are
+  addressed: the journal replay moved into `src/privacy/mcp-host.ts`
+  (§7.6 separation), a conclusive journal success is never downgraded
+  because the _evidence_ could not be repaired (the gap is recorded for the
+  operator instead), §5.18/§14/ADR-0024 now carve out the two documented
+  legacy-visible exceptions, the CLI help names the consent id, and the
+  split closes the §18.3 file-size finding.
+- **Security**: APPROVE - no BLOCKER, no MAJOR. Its MINOR findings are
+  addressed: the read-only status tools skip the journal scan for a
+  terminal proposal, the replay audit line now carries the same
+  authority/registry/privacy revision bindings as a normal redeem (so the
+  rollback detector keeps its witness in the crash window), and a
+  never-submitted journal row is reported as `not_submitted` instead of a
+  generic "unsettled" answer. The O(n) journal/event scan cost and the
+  stranded never-submitted attempt are disclosed in `docs/audit/limits.md`.
+
 ## Historical local full-gate receipts (2026-10-20)
 
 Executed on Windows/Git Bash against `7de4ea55415421e01a60d7e4ed326e6b14e6552f` after `npm ci`, Node 22.23.1:
@@ -130,7 +189,7 @@ Executed on Windows/Git Bash against `7de4ea55415421e01a60d7e4ed326e6b14e6552f` 
 - `npm pack --dry-run` — **PASS**: 125 files, package 216.0 kB, unpacked 820.8 kB
 - `node scripts/check-seams.mjs` — PASS on the repo; RED (exit 1 with file:line evidence) on a fixture importing `../src/store/vault.js`, `../src/privacy/dpdp.js`, and `node:fs` / `some-package` from core
 
-Cause of the earlier harness gap: CI carried two narrow privacy-persistence seam exemptions that `scripts/harness.sh` lacked. Both gates now call `scripts/check-seams.mjs`, so the exemption list has one reviewed source and cannot drift. The exemptions remain exactly `../src/store/privacy.js` and `../src/store/privacy-events.js`; all other tests must use the public barrel or a bin entry point.
+Cause of the earlier harness gap: CI carried two narrow privacy-persistence seam exemptions that `scripts/harness.sh` lacked. Both gates now call `scripts/check-seams.mjs`, so the exemption list has one reviewed source and cannot drift. The exemption list is file-scoped and exact: six test files may reach three internal specifiers - `../src/store/privacy.js` and `../src/store/privacy-events.js` (repo-owned persistence suites) and `../src/privacy/payment-replay.js` (the journal-replay unit suite). All other tests must use the public barrel or a bin entry point.
 
 ## Verify-this acceptance matrix
 
@@ -156,7 +215,7 @@ Scoped verification; "VERIFIED" means only the claim and test boundary shown, no
 | Record erasure and operator holds                                       | **VERIFIED for exact PTF-managed IDs** | `tests/privacy-rights.test.ts` and existing vault erasure tests; subject-to-record mapping belongs to operator                                                                                                                          |
 | Legacy MCP and broad existing suite remain unaffected when disabled     | **VERIFIED by CI tests**               | Existing suites and opt-in-disabled stdio test                                                                                                                                                                                          |
 | Model/Authority boundary preserved                                      | **VERIFIED by code inspection**        | Privacy lives in `src/privacy/` and store modules, not Authority grant creation                                                                                                                                                         |
-| Privacy package does not expose file-backed repositories                | **VERIFIED by source/test**            | `src/privacy/api.ts`, `src/index.ts`, `tests/privacy-public-api.test.ts`; CI permits only two explicitly named internal store imports in repo-owned persistence tests                                                                   |
+| Privacy package does not expose file-backed repositories                | **VERIFIED by source/test**            | `src/privacy/api.ts`, `src/index.ts`, `tests/privacy-public-api.test.ts`; CI permits only the three explicitly named internal specifiers, each scoped to named repo-owned test files (`scripts/check-seams.mjs`)                        |
 | Every possible external processing path is privacy enforced             | **NOT VERIFIED**                       | Deliberately out of scope: general actions, custom providers and unrelated operator CLI flows must compose PrivacyRuntime themselves                                                                                                    |
 | Consent-withdrawal/effect ordering is globally atomic                   | **NOT VERIFIED**                       | Last recheck → authority CAS → external effect is not one atomic transaction; see audit limits                                                                                                                                          |
 | Statutory DPDP Act compliance / Consent Manager registration            | **NOT VERIFIED / not claimed**         | The code validates operator evidence; it does not decide lawfulness, register as Consent Manager or provide full DSAR/breach handling                                                                                                   |

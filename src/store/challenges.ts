@@ -233,6 +233,18 @@ export function listPendingProposals(
   return out;
 }
 
+/** Live proposal record for a CAS transition. Expired records throw. */
+function loadLiveProposal(
+  storeDir: string,
+  digest: string,
+  nowSec: number
+): ChallengeRecord {
+  const current = readRecord(pathOf(storeDir, digest));
+  if (nowSec > current.updatedAt + current.ttlSec)
+    throw new Error("challenges: proposal expired: propose again");
+  return current;
+}
+
 /** CAS transition pending→terminal. Non-pending records throw; concurrent winner wins. */
 export function transitionProposal(
   storeDir: string,
@@ -241,10 +253,7 @@ export function transitionProposal(
   receipt: unknown,
   nowSec: number = Math.floor(Date.now() / 1000)
 ): ChallengeRecord {
-  const path = pathOf(storeDir, digest);
-  const current = readRecord(path);
-  if (nowSec > current.updatedAt + current.ttlSec)
-    throw new Error("challenges: proposal expired: propose again");
+  const current = loadLiveProposal(storeDir, digest, nowSec);
   if (current.state !== "pending")
     throw new Error(`challenges: already ${current.state}`);
   const next: ChallengeRecord = {
@@ -253,7 +262,7 @@ export function transitionProposal(
     updatedAt: nowSec,
     ...(to === "executed" ? { receipt } : {}),
   };
-  durableWriteFile(path, JSON.stringify(next));
+  durableWriteFile(pathOf(storeDir, digest), JSON.stringify(next));
   return next;
 }
 
@@ -270,10 +279,7 @@ export function recoverExecutedProposal(
   receipt: unknown,
   nowSec: number = Math.floor(Date.now() / 1000)
 ): ChallengeRecord {
-  const path = pathOf(storeDir, digest);
-  const current = readRecord(path);
-  if (nowSec > current.updatedAt + current.ttlSec)
-    throw new Error("challenges: proposal expired: propose again");
+  const current = loadLiveProposal(storeDir, digest, nowSec);
   if (current.state === "executed") return current;
   if (current.state !== "pending" && current.state !== "denied")
     throw new Error(`challenges: cannot recover ${current.state}`);
@@ -283,6 +289,6 @@ export function recoverExecutedProposal(
     receipt,
     updatedAt: nowSec,
   };
-  durableWriteFile(path, JSON.stringify(next));
+  durableWriteFile(pathOf(storeDir, digest), JSON.stringify(next));
   return next;
 }

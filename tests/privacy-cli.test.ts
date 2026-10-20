@@ -62,6 +62,17 @@ describe("privacy operator CLI", () => {
     );
   });
 
+  it("never lets a --path flag re-target the privacy subcommand", () => {
+    // The subcommand is positional and validated up front; a flag must not
+    // be able to re-dispatch a different operator action.
+    assert.throws(
+      () => parseArgs(["privacy", "init", "--path", "erase/apply"]),
+      /unknown flag --path/
+    );
+    const parsed = parseArgs(["privacy", "erase", "plan", "--owner", "p"]);
+    assert.equal(parsed.flags["path"], "erase/plan");
+  });
+
   it("initializes encrypted privacy state and records evidence without printing evidence bodies", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ptf-privacy-cli-"));
     const t = io();
@@ -490,6 +501,154 @@ describe("privacy operator CLI", () => {
     assert.deepEqual(
       remaining.map((item) => [item.id, item.status]),
       [["rec-b", "eligible"]]
+    );
+  });
+
+  it("blocks erasure while a retention hold covers the record, and allows it after release", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-privacy-erase-hold-"));
+    const t = io();
+    const env = { PTF_PASSPHRASE: PASS };
+    await run(["--dir", dir, "init"], t.value, env);
+    await run(["--dir", dir, "privacy", "init"], t.value, env);
+    const valueFile = join(dir, "held.txt");
+    writeFileSync(valueFile, "value-held\n", { mode: 0o600 });
+    await run(
+      [
+        "--dir",
+        dir,
+        "vault-put",
+        "--id",
+        "rec-held",
+        "--owner",
+        "did:test:owner",
+        "--type",
+        "email",
+        "--sensitivity",
+        "general",
+        "--source",
+        "user",
+        "--subject-ref",
+        "subject:opaque-1",
+        "--purposes",
+        "support",
+        "--agents",
+        "agent-1",
+        "--value-file",
+        valueFile,
+      ],
+      t.value,
+      env
+    );
+    const holdFile = join(dir, "hold.json");
+    writeFileSync(
+      holdFile,
+      JSON.stringify({
+        id: "hold-1",
+        dataPrincipalRef: "subject:opaque-1",
+        recordIds: ["rec-held"],
+        dataCategories: [],
+        reasonRef: "litigation-hold:1",
+        assertedBy: "operator",
+        effectiveAt: NOW - 10,
+        retainUntil: null,
+      })
+    );
+    assert.equal(
+      await run(
+        ["--dir", dir, "privacy", "hold", "add", "--file", holdFile],
+        t.value,
+        env
+      ),
+      0
+    );
+    // The hold wins: the plan reports the record as held, and the apply
+    // path refuses it even with --yes.
+    t.out.length = 0;
+    await run(
+      [
+        "--dir",
+        dir,
+        "privacy",
+        "erase",
+        "plan",
+        "--owner",
+        "did:test:owner",
+        "--subject-ref",
+        "subject:opaque-1",
+      ],
+      t.value,
+      env
+    );
+    const plan = JSON.parse(t.out.at(-1) as string) as Array<{
+      id: string;
+      status: string;
+      holdIds: string[];
+    }>;
+    assert.deepEqual(
+      plan.map((item) => [item.id, item.status]),
+      [["rec-held", "held"]]
+    );
+    await assert.rejects(
+      () =>
+        run(
+          [
+            "--dir",
+            dir,
+            "privacy",
+            "erase",
+            "apply",
+            "--owner",
+            "did:test:owner",
+            "--subject-ref",
+            "subject:opaque-1",
+            "--ids",
+            "rec-held",
+            "--yes",
+          ],
+          t.value,
+          env
+        ),
+      /is held/
+    );
+    // Release the hold, then the same erase succeeds.
+    assert.equal(
+      await run(
+        [
+          "--dir",
+          dir,
+          "privacy",
+          "hold",
+          "release",
+          "--id",
+          "hold-1",
+          "--asserted-by",
+          "operator",
+        ],
+        t.value,
+        env
+      ),
+      0
+    );
+    assert.equal(
+      await run(
+        [
+          "--dir",
+          dir,
+          "privacy",
+          "erase",
+          "apply",
+          "--owner",
+          "did:test:owner",
+          "--subject-ref",
+          "subject:opaque-1",
+          "--ids",
+          "rec-held",
+          "--yes",
+        ],
+        t.value,
+        env
+      ),
+      0
     );
   });
 

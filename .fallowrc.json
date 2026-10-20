@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/cli.ts",
+    "src/mcp-server.ts",
+    "src/pdp-server.ts",
+    "tests/**/*.test.ts",
+    "examples/*.mjs"
+  ],
+  "ignorePatterns": ["dist/**", "node_modules/**"]
+}

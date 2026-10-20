@@ -41,12 +41,12 @@ export function sealedDekFingerprint(
   return sha256Hex(Buffer.from(dek)).slice(0, kidBytes * 2);
 }
 
-export function readSealedEnvelopeKid(
+/** The envelope shape check the kid reader and the opener share. */
+function assertSealedEnvelope(
   parsed: unknown,
   opts: SealedSnapshotOptions,
   path: string
-): string {
-  const kidBytes = opts.kidBytes ?? 8;
+): Record<string, unknown> {
   if (
     typeof parsed !== "object" ||
     parsed === null ||
@@ -57,7 +57,17 @@ export function readSealedEnvelopeKid(
       `${opts.errorPrefix} store corrupt: ${path} (bad envelope)`
     );
   }
-  const kid = (parsed as Record<string, unknown>)["kidHex"];
+  return parsed as Record<string, unknown>;
+}
+
+export function readSealedEnvelopeKid(
+  parsed: unknown,
+  opts: SealedSnapshotOptions,
+  path: string
+): string {
+  const kidBytes = opts.kidBytes ?? 8;
+  const env = assertSealedEnvelope(parsed, opts, path);
+  const kid = env["kidHex"];
   if (
     typeof kid !== "string" ||
     kid.length !== kidBytes * 2 ||
@@ -101,17 +111,7 @@ export function openSnapshotEnvelope<T>(
 ): T {
   assertSealedDek(dek, opts.errorPrefix);
   const kidBytes = opts.kidBytes ?? 8;
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    Array.isArray(parsed) ||
-    (parsed as { version?: unknown }).version !== opts.version
-  ) {
-    throw new Error(
-      `${opts.errorPrefix} store corrupt: ${path} (bad envelope)`
-    );
-  }
-  const env = parsed as Record<string, unknown>;
+  const env = assertSealedEnvelope(parsed, opts, path);
   const kidHex = env["kidHex"];
   const ivHex = env["ivHex"];
   const ctHex = env["ctHex"];

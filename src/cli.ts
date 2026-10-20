@@ -196,6 +196,9 @@ export function helpText(): string {
     "  backup --to DIR                        copy the store as one unit + anchor.json (refuses non-empty dest; stop writers first)",
     "  restore --from DIR                     copy a backup over fresh --dir, never merges; verifies chain + freshness + anchor",
     "  privacy <subcommand>                    DPDP/privacy evidence, runtime checks, summaries, exact erasure and rekey",
+    "  privacy basis withdraw-consent --id CONSENT_ID",
+    "                                         withdraw a CONSENT record (the id is a consent id, not a basis id)",
+    "  privacy consent withdraw --id CONSENT_ID   withdraw a consent record directly",
     "  privacy verify [--mcp-config FILE]      verify encrypted privacy store and inspect host configuration (not live attestation)",
     "  privacy events reconcile --yes [--include-unknown]  OFFLINE ONLY: resolve PREPARED attempts from exact journal proof, else OUTCOME_UNKNOWN; stop writers first",
     "  privacy events resolve --id ID --state SUCCEEDED|FAILED_FINAL --evidence-ref REF --yes",
@@ -260,6 +263,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
   const flags: Record<string, string | boolean> = {};
   let flagStart = 0;
+  let privacyPath: string | undefined;
   if (command === "privacy") {
     while (
       flagStart < rest.length &&
@@ -271,7 +275,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (!PRIVACY_PATHS.has(path)) {
       throw new Error(`unknown privacy subcommand: ${path || "(missing)"}`);
     }
-    flags["path"] = path;
+    privacyPath = path;
   }
   for (let i = flagStart; i < rest.length; i++) {
     const t = rest[i] as string;
@@ -300,6 +304,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
         );
       }
     }
+  }
+  if (privacyPath !== undefined) {
+    // The privacy subcommand is positional and was validated above. It is
+    // set after the flag loop so no `--path` flag can re-target it.
+    flags["path"] = privacyPath;
   }
   return { command, dir, flags };
 }
@@ -371,7 +380,6 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
   backup: new Set(["to"]),
   restore: new Set(["from"]),
   privacy: new Set([
-    "path",
     "file",
     "id",
     "proof-ref",

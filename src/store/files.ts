@@ -51,7 +51,11 @@ export function atomicWrite(path: string, content: string): void {
   renameSync(tmp, path);
 }
 
-function parseFile(path: string, what: string): unknown {
+/**
+ * Read + parse a JSON store file. Missing and corrupt files fail closed with
+ * the same vocabulary for every store backend.
+ */
+export function parseStoreFile(path: string, what: string): unknown {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
@@ -105,7 +109,7 @@ function withNextRevision(
     store.adoptRevision(0);
     return stamped;
   }
-  const parsed = parseFile(path, what) as Record<string, unknown>;
+  const parsed = parseStoreFile(path, what) as Record<string, unknown>;
   const current: unknown = parsed["revision"];
   // Pre-revision files (no field) read as 0 — same default `restore` uses,
   // so old stores upgrade on first write instead of failing.
@@ -137,7 +141,7 @@ export function loadAuthority(
   opts?: ConstructorParameters<typeof Authority>[0]
 ): Authority {
   const auth = Authority.restore(
-    parseFile(join(dir, "authority.json"), "authority"),
+    parseStoreFile(join(dir, "authority.json"), "authority"),
     opts
   );
   checkFreshness(dir, "authority", auth.loadedRevision());
@@ -156,7 +160,7 @@ export function loadRegistry(
   nowSec?: () => number
 ): RecipientRegistry {
   const reg = RecipientRegistry.restore(
-    parseFile(join(dir, "registry.json"), "registry"),
+    parseStoreFile(join(dir, "registry.json"), "registry"),
     nowSec
   );
   checkFreshness(dir, "registry", reg.loadedRevision());

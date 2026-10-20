@@ -7,7 +7,10 @@ export const MCP_PRIVACY_GATED_PATHS = [
 ] as const;
 
 /** Paths present in the MCP surface but denied when privacy mode is on. */
-export const MCP_PRIVACY_DENIED_PATHS = ["ptf_request_action"] as const;
+export const MCP_PRIVACY_DENIED_PATHS = [
+  "ptf_request_action",
+  "ptf_propose:/disclose",
+] as const;
 
 export const MCP_PRIVACY_UNCOVERED_PATHS = [
   "custom-provider-adapters",

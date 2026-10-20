@@ -23,7 +23,7 @@ The semantic invariants are:
 5. Privacy subject/controller/basis/classification data comes from trusted host/operator context, never from agent-supplied request fields.
 6. Jurisdiction profiles live outside `src/core/`. The first profile is India DPDP 2025; later profiles reuse the same jurisdiction-neutral model.
 7. PTF validates configured evidence and enforces configured controls. It does **not** decide that a legal basis is legally sufficient and never emits `compliant=true`.
-8. Privacy mode is explicit. Existing deployments remain behaviorally unchanged when it is disabled.
+8. Privacy mode is explicit. Existing deployments remain behaviorally unchanged when it is disabled, with two documented exceptions that ship with this feature: journal-first payment recovery (a `/pay` retry that finds a conclusive execution-journal record returns the recorded receipt instead of spending another authority use or demanding a fresh recipient proof) and the MCP input bounds (terms digest and key/signature material must be exact-length lowercase hex; long free-text fields are capped). Neither adds authority semantics or an agent-supplied field; both are listed in the changelog.
 9. Consequential processing creates secret-free, crash-conservative Processing Events precommitted before the processing boundary; ambiguous crashes remain visible as `OUTCOME_UNKNOWN`.
 
 ## Consequences

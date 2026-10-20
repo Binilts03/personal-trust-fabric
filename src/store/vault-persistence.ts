@@ -1,7 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { atomicWrite, checkFreshness, FileAuditLog } from "./files.js";
+import {
+  atomicWrite,
+  checkFreshness,
+  FileAuditLog,
+  parseStoreFile,
+} from "./files.js";
 import {
   assertSealedDek,
   openSnapshotEnvelope,
@@ -17,17 +22,7 @@ import {
 } from "./vault-store.js";
 
 function parseVaultFile(path: string): unknown {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    throw new Error(`vault store missing: ${path}`);
-  }
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    throw new Error(`vault store corrupt: ${path}`);
-  }
+  return parseStoreFile(path, "vault");
 }
 
 /**

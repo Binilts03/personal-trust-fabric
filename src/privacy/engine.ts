@@ -10,7 +10,7 @@ import type {
   NoticeEvidence,
   ConsentEvidence,
 } from "./model.js";
-import { isOpaquePrivacySubjectRef } from "./model.js";
+import { isOpaquePrivacySubjectRef, isSubset as subset } from "./model.js";
 
 function subjectMatches(sel: PrivacySubjectSelector, ref: string): boolean {
   switch (sel.kind) {
@@ -31,13 +31,6 @@ function inWindow(
     (value.nbf === undefined || nowSec >= value.nbf) &&
     (value.exp === undefined || nowSec <= value.exp)
   );
-}
-
-function subset(
-  requested: readonly string[],
-  allowed: readonly string[]
-): boolean {
-  return requested.every((item) => allowed.includes(item));
 }
 
 function recipientsSubset(

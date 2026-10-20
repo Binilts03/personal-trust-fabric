@@ -7,20 +7,13 @@ import {
   type VaultStore,
 } from "../store/vault.js";
 import {
+  denyGate as deny,
   PrivacyRuntime,
   type PrivacyGateRequest,
   type PrivacyGateResult,
 } from "./runtime.js";
 import { PrivacyOutcomeUnknownError } from "./errors.js";
 import { canonicalize, sha256Hex } from "../core/canonical.js";
-
-function deny(result: Exclude<PrivacyGateResult, { allow: true }>): never {
-  throw new Error(
-    result.publicReason === "authority-denied"
-      ? "authority denied"
-      : "privacy denied"
-  );
-}
 
 function requireDisclosureBinding(
   gate: PrivacyGateRequest,
@@ -68,6 +61,24 @@ function requireDisclosureBinding(
   };
 }
 
+/**
+ * The two-gate check every processing path starts with: a non-consuming
+ * authority + privacy preflight, then a live recheck immediately before the
+ * effect. A failed recheck is a privacy denial, never a partial processing.
+ */
+function approvedForProcessing(
+  runtime: PrivacyRuntime,
+  gate: PrivacyGateRequest
+): Extract<PrivacyGateResult, { allow: true }> {
+  const first = runtime.preflight(gate);
+  if (!first.allow) deny(first);
+  try {
+    return runtime.recheck(first, gate);
+  } catch {
+    throw new Error("privacy denied");
+  }
+}
+
 export async function discloseWithPrivacy(opts: {
   readonly runtime: PrivacyRuntime;
   readonly gate: PrivacyGateRequest;
@@ -78,15 +89,7 @@ export async function discloseWithPrivacy(opts: {
   ) => void | Promise<void>;
 }): Promise<Presentation> {
   const gate = requireDisclosureBinding(opts.gate, opts.disclosure);
-  const first = opts.runtime.preflight(gate);
-  if (!first.allow) deny(first);
-
-  let live: Extract<PrivacyGateResult, { allow: true }>;
-  try {
-    live = opts.runtime.recheck(first, gate);
-  } catch {
-    throw new Error("privacy denied");
-  }
+  const live = approvedForProcessing(opts.runtime, gate);
 
   // Verifier nonces are arbitrary strings. Hash domain-separated so the
   // event attempt reference stays a bounded opaque identifier.
@@ -176,15 +179,7 @@ export async function useCredentialWithPrivacy(opts: {
     // Do not reveal existence of a Vault record to agent callers.
     throw new Error("privacy denied");
   }
-  const first = opts.runtime.preflight(gate);
-  if (!first.allow) deny(first);
-
-  let live: Extract<PrivacyGateResult, { allow: true }>;
-  try {
-    live = opts.runtime.recheck(first, gate);
-  } catch {
-    throw new Error("privacy denied");
-  }
+  const live = approvedForProcessing(opts.runtime, gate);
 
   const event = opts.runtime.prepareEvent(live, gate, opts.attemptRef);
   let effectStarted = false;

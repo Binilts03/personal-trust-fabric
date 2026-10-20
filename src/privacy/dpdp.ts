@@ -7,19 +7,13 @@ import type {
   ProcessingActivity,
   TrustedProcessingContext,
 } from "./model.js";
+import { isSubset as subset } from "./model.js";
 
 export const DPDP_PROFILE_ID = "IN-DPDP-2025" as const;
 export const DPDP_PROFILE_REVISION = "2025-r1" as const;
 
 function nonEmpty(value: string): boolean {
   return value.trim().length > 0;
-}
-
-function subset(
-  requested: readonly string[],
-  allowed: readonly string[]
-): boolean {
-  return requested.every((item) => allowed.includes(item));
 }
 
 function transferAllowed(

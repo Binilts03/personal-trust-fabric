@@ -7,10 +7,16 @@ import { Disclose } from "../core/disclose.js";
 import type { Presentation } from "../core/disclose.js";
 import { isNonEmptyString } from "../adapters/guards.js";
 import { FileAuditLog } from "./files.js";
+import type {
+  SecretInstruction,
+  SecretUseOptions,
+  SecretUseResult,
+  VaultReadRequest,
+} from "./vault-types.js";
 
 export type VaultSensitivity = "general" | "sensitive" | "secret";
 
-export interface VaultRecord {
+export interface VaultRecordInput {
   readonly id: string;
   /** Principal that owns the record. Must equal the ingress principal on read. */
   readonly owner: string;
@@ -34,24 +40,15 @@ export interface VaultRecord {
   /** Exact agent ids (no wildcards). */
   readonly allowedAgents: readonly string[];
   /** Null = no expiry; otherwise non-negative epoch int. */
+  readonly expiresAt?: number | null;
+}
+
+/** A stored record: the operator input plus the store-derived lifecycle. */
+export interface VaultRecord extends VaultRecordInput {
   readonly expiresAt: number | null;
   readonly version: number;
   readonly createdAt: number;
   readonly updatedAt: number;
-}
-
-export interface VaultRecordInput {
-  readonly id: string;
-  readonly owner: string;
-  readonly type: string;
-  readonly value: unknown;
-  readonly sensitivity: VaultSensitivity;
-  readonly source: string;
-  readonly dataPrincipalRef?: string;
-  readonly resource?: { readonly type: string; readonly id: string };
-  readonly allowedPurposes: readonly string[];
-  readonly allowedAgents: readonly string[];
-  readonly expiresAt?: number | null;
 }
 
 export interface VaultRecordMetadata {
@@ -590,83 +587,4 @@ export class VaultStore {
     }
     return vault;
   }
-}
-
-export interface VaultReadRequest {
-  readonly ingress: VerifiedIdentity;
-  readonly purpose: string;
-  readonly requested: readonly string[];
-  readonly verifier: string;
-  readonly nonce: string;
-  readonly nowSec: number;
-  readonly authority: Authority;
-  /**
-   * Resource coordinates of the PROPOSED operation. Callers must pass the
-   * exact resource the demand was proposed under (ADR-0018: the vault
-   * evaluates the identical canonical operation, never a rewritten one).
-   */
-  readonly resource: { readonly type: string; readonly id: string };
-  /** Host-held holder signing key. holder.id must equal the ingress principal. */
-  readonly holder: { readonly id: string; readonly privateKey: KeyObject };
-  readonly audit?: FileAuditLog;
-}
-
-/**
- * Purpose-scoped read (module entry; delegates to {@link VaultStore.disclose},
- * the only read path besides {@link VaultStore.useSecret}).
- */
-export function readForPurpose(
-  vault: VaultStore,
-  req: VaultReadRequest
-): Presentation {
-  return vault.disclose(req);
-}
-
-export interface SecretInstruction {
-  readonly recordId: string;
-  readonly type: string;
-  readonly purpose: string;
-  readonly owner: string;
-  /** Secret value, visible to the in-host callback only — never returned. */
-  readonly value: unknown;
-}
-
-export interface SecretUseResult {
-  readonly receipt: string;
-  readonly names?: readonly string[];
-}
-
-export interface SecretUseOptions {
-  readonly ingress: VerifiedIdentity;
-  readonly recordId: string;
-  readonly purpose: string;
-  readonly authority: Authority;
-  readonly nowSec: number;
-  readonly use: (instr: SecretInstruction) => Promise<SecretUseResult>;
-  readonly audit?: FileAuditLog;
-  /**
-   * Burn-before-effect hook (ADR-0018): runs after authority is consumed
-   * but BEFORE the secret reaches the callback. Hosts persist authority
-   * state here, so a crash between consumption and the external effect
-   * burns a use instead of resurrecting it. Without this hook, callers
-   * must persist before invoking — persisting after success is too late.
-   */
-  readonly onConsumed?: (authority: Authority) => void | Promise<void>;
-}
-
-/**
- * Sole in-host path for `secret` records (module entry; delegates to
- * {@link VaultStore.useSecret}). Returns only the callback's receipt/names.
- */
-export async function useCredential(
-  vault: VaultStore,
-  opts: SecretUseOptions
-): Promise<{
-  readonly recordId: string;
-  readonly type: string;
-  readonly purpose: string;
-  readonly receipt: string;
-  readonly names?: readonly string[];
-}> {
-  return vault.useSecret(opts);
 }

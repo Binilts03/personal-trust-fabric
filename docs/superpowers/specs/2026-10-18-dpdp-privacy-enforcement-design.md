@@ -145,7 +145,7 @@ The following MUST hold:
 15. Erasure is by exact vault record identifier; no unconstrained “delete all” primitive exists in the vault layer.
 16. A retention hold can prevent erasure but does not itself authorise use/disclosure.
 17. Privacy profiles do not infer legal conclusions. An external trusted actor must assert the basis/evidence.
-18. Existing non-privacy deployments remain behaviorally backward-compatible unless privacy mode is explicitly enabled.
+18. Existing non-privacy deployments remain behaviorally backward-compatible unless privacy mode is explicitly enabled. Two documented exceptions ship with this feature and are listed in the changelog: journal-first payment recovery (a `/pay` retry that finds a conclusive execution-journal record returns the recorded receipt instead of spending another authority use or demanding a fresh recipient proof) and the MCP input bounds (terms digest and key/signature material must be exact-length lowercase hex; long free-text fields are capped). Both change no authority semantics and add no new agent-supplied field.
 19. PTF must never describe the result as `compliant=true`. Decisions use control language such as `allow`, `deny`, `basis-active`, and `processing-recorded`.
 
 ## 6. Architecture
@@ -468,6 +468,10 @@ of starting a second effect:
   the Processing Event idempotently (reconstructing a missing event from the
   still-valid privacy decision, and reporting a terminal event conflict as an
   evidence conflict), and repairs the proposal to `executed`;
+- a conclusive success is never downgraded because the _evidence_ could not be
+  repaired (for example the operator deactivated the basis after the effect):
+  the payment outcome stays proven, the gap is recorded for the operator, and
+  the receipt is still returned;
 - a live, reconciled, corrupt, or mismatched record is **ambiguous**, never a
   denial: no new challenge is issued, no authority is consumed, and the agent
   is told to reconcile the journal;
@@ -623,7 +627,9 @@ Read-only status tools (`ptf_check`, `ptf_get_receipt`) are journal-aware: a
 journal-backed success is reported as `executed` with the stored receipt even
 when the proposal transition was interrupted.
 
-Existing deployments with privacy mode disabled retain current behavior.
+Existing deployments with privacy mode disabled retain current behavior, except
+for the two documented exceptions in §5.18 (journal-first payment recovery and
+the MCP input bounds).
 
 ## 15. Operator surface
 

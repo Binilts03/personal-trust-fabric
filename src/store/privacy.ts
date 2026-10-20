@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type {
@@ -10,7 +10,7 @@ import type {
   RetentionHold,
 } from "../privacy/model.js";
 import { assertOpaquePrivacySubjectRef } from "../privacy/model.js";
-import { atomicWrite, checkFreshness } from "./files.js";
+import { atomicWrite, checkFreshness, parseStoreFile } from "./files.js";
 import {
   assertSealedDek,
   openSnapshotEnvelope,
@@ -453,17 +453,7 @@ export function resolvePrivacyDek(
 }
 
 function parsePrivacyFile(path: string): unknown {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    throw new Error(`privacy store missing: ${path}`);
-  }
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    throw new Error(`privacy store corrupt: ${path}`);
-  }
+  return parseStoreFile(path, "privacy");
 }
 
 export function readPrivacyKid(dir: string): string | null {

@@ -271,6 +271,25 @@ function seedPaymentJournal(
   );
 }
 
+/** A journal row that never reached the provider boundary. */
+function seedUnsubmittedPaymentJournal(dir: string, termsDigest: string): void {
+  const at = Math.floor(Date.now() / 1000);
+  createExecution(
+    dir,
+    {
+      idempotencyKey: deriveIdempotencyKey(termsDigest, "payment"),
+      capabilityId: "c".repeat(32),
+      termsDigest,
+      action: "/pay",
+      recipient: "seller:1",
+      resource: "invoice:1",
+      purpose: "support",
+      context: { amount: 100, currency: "INR" },
+    },
+    at
+  );
+}
+
 async function withRpc<T>(
   env: Record<string, string>,
   test: (
@@ -854,6 +873,117 @@ describe("opt-in privacy disclosure over stdio", () => {
       readFileSync(join(dir, "proposals", `${digest}.json`), "utf8")
     ) as { state: string };
     assert.equal(stillPending.state, "pending");
+  });
+
+  it("keeps a journaled receipt readable after the grant is revoked", async () => {
+    const { dir, configPath } = setup(true);
+    let digest = "";
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const proposal = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        digest = proposal.termsDigest;
+        seedPaymentJournal(dir, digest);
+      }
+    );
+    // The operator revokes the grant out of band. Revocation stops NEW
+    // effects; it does not unmake a recorded one.
+    const auth = loadAuthority(dir, {
+      nowSec: () => Math.floor(Date.now() / 1000),
+    });
+    auth.revoke("grant-payment");
+    saveAuthority(dir, auth);
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const replay = resultData(
+          await call("ptf_redeem", { termsDigest: digest })
+        );
+        assert.equal(replay.receiptId, "receipt-1");
+        // A NEW proposal for the same terms is denied: revocation holds.
+        const fresh = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        assert.equal(fresh.allowed, false);
+        assert.equal(fresh.reason, "revoked");
+      }
+    );
+  });
+
+  it("reports a never-submitted attempt as not_submitted without spending authority", async () => {
+    const { dir, configPath } = setup(true);
+    let digest = "";
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const proposal = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        digest = proposal.termsDigest;
+        // A prepared row: the provider was never called, so no money moved.
+        seedUnsubmittedPaymentJournal(dir, digest);
+        const attempt = resultData(
+          await call("ptf_redeem", { termsDigest: digest })
+        );
+        assert.equal(attempt.status, "not_submitted");
+        assert.match(attempt.instruction, /no payment was made/);
+        const checked = resultData(
+          await call("ptf_check", { termsDigest: digest })
+        );
+        assert.equal(checked.status, "outcome_unknown");
+      }
+    );
+    const stillPending = JSON.parse(
+      readFileSync(join(dir, "proposals", `${digest}.json`), "utf8")
+    ) as { state: string };
+    assert.equal(stillPending.state, "pending");
+    const used = Object.fromEntries(
+      loadAuthority(dir, {
+        nowSec: () => Math.floor(Date.now() / 1000),
+      }).snapshot().used
+    );
+    assert.equal(used["grant-payment"], undefined);
   });
 
   it("recovers journal-backed status across a server restart", async () => {

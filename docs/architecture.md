@@ -65,20 +65,24 @@ PTF separates **who may do what** from **who possesses the secret needed to do i
 
 ## Module Map
 
-| Path                      | Responsibility                                  |
-| ------------------------- | ----------------------------------------------- |
-| `src/core/authority.ts`   | Grant store, evaluation, attenuation, citations |
-| `src/core/capability.ts`  | Capability derivation, attenuation, redemption  |
-| `src/core/execute.ts`     | Protected execution, provider orchestration     |
-| `src/core/signing.ts`     | JWS/ED25519, receipt signing                    |
-| `src/core/types.ts`       | Core types, no deps                             |
-| `src/adapters/`           | Protocol translators (evidence → local types)   |
-| `src/store/vault.ts`      | Encrypted records, purpose-scoped access        |
-| `src/store/keystore.ts`   | Key management, DEK rotation                    |
-| `src/store/proposals.ts`  | Durable proposals via file CAS                  |
-| `src/store/audit.ts`      | Hash-chained audit log                          |
-| `src/profiles/payment.ts` | Payment-specific bounds, recipients             |
-| `src/profiles/data.ts`    | Data disclosure profiles                        |
+| Path                          | Responsibility                                                                                                  |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `src/core/authority.ts`       | Grant store, evaluation, attenuation, citations                                                                 |
+| `src/core/capability.ts`      | Capability derivation, attenuation, redemption                                                                  |
+| `src/core/execute.ts`         | Protected execution, provider orchestration                                                                     |
+| `src/core/signing.ts`         | JWS/ED25519, receipt signing                                                                                    |
+| `src/core/types.ts`           | Core types, no deps                                                                                             |
+| `src/adapters/`               | Protocol translators (evidence → local types)                                                                   |
+| `src/store/vault.ts`          | Encrypted records, purpose-scoped access                                                                        |
+| `src/store/keystore.ts`       | Key management, DEK rotation                                                                                    |
+| `src/store/proposals.ts`      | Durable proposals via file CAS                                                                                  |
+| `src/store/audit.ts`          | Hash-chained audit log                                                                                          |
+| `src/profiles/payment.ts`     | Payment-specific bounds, recipients                                                                             |
+| `src/profiles/data.ts`        | Data disclosure profiles                                                                                        |
+| `src/privacy/`                | DPDP narrowing plane: model, engine, runtime, rights, host wiring (`mcp.ts` policy, `mcp-host.ts` store wiring) |
+| `src/store/privacy.ts`        | Encrypted privacy configuration (DEK-sealed)                                                                    |
+| `src/store/privacy-events.ts` | Encrypted Processing Event repository                                                                           |
+| `src/cli/privacy*.ts`         | Privacy operator CLI (router, evidence, rights)                                                                 |
 
 ## Public Seam
 

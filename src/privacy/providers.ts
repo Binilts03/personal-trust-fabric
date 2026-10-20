@@ -1,21 +1,13 @@
 import type { ExecutionReceipt } from "../core/execute.js";
 import { PrivacyOutcomeUnknownError } from "./errors.js";
 import {
+  denyGate as deny,
   PrivacyRuntime,
   type PrivacyGateRequest,
   type PrivacyGateResult,
 } from "./runtime.js";
 
 export { PrivacyPreEffectError } from "./errors.js";
-export { PrivacyOutcomeUnknownError } from "./errors.js";
-
-function deny(result: Exclude<PrivacyGateResult, { allow: true }>): never {
-  throw new Error(
-    result.publicReason === "authority-denied"
-      ? "authority denied"
-      : "privacy denied"
-  );
-}
 
 /**
  * Privacy evidence wrapper around an existing protected/journaled execution.

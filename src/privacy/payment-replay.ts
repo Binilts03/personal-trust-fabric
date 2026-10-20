@@ -46,9 +46,27 @@ export type PaymentJournalReplay =
   | {
       readonly kind: "unknown";
       readonly record: ExecutionRecord | null;
-      /** Fixed-vocabulary reason suitable for sanitized MCP output. */
-      readonly reason: "corrupt" | "live" | "mismatch" | "reconciled";
+      /**
+       * Fixed-vocabulary reason suitable for sanitized MCP output.
+       *
+       * `unsubmitted` means the row never reached the provider boundary:
+       * no effect happened, and the authority use for these terms is spent.
+       * `live` means the provider may or may not have been called.
+       */
+      readonly reason:
+        "corrupt" | "live" | "mismatch" | "reconciled" | "unsubmitted";
     };
+
+/** A corrupt journal scan is ambiguous evidence, never "no record". */
+const CORRUPT = Symbol("corrupt-journal");
+
+function isFilledString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function allFilled(values: readonly unknown[]): boolean {
+  return values.every((value) => isFilledString(value));
+}
 
 function contextMatches(
   actual: Readonly<Record<string, unknown>>,
@@ -61,42 +79,65 @@ function contextMatches(
   }
 }
 
-function receiptFromRecord(record: ExecutionRecord): PaymentReceipt {
-  if (
-    record.state !== "SUCCEEDED" ||
-    typeof record.receiptId !== "string" ||
-    record.receiptId.length === 0 ||
-    typeof record.receiptAt !== "number" ||
-    !Number.isFinite(record.receiptAt) ||
-    typeof record.externalRef !== "string" ||
-    record.externalRef.length === 0 ||
-    record.receiptId.length > 256 ||
-    record.externalRef.length > 256 ||
-    record.capabilityId.length === 0 ||
-    record.recipient.length === 0 ||
-    record.resource.length === 0 ||
-    record.purpose.length === 0
-  ) {
-    throw new Error("journal: no succeeded receipt to return");
-  }
+function sameTerms(
+  record: ExecutionRecord,
+  expected: PaymentJournalExpectation
+): boolean {
+  return (
+    record.termsDigest === expected.termsDigest &&
+    record.action === expected.action &&
+    record.recipient === expected.recipient &&
+    record.resource === expected.resource &&
+    record.purpose === expected.purpose &&
+    contextMatches(record.context, expected.context)
+  );
+}
+
+/** A succeeded journal row that carries a complete, bounded receipt. */
+type SucceededRecord = ExecutionRecord & {
+  readonly receiptId: string;
+  readonly externalRef: string;
+  readonly receiptAt: number;
+};
+
+function isSucceededRecord(record: ExecutionRecord): record is SucceededRecord {
+  if (record.state !== "SUCCEEDED") return false;
+  const { receiptId, externalRef, receiptAt } = record;
+  if (typeof receiptAt !== "number") return false;
+  if (!Number.isFinite(receiptAt)) return false;
+  if (!isFilledString(receiptId) || receiptId.length > 256) return false;
+  if (!isFilledString(externalRef) || externalRef.length > 256) return false;
+  return allFilled([
+    record.capabilityId,
+    record.recipient,
+    record.resource,
+    record.purpose,
+  ]);
+}
+
+function receiptContext(
+  record: ExecutionRecord
+): { readonly amount: number; readonly currency: string } | null {
   const amount = record.context["amount"];
   const currency = record.context["currency"];
-  if (
-    typeof amount !== "number" ||
-    !Number.isFinite(amount) ||
-    !(amount > 0) ||
-    typeof currency !== "string" ||
-    currency.length === 0 ||
-    currency.length > 16
-  ) {
-    throw new Error("journal: malformed payment terms");
+  if (typeof amount !== "number") return null;
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (!isFilledString(currency) || currency.length > 16) return null;
+  return { amount, currency };
+}
+
+function receiptFromRecord(record: ExecutionRecord): PaymentReceipt {
+  if (!isSucceededRecord(record)) {
+    throw new Error("journal: no succeeded receipt to return");
   }
+  const terms = receiptContext(record);
+  if (terms === null) throw new Error("journal: malformed payment terms");
   return {
     receiptId: record.receiptId,
     capabilityId: record.capabilityId,
     recipient: record.recipient,
-    amount,
-    currency,
+    amount: terms.amount,
+    currency: terms.currency,
     resource: record.resource,
     purpose: record.purpose,
     transaction: record.externalRef,
@@ -105,50 +146,61 @@ function receiptFromRecord(record: ExecutionRecord): PaymentReceipt {
   };
 }
 
-export function inspectPaymentJournal(
+function findRecord(
   expected: PaymentJournalExpectation,
-  journal: ExecutionRepository = FileExecutions
-): PaymentJournalReplay {
-  let record: ExecutionRecord | null;
+  journal: ExecutionRepository
+): ExecutionRecord | null | typeof CORRUPT {
   try {
-    record = journal.findByIdempotencyKey(
+    return journal.findByIdempotencyKey(
       expected.dir,
       deriveIdempotencyKey(expected.termsDigest, "payment")
     );
   } catch {
-    // A corrupt journal scan is ambiguous, never permission to spend again.
-    return { kind: "unknown", record: null, reason: "corrupt" };
+    return CORRUPT;
   }
-  if (record === null) return { kind: "none" };
-  if (
-    record.termsDigest !== expected.termsDigest ||
-    record.action !== expected.action ||
-    record.recipient !== expected.recipient ||
-    record.resource !== expected.resource ||
-    record.purpose !== expected.purpose ||
-    !contextMatches(record.context, expected.context)
-  ) {
-    return { kind: "unknown", record, reason: "mismatch" };
+}
+
+function succeededReplay(record: ExecutionRecord): PaymentJournalReplay {
+  try {
+    return { kind: "succeeded", record, receipt: receiptFromRecord(record) };
+  } catch {
+    return { kind: "unknown", record, reason: "corrupt" };
   }
+}
+
+function classify(record: ExecutionRecord): PaymentJournalReplay {
   switch (record.state) {
     case "SUCCEEDED":
-      try {
-        return {
-          kind: "succeeded",
-          record,
-          receipt: receiptFromRecord(record),
-        };
-      } catch {
-        return { kind: "unknown", record, reason: "corrupt" };
-      }
+      return succeededReplay(record);
     case "FAILED_FINAL":
       return { kind: "failed_final", record };
     case "RECONCILED":
       return { kind: "unknown", record, reason: "reconciled" };
     case "PREPARED":
     case "AUTHORIZED":
-    case "SUBMITTING":
-    case "SUBMITTED_UNKNOWN":
+      // The row was written before the submit boundary, so the provider was
+      // provably never called: no effect happened. The authority use for
+      // these terms was already spent, so this attempt cannot be retried
+      // under the same grant.
+      return { kind: "unknown", record, reason: "unsubmitted" };
+    default:
+      // SUBMITTING / SUBMITTED_UNKNOWN: the provider may or may not have
+      // been called. Ambiguous, never a receipt.
       return { kind: "unknown", record, reason: "live" };
   }
+}
+
+export function inspectPaymentJournal(
+  expected: PaymentJournalExpectation,
+  journal: ExecutionRepository = FileExecutions
+): PaymentJournalReplay {
+  const record = findRecord(expected, journal);
+  if (record === CORRUPT) {
+    return { kind: "unknown", record: null, reason: "corrupt" };
+  }
+  if (record === null) return { kind: "none" };
+  if (!sameTerms(record, expected)) {
+    return { kind: "unknown", record, reason: "mismatch" };
+  }
+  return classify(record);
 }
