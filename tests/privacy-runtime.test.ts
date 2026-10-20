@@ -118,7 +118,9 @@ class MemoryEvents implements PrivacyEventRepository {
       ...current,
       state: to,
       finalizedAt: patch.finalizedAt,
-      ...(patch.evidenceRef !== undefined ? { evidenceRef: patch.evidenceRef } : {}),
+      ...(patch.evidenceRef !== undefined
+        ? { evidenceRef: patch.evidenceRef }
+        : {}),
     };
     this.values.set(id, next);
     return next;
@@ -162,12 +164,15 @@ describe("privacy runtime ordering", () => {
       profile,
       nowSec: () => NOW,
     });
-    const out = runtime.preflight({
-      authority: authority(false),
-      ingress: INGRESS,
-      operation: OPERATION,
-      processing: PROCESSING,
-    }, { operatorDetail: true });
+    const out = runtime.preflight(
+      {
+        authority: authority(false),
+        ingress: INGRESS,
+        operation: OPERATION,
+        processing: PROCESSING,
+      },
+      { operatorDetail: true }
+    );
     assert.deepEqual(out, { allow: false, publicReason: "authority-denied" });
     assert.equal(reads, 0);
   });
@@ -179,12 +184,15 @@ describe("privacy runtime ordering", () => {
       profile,
       nowSec: () => NOW,
     });
-    const out = runtime.preflight({
-      authority: authority(true),
-      ingress: INGRESS,
-      operation: OPERATION,
-      processing: PROCESSING,
-    }, { operatorDetail: true });
+    const out = runtime.preflight(
+      {
+        authority: authority(true),
+        ingress: INGRESS,
+        operation: OPERATION,
+        processing: PROCESSING,
+      },
+      { operatorDetail: true }
+    );
     assert.deepEqual(out, {
       allow: false,
       publicReason: "privacy-denied",
@@ -210,7 +218,10 @@ describe("privacy runtime ordering", () => {
     assert.equal(first.allow, true);
     if (!first.allow) throw new Error("expected allow");
     live = snapshot(false);
-    assert.throws(() => runtime.recheck(first, req), /privacy denied|basis-inactive/);
+    assert.throws(
+      () => runtime.recheck(first, req),
+      /privacy denied|basis-inactive/
+    );
   });
 
   it("rejects changed trusted privacy terms during live recheck even when Authority operation is identical", () => {
@@ -262,5 +273,32 @@ describe("privacy runtime ordering", () => {
     assert.deepEqual(event.authorityCitationIds, ["g-disclose"]);
     assert.equal(event.dataPrincipalRef, "subject:opaque-1");
     assert.match(event.termsDigest, /^[0-9a-f]{64}$/);
+    assert.equal(event.attemptRef, allowed.termsDigest);
+  });
+
+  it("refuses to prepare evidence when the request changed after recheck", () => {
+    const runtime = new PrivacyRuntime({
+      loadPrivacy: () => snapshot(true),
+      events: new MemoryEvents(),
+      profile,
+      nowSec: () => NOW,
+    });
+    const req = {
+      authority: authority(true),
+      ingress: INGRESS,
+      operation: OPERATION,
+      processing: PROCESSING,
+    };
+    const allowed = runtime.preflight(req);
+    assert.equal(allowed.allow, true);
+    if (!allowed.allow) throw new Error("expected allow");
+    assert.throws(
+      () =>
+        runtime.prepareEvent(allowed, {
+          ...req,
+          processing: { ...PROCESSING, dataCategories: ["phone"] },
+        }),
+      /processing context changed/
+    );
   });
 });

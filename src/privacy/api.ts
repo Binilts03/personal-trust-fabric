@@ -7,29 +7,25 @@
  */
 export * from "./model.js";
 export { evaluateProcessing } from "./engine.js";
-export {
-  DPDP_PROFILE_ID,
-  DPDP_PROFILE_REVISION,
-  dpdpProfile,
-} from "./dpdp.js";
-export {
-  PrivacyRuntime,
-} from "./runtime.js";
+export { DPDP_PROFILE_ID, DPDP_PROFILE_REVISION, dpdpProfile } from "./dpdp.js";
+export { PrivacyRuntime } from "./runtime.js";
 export type {
   PrivacyRuntimeDeps,
   PrivacyGateRequest,
   PrivacyGateResult,
 } from "./runtime.js";
+export { discloseWithPrivacy, useCredentialWithPrivacy } from "./vault.js";
 export {
-  discloseWithPrivacy,
-  useCredentialWithPrivacy,
-} from "./vault.js";
-export { executeProtectedActionWithPrivacy } from "./providers.js";
+  executeProtectedActionWithPrivacy,
+  PrivacyPreEffectError,
+} from "./providers.js";
 export {
-  summarizeProcessing,
-  planErasure,
-} from "./rights.js";
-export type {
-  ProcessingSummary,
-  ErasurePlanItem,
-} from "./rights.js";
+  MCP_PRIVACY_GATED_PATHS,
+  MCP_PRIVACY_UNCOVERED_PATHS,
+  resolveMcpPrivacyConfig,
+  makeMcpPrivacyDisclosureGate,
+  makeMcpPrivacyPaymentGate,
+} from "./mcp.js";
+export type { McpPrivacyConfig } from "./mcp.js";
+export { summarizeProcessing, planErasure } from "./rights.js";
+export type { ProcessingSummary, ErasurePlanItem } from "./rights.js";

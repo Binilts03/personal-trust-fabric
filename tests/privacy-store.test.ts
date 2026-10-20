@@ -10,7 +10,12 @@ import {
   type ProcessingActivity,
   type ProcessingBasisEvidence,
 } from "../src/index.js";
-import { PrivacyStore, createPrivacyDek, loadPrivacyStore, savePrivacyStore } from "../src/store/privacy.js";
+import {
+  PrivacyStore,
+  createPrivacyDek,
+  loadPrivacyStore,
+  savePrivacyStore,
+} from "../src/store/privacy.js";
 
 const NOW = 1_700_000_000;
 function tmp(): string {
@@ -159,6 +164,52 @@ describe("encrypted privacy configuration store", () => {
     assert.throws(
       () => loadPrivacyStore(dir, { dek }),
       /privacy store.*predates audit history|partial rollback/
+    );
+  });
+
+  it("rejects operator JSON shapes that would fail open inside the engine", () => {
+    const store = new PrivacyStore(() => NOW);
+    assert.throws(
+      () => store.addBasis({ ...BASIS, active: "false" as unknown as boolean }),
+      /active.*boolean/
+    );
+    assert.throws(
+      () =>
+        store.addBasis({ ...BASIS, kind: "Consent" as unknown as "consent" }),
+      /basis kind/
+    );
+    assert.throws(
+      () =>
+        store.addHold({
+          id: "hold-1",
+          dataPrincipalRef: "subject:opaque-1",
+          recordIds: ["record-1"],
+          dataCategories: [],
+          reasonRef: "retention:1",
+          assertedBy: "records-office",
+          effectiveAt: undefined as unknown as number,
+          retainUntil: null,
+        }),
+      /effectiveAt/
+    );
+    assert.throws(
+      () =>
+        store.addActivity({
+          ...ACTIVITY,
+          recipients: [{ id: "verifier", role: "admin" as unknown as "other" }],
+        }),
+      /recipient role/
+    );
+    assert.throws(
+      () =>
+        store.addActivity({
+          ...ACTIVITY,
+          subjects: {
+            kind: "regex",
+            pattern: ".*",
+          } as unknown as ProcessingActivity["subjects"],
+        }),
+      /subjects\.kind/
     );
   });
 });

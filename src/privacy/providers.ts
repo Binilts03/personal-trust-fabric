@@ -5,8 +5,20 @@ import {
   type PrivacyGateResult,
 } from "./runtime.js";
 
+/** A failure proven to occur before any external effect. */
+export class PrivacyPreEffectError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PrivacyPreEffectError";
+  }
+}
+
 function deny(result: Exclude<PrivacyGateResult, { allow: true }>): never {
-  throw new Error(result.publicReason === "authority-denied" ? "authority denied" : "privacy denied");
+  throw new Error(
+    result.publicReason === "authority-denied"
+      ? "authority denied"
+      : "privacy denied"
+  );
 }
 
 /**
@@ -31,20 +43,33 @@ export async function executeProtectedActionWithPrivacy(opts: {
   }
 
   const event = opts.runtime.prepareEvent(live, opts.gate, opts.attemptRef);
+  let receipt: ExecutionReceipt;
   try {
-    const receipt = await opts.execute();
-    opts.runtime.finalizeEvent(event.eventId, "SUCCEEDED", {
-      finalizedAt: receipt.at,
-      evidenceRef: `execution-receipt:${receipt.receiptId}`,
-    });
-    return receipt;
+    receipt = await opts.execute();
   } catch (error) {
     // The provider/journal may have effected before surfacing an error.
     // Privacy evidence records uncertainty and lets the execution journal
-    // remain the authoritative outcome/reconciliation mechanism.
-    opts.runtime.finalizeEvent(event.eventId, "OUTCOME_UNKNOWN", {
-      finalizedAt: Math.floor(Date.now() / 1000),
-    });
+    // remain the authoritative outcome/reconciliation mechanism. A typed
+    // pre-effect failure is different: no external change happened.
+    const state =
+      error instanceof PrivacyPreEffectError
+        ? "FAILED_FINAL"
+        : "OUTCOME_UNKNOWN";
+    try {
+      opts.runtime.finalizeEvent(event.eventId, state, {
+        finalizedAt: Math.floor(Date.now() / 1000),
+      });
+    } catch {
+      // Never mask the original failure with a finalize error.
+    }
     throw error;
   }
+  // Finalize outside the execute catch: a bookkeeping failure here must not
+  // be reclassified as an ambiguous external effect. Same-state transitions
+  // are idempotent, so a crash/retry can safely repeat this call.
+  opts.runtime.finalizeEvent(event.eventId, "SUCCEEDED", {
+    finalizedAt: receipt.at,
+    evidenceRef: `execution-receipt:${receipt.receiptId}`,
+  });
+  return receipt;
 }

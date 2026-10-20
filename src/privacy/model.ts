@@ -1,8 +1,5 @@
 export type PrivacyRecipientRole =
-  | "data-processor"
-  | "data-fiduciary"
-  | "third-party"
-  | "other";
+  "data-processor" | "data-fiduciary" | "third-party" | "other";
 
 export interface ProcessingRecipient {
   readonly id: string;
@@ -182,10 +179,7 @@ export interface PrivacySnapshot {
 }
 
 export type ProcessingEventState =
-  | "PREPARED"
-  | "SUCCEEDED"
-  | "FAILED_FINAL"
-  | "OUTCOME_UNKNOWN";
+  "PREPARED" | "SUCCEEDED" | "FAILED_FINAL" | "OUTCOME_UNKNOWN";
 
 export interface ProcessingEventPrepare {
   readonly profileId: string;
@@ -221,6 +215,12 @@ export interface ProcessingEventRecord extends ProcessingEventPrepare {
   readonly evidenceRef?: string;
 }
 
+export interface PreparedEventResolution {
+  readonly state: "SUCCEEDED" | "FAILED_FINAL";
+  readonly finalizedAt: number;
+  readonly evidenceRef?: string;
+}
+
 export interface PrivacyEventRepository {
   prepare(input: ProcessingEventPrepare): ProcessingEventRecord;
   load(eventId: string): ProcessingEventRecord | null;
@@ -231,7 +231,15 @@ export interface PrivacyEventRepository {
   ): ProcessingEventRecord;
   findByKey(idempotencyKey: string): ProcessingEventRecord | null;
   listBySubject(dataPrincipalRef: string): readonly ProcessingEventRecord[];
-  recoverPrepared(nowSec: number): readonly ProcessingEventRecord[];
+  /**
+   * Recover abandoned PREPARED events. A resolver may supply a proven
+   * journal/provider outcome; otherwise the conservative result is
+   * OUTCOME_UNKNOWN. Must run only while processing writers are stopped.
+   */
+  recoverPrepared(
+    nowSec: number,
+    resolve?: (event: ProcessingEventRecord) => PreparedEventResolution | null
+  ): readonly ProcessingEventRecord[];
 }
 
 /**
@@ -239,11 +247,15 @@ export interface PrivacyEventRepository {
  * references and keep the subject-to-person mapping outside PTF.
  */
 export function isOpaquePrivacySubjectRef(value: unknown): value is string {
-  return typeof value === "string" &&
-    /^subject:[A-Za-z][A-Za-z0-9_-]{5,127}$/.test(value);
+  return (
+    typeof value === "string" &&
+    /^subject:[A-Za-z][A-Za-z0-9_-]{5,127}$/.test(value)
+  );
 }
 
-export function assertOpaquePrivacySubjectRef(value: unknown): asserts value is string {
+export function assertOpaquePrivacySubjectRef(
+  value: unknown
+): asserts value is string {
   if (!isOpaquePrivacySubjectRef(value)) {
     throw new Error("privacy: opaque dataPrincipalRef required");
   }

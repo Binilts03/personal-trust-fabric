@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   digestForOperation,
   type Authority,
@@ -103,7 +102,9 @@ export class PrivacyRuntime {
       return {
         allow: false,
         publicReason: "privacy-denied",
-        ...(opts.operatorDetail === true ? { operatorReason: "other" as const } : {}),
+        ...(opts.operatorDetail === true
+          ? { operatorReason: "other" as const }
+          : {}),
       };
     }
 
@@ -144,10 +145,13 @@ export class PrivacyRuntime {
     const live = this.preflight(req, { operatorDetail: true });
     if (!live.allow) {
       const detail =
-        live.publicReason === "privacy-denied" && live.operatorReason !== undefined
+        live.publicReason === "privacy-denied" &&
+        live.operatorReason !== undefined
           ? `: ${live.operatorReason}`
           : "";
-      throw new Error(`privacy runtime: ${live.publicReason.replace("-", " ")}${detail}`);
+      throw new Error(
+        `privacy runtime: ${live.publicReason.replace("-", " ")}${detail}`
+      );
     }
     if (
       live.termsDigest !== prior.termsDigest ||
@@ -157,7 +161,9 @@ export class PrivacyRuntime {
       live.privacy.profileId !== prior.privacy.profileId ||
       live.privacy.profileRevision !== prior.privacy.profileRevision
     ) {
-      throw new Error("privacy runtime: processing context changed since preflight");
+      throw new Error(
+        "privacy runtime: processing context changed since preflight"
+      );
     }
     return live;
   }
@@ -165,8 +171,19 @@ export class PrivacyRuntime {
   prepareEvent(
     allowed: Extract<PrivacyGateResult, { allow: true }>,
     req: PrivacyGateRequest,
-    attemptRef: string = randomUUID()
+    attemptRef: string = allowed.termsDigest
   ): ProcessingEventRecord {
+    // Bind the prepared evidence to the exact gate result, not just to the
+    // mutable request object. Library callers cannot swap the action,
+    // resource, identity or processing context after preflight/recheck.
+    if (sha256Hex(canonicalize(req.processing)) !== allowed.processingDigest) {
+      throw new Error(
+        "privacy runtime: processing context changed before prepare"
+      );
+    }
+    if (digestForOperation(boundForDigest(req)) !== allowed.termsDigest) {
+      throw new Error("privacy runtime: operation changed before prepare");
+    }
     if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(attemptRef)) {
       throw new Error("privacy runtime: invalid attempt reference");
     }

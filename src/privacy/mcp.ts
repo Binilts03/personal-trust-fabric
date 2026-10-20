@@ -4,10 +4,10 @@ export const MCP_PRIVACY_GATED_PATHS = [
   "ptf_present_data",
   "ptf_propose:/pay",
   "ptf_redeem:/pay",
+  "ptf_request_action",
 ] as const;
 
 export const MCP_PRIVACY_UNCOVERED_PATHS = [
-  "ptf_request_action",
   "custom-provider-adapters",
   "operator-cli-pay",
 ] as const;
@@ -43,7 +43,15 @@ function required(value: unknown): value is string {
 export function resolveMcpPrivacyConfig(value: unknown): McpPrivacyConfig {
   const raw = record(value);
   for (const name of Object.keys(raw)) {
-    if (!["dataPrincipalRef", "controllerId", "recipientRoles", "subjectAssurance", "actionCategories"].includes(name)) {
+    if (
+      ![
+        "dataPrincipalRef",
+        "controllerId",
+        "recipientRoles",
+        "subjectAssurance",
+        "actionCategories",
+      ].includes(name)
+    ) {
       throw new Error("mcp privacy: unexpected operator configuration field");
     }
   }
@@ -53,7 +61,12 @@ export function resolveMcpPrivacyConfig(value: unknown): McpPrivacyConfig {
   }
   const recipients = record(raw["recipientRoles"]);
   const roles: Record<string, PrivacyRecipientRole> = {};
-  const allowed = new Set(["data-processor", "data-fiduciary", "third-party", "other"]);
+  const allowed = new Set([
+    "data-processor",
+    "data-fiduciary",
+    "third-party",
+    "other",
+  ]);
   for (const [id, role] of Object.entries(recipients)) {
     if (!required(id) || typeof role !== "string" || !allowed.has(role)) {
       throw new Error("mcp privacy: invalid recipient role");
@@ -65,9 +78,12 @@ export function resolveMcpPrivacyConfig(value: unknown): McpPrivacyConfig {
   if (rawActions !== undefined) {
     actionCategories = {};
     for (const [action, categories] of Object.entries(record(rawActions))) {
-      if (!/^\/[A-Za-z][A-Za-z0-9/_-]*$/.test(action) ||
-          !Array.isArray(categories) || categories.length === 0 ||
-          !categories.every(required)) {
+      if (
+        !/^\/[A-Za-z][A-Za-z0-9/_-]*$/.test(action) ||
+        !Array.isArray(categories) ||
+        categories.length === 0 ||
+        !categories.every(required)
+      ) {
         throw new Error("mcp privacy: invalid action categories");
       }
       actionCategories[action] = [...categories] as string[];
@@ -84,10 +100,14 @@ export function resolveMcpPrivacyConfig(value: unknown): McpPrivacyConfig {
   }
   const parsed = record(assurance);
   if (
-    !["adult", "child", "guardian-assisted"].includes(String(parsed["classification"])) ||
+    !["adult", "child", "guardian-assisted"].includes(
+      String(parsed["classification"])
+    ) ||
     !required(parsed["proofRef"]) ||
     !required(parsed["assertedBy"]) ||
-    Object.keys(parsed).some((k) => !["classification", "proofRef", "assertedBy"].includes(k))
+    Object.keys(parsed).some(
+      (k) => !["classification", "proofRef", "assertedBy"].includes(k)
+    )
   ) {
     throw new Error("mcp privacy: invalid subject assurance");
   }
@@ -97,7 +117,9 @@ export function resolveMcpPrivacyConfig(value: unknown): McpPrivacyConfig {
     recipientRoles: roles,
     ...(actionCategories !== undefined ? { actionCategories } : {}),
     subjectAssurance: {
-      classification: parsed["classification"] as SubjectAssurance["classification"],
+      classification: parsed[
+        "classification"
+      ] as SubjectAssurance["classification"],
       proofRef: parsed["proofRef"],
       assertedBy: parsed["assertedBy"],
     },

@@ -150,6 +150,7 @@ const PRIVACY_PATHS = new Set([
   "erase/apply",
   "events/reconcile",
   "events/resolve",
+  "correction",
   "verify",
   "rekey",
 ]);
@@ -195,9 +196,11 @@ export function helpText(): string {
     "  restore --from DIR                     copy a backup over fresh --dir, never merges; verifies chain + freshness + anchor",
     "  privacy <subcommand>                    DPDP/privacy evidence, runtime checks, summaries, exact erasure and rekey",
     "  privacy verify [--mcp-config FILE]      verify encrypted privacy store and inspect host configuration (not live attestation)",
-    "  privacy events reconcile --yes         OFFLINE ONLY: mark abandoned PREPARED attempts OUTCOME_UNKNOWN; stop writers first",
+    "  privacy events reconcile --yes         OFFLINE ONLY: resolve PREPARED attempts from the execution journal, else OUTCOME_UNKNOWN; stop writers first",
     "  privacy events resolve --id ID --state SUCCEEDED|FAILED_FINAL --evidence-ref REF --yes",
     "                                         reconcile ambiguous processing from independently verified evidence",
+    "  privacy correction --id ID --owner OWNER --subject-ref REF --activity-id ID --basis-id ID",
+    "                                         record evidence after an operator vault-put correction (never reads values)",
     "  revoke (--grant ID | --recipient ALIAS)",
     "  review [--digest D]                  list pending proposals (sanitized) or show one in full",
     "  approve --digest D [--ttl-s S]       mint one one-time approval for a pending proposal (default 300s)",
@@ -257,7 +260,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const flags: Record<string, string | boolean> = {};
   let flagStart = 0;
   if (command === "privacy") {
-    while (flagStart < rest.length && !(rest[flagStart] as string).startsWith("--")) {
+    while (
+      flagStart < rest.length &&
+      !(rest[flagStart] as string).startsWith("--")
+    ) {
       flagStart += 1;
     }
     const path = rest.slice(0, flagStart).join("/");
@@ -373,6 +379,8 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "ids",
     "state",
     "evidence-ref",
+    "activity-id",
+    "basis-id",
     "mcp-config",
     "yes",
   ]),
@@ -668,8 +676,7 @@ export async function run(
       (command === "audit" &&
         (existsSync(join(dir, "personal-state.json")) ||
           existsSync(join(dir, "privacy-state.json")))) ||
-      (command === "privacy" &&
-        (keystoreExists || flags["path"] !== "init")),
+      (command === "privacy" && (keystoreExists || flags["path"] !== "init")),
     prompt
   );
 

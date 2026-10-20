@@ -3,9 +3,10 @@
  * Single source of truth for PTF's static architecture guards.
  *
  * Public seam: tests may import only the public barrel (`src/index.ts`) or the
- * bin entry points. Repository-owned privacy persistence suites are the one
- * deliberate exception: they exercise the file repositories directly because
- * the published `./privacy` surface intentionally excludes them.
+ * bin entry points. A small, exact list of repository-owned persistence
+ * suites may reach the file repositories directly because the published
+ * `./privacy` surface intentionally excludes them. The exemption is scoped to
+ * the named test file and specifier; it never applies repo-wide.
  *
  * Core guard: `src/core/` depends only on node:crypto and relative modules.
  *
@@ -24,10 +25,32 @@ const PUBLIC_TEST_IMPORTS = new Set([
   "../src/pdp-server.js",
 ]);
 
-// Exact, reviewed exceptions. Do not widen these to other tests or modules.
-const PRIVACY_PERSISTENCE_TEST_IMPORTS = new Set([
-  "../src/store/privacy.js",
-  "../src/store/privacy-events.js",
+// Exact, reviewed exceptions: test file -> specifiers it may import.
+// Do not widen these to other tests or modules.
+const TEST_IMPORT_EXEMPTIONS = new Map([
+  [
+    "tests/privacy-store.test.ts",
+    new Set(["../src/store/privacy.js"]),
+  ],
+  [
+    "tests/backup.test.ts",
+    new Set(["../src/store/privacy.js", "../src/store/privacy-events.js"]),
+  ],
+  [
+    "tests/privacy-cli.test.ts",
+    new Set(["../src/store/privacy.js", "../src/store/privacy-events.js"]),
+  ],
+  [
+    "tests/privacy-events.test.ts",
+    new Set(["../src/store/privacy.js", "../src/store/privacy-events.js"]),
+  ],
+  [
+    "tests/privacy-mcp-stdio.test.ts",
+    new Set([
+      "../src/store/privacy.js",
+      "../src/store/privacy-events.js",
+    ]),
+  ],
 ]);
 
 const CORE_ALLOWED_IMPORT = "node:crypto";
@@ -68,14 +91,15 @@ function importSpecifier(line) {
 function scan(root, target, allow) {
   const violations = [];
   for (const file of walkTypeScriptFiles(join(root, target))) {
+    const filePath = relative(root, file).split(sep).join("/");
     const lines = readFileSync(file, "utf8").split(/\r?\n/);
     lines.forEach((line, index) => {
       const specifier = importSpecifier(line);
       if (specifier === undefined) return;
-      const verdict = allow(specifier);
+      const verdict = allow(filePath, specifier);
       if (verdict !== true) {
         violations.push({
-          file: relative(root, file).split(sep).join("/"),
+          file: filePath,
           line: index + 1,
           specifier,
           reason: verdict,
@@ -86,14 +110,15 @@ function scan(root, target, allow) {
   return violations;
 }
 
-function allowTestImport(specifier) {
+function allowTestImport(file, specifier) {
   if (!specifier.startsWith("../src/")) return true;
   if (PUBLIC_TEST_IMPORTS.has(specifier)) return true;
-  if (PRIVACY_PERSISTENCE_TEST_IMPORTS.has(specifier)) return true;
-  return `not a public test seam; allowed: ${[...PUBLIC_TEST_IMPORTS, ...PRIVACY_PERSISTENCE_TEST_IMPORTS].join(", ")}`;
+  const exemptions = TEST_IMPORT_EXEMPTIONS.get(file);
+  if (exemptions !== undefined && exemptions.has(specifier)) return true;
+  return `not a public test seam; allowed: ${[...PUBLIC_TEST_IMPORTS].join(", ")} (plus file-scoped persistence exceptions)`;
 }
 
-function allowCoreImport(specifier) {
+function allowCoreImport(_file, specifier) {
   if (specifier === CORE_ALLOWED_IMPORT) return true;
   if (specifier.startsWith("./") || specifier.startsWith("../")) return true;
   return `core may import only ${CORE_ALLOWED_IMPORT} and relative modules`;

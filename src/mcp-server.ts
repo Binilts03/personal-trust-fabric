@@ -45,9 +45,16 @@ import {
 import { PrivacyRuntime, type PrivacyGateRequest } from "./privacy/runtime.js";
 import { dpdpProfile } from "./privacy/dpdp.js";
 import { discloseWithPrivacy } from "./privacy/vault.js";
-import { executeProtectedActionWithPrivacy } from "./privacy/providers.js";
+import {
+  executeProtectedActionWithPrivacy,
+  PrivacyPreEffectError,
+} from "./privacy/providers.js";
 import { FilePrivacyEventRepository } from "./store/privacy-events.js";
-import { loadPrivacyStore, readPrivacyKid, resolvePrivacyDek } from "./store/privacy.js";
+import {
+  loadPrivacyStore,
+  readPrivacyKid,
+  resolvePrivacyDek,
+} from "./store/privacy.js";
 import {
   createProposal,
   gcChallenges,
@@ -140,12 +147,12 @@ interface Proposal {
 const demandSchema = z
   .object({
     cmd: z.enum(["/pay", "/disclose"]),
-    purpose: z.string().min(1),
-    resource: z.string().min(1),
-    recipient: z.string().min(1),
+    purpose: z.string().min(1).max(500),
+    resource: z.string().min(1).max(500),
+    recipient: z.string().min(1).max(500),
     amount: z.number().int().positive().optional(),
-    currency: z.string().optional(),
-    claims: z.array(z.string()).optional(),
+    currency: z.string().max(16).optional(),
+    claims: z.array(z.string().min(1).max(200)).max(50).optional(),
   })
   .superRefine((v, ctx) => {
     if (v.cmd === "/pay") {
@@ -371,8 +378,13 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     return {
       gate: { ...binding, authority: auth },
       runtime: new PrivacyRuntime({
-        loadPrivacy: () => loadPrivacyStore(opts.dir, { keys, nowSec: now }).snapshot(),
-        events: new FilePrivacyEventRepository({ dir: opts.dir, dek, nowSec: now }),
+        loadPrivacy: () =>
+          loadPrivacyStore(opts.dir, { keys, nowSec: now }).snapshot(),
+        events: new FilePrivacyEventRepository({
+          dir: opts.dir,
+          dek,
+          nowSec: now,
+        }),
         profile: dpdpProfile,
         nowSec: now,
       }),
@@ -709,7 +721,12 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       let privacyAllowed = true;
       if (decision.allow && opts.privacy !== undefined) {
         try {
-          const { runtime, gate } = privacyForOperation(keys, auth, ingress, demand);
+          const { runtime, gate } = privacyForOperation(
+            keys,
+            auth,
+            ingress,
+            demand
+          );
           privacyAllowed = runtime.preflight(gate).allow;
         } catch {
           privacyAllowed = false;
@@ -718,17 +735,22 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       const allowed = decision.allow && privacyAllowed;
       recordProposal(digest, demand, allowed);
       return {
-        content: [{
-          type: "text",
-          text: JSON.stringify(
-            allowed
-              ? { allowed: true, termsDigest: digest, proposal: text }
-              : { allowed: false,
-                  reason: decision.allow ? "privacy denied" : decision.reason,
-                  proposal: text },
-            null, 2
-          ),
-        }],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              allowed
+                ? { allowed: true, termsDigest: digest, proposal: text }
+                : {
+                    allowed: false,
+                    reason: decision.allow ? "privacy denied" : decision.reason,
+                    proposal: text,
+                  },
+              null,
+              2
+            ),
+          },
+        ],
       };
     }
   );
@@ -884,7 +906,12 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         }
         if (opts.privacy !== undefined) {
           try {
-            const { runtime, gate } = privacyForOperation(keys, auth, ingress, demand);
+            const { runtime, gate } = privacyForOperation(
+              keys,
+              auth,
+              ingress,
+              demand
+            );
             if (!runtime.preflight(gate).allow) fail("privacy denied");
           } catch {
             markDenied(args.termsDigest);
@@ -978,39 +1005,50 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         });
         if (!decision.allow) {
           markDenied(args.termsDigest);
-          fail(`authority denied at redeem time: ${decision.reason}`);
+          throw new PrivacyPreEffectError(
+            `authority denied at redeem time: ${decision.reason}`
+          );
         }
         consumedAuthorityId = decision.citations[0]?.authorityId;
         // Existing authority CAS and provider journal remain authoritative.
         saveAuthority(opts.dir, auth);
         return executeWithJournal({
-        dir: opts.dir,
-        provider: executorAsProvider(executor, "payment", now),
-        req: {
-          capabilityId: leafCidHex(challenge.cap),
-          termsDigest: args.termsDigest,
-          action: "/pay",
-          recipient,
-          resource,
-          purpose,
-          context: { amount, currency },
-        },
-        redemption: redeemed,
-        nowSec: now(),
-        at: now(),
-      });
+          dir: opts.dir,
+          provider: executorAsProvider(executor, "payment", now),
+          req: {
+            capabilityId: leafCidHex(challenge.cap),
+            termsDigest: args.termsDigest,
+            action: "/pay",
+            recipient,
+            resource,
+            purpose,
+            context: { amount, currency },
+          },
+          redemption: redeemed,
+          nowSec: now(),
+          at: now(),
+        });
       };
-      const journaled = opts.privacy === undefined
-        ? await consumeAndExecute()
-        : await (async () => {
-            const { runtime, gate } = privacyForOperation(keys, auth, ingress, demand);
-            return executeProtectedActionWithPrivacy({
-              runtime,
-              gate,
-              execute: consumeAndExecute,
-              attemptRef: args.termsDigest,
-            });
-          })();
+      const journaled =
+        opts.privacy === undefined
+          ? await consumeAndExecute()
+          : await (async () => {
+              let scoped: ReturnType<typeof privacyForOperation>;
+              try {
+                scoped = privacyForOperation(keys, auth, ingress, demand);
+              } catch {
+                // Never leak store paths, key ids or configuration detail to
+                // the agent-facing error surface.
+                markDenied(args.termsDigest);
+                fail("privacy denied");
+              }
+              return executeProtectedActionWithPrivacy({
+                runtime: scoped.runtime,
+                gate: scoped.gate,
+                execute: consumeAndExecute,
+                attemptRef: args.termsDigest,
+              });
+            })();
       // Project the /pay receipt shape from the journal receipt. Amount and
       // currency come from the exact authorized terms verified above
       // (authorizedTermsCover inside the journal) — never invented.
@@ -1063,10 +1101,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       description:
         "Propose a disclosure (dry-run). Evaluates /disclose authority without spending it and returns exact terms for human approval. Present an allowed proposal via ptf_present_data.",
       inputSchema: z.object({
-        purpose: z.string().min(1),
-        resource: z.string().min(1),
-        verifier: z.string().min(1),
-        claims: z.array(z.string().min(1)).min(1),
+        purpose: z.string().min(1).max(500),
+        resource: z.string().min(1).max(500),
+        verifier: z.string().min(1).max(500),
+        claims: z.array(z.string().min(1).max(200)).min(1).max(50),
       }),
     },
     async (args) => {
@@ -1095,7 +1133,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         try {
           const { keys } = load();
           const { runtime, gate } = privacyForOperation(
-            keys, auth, ingress, out.demand
+            keys,
+            auth,
+            ingress,
+            out.demand
           );
           permitted = runtime.preflight(gate).allow;
         } catch {
@@ -1106,13 +1147,15 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         if (!permitted) {
           recordProposal(out.digest, out.demand, false);
           return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({
-                allowed: false,
-                reason: "privacy denied",
-              }),
-            }],
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  allowed: false,
+                  reason: "privacy denied",
+                }),
+              },
+            ],
           };
         }
       }
@@ -1246,10 +1289,19 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       let pres: ReturnType<typeof readForPurpose>;
       try {
         if (opts.privacy !== undefined) {
-          const { runtime, gate } = privacyForOperation(keys, auth, ingress, demand);
+          const { runtime, gate } = privacyForOperation(
+            keys,
+            auth,
+            ingress,
+            demand
+          );
           pres = await discloseWithPrivacy({
-            runtime, gate, vault, disclosure,
-            onAuthorityConsumed: (consumed) => saveAuthority(opts.dir, consumed),
+            runtime,
+            gate,
+            vault,
+            disclosure,
+            onAuthorityConsumed: (consumed) =>
+              saveAuthority(opts.dir, consumed),
           });
         } else {
           pres = readForPurpose(vault, disclosure);
@@ -1312,18 +1364,29 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       description:
         "Propose any /-path action (dry-run, disclose tier excluded). Redeem stays /pay-only via ptf_redeem.",
       inputSchema: z.object({
-        cmd: z.string().min(2).regex(/^\//),
-        purpose: z.string().min(1).optional(),
-        resource: z.string().min(1),
-        resourceType: z.string().min(1).optional(),
-        context: z.record(z.string(), z.unknown()).optional(),
-        recipient: z.string().min(1).optional(),
+        cmd: z.string().min(2).max(200).regex(/^\//),
+        purpose: z.string().min(1).max(500).optional(),
+        resource: z.string().min(1).max(500),
+        resourceType: z.string().min(1).max(200).optional(),
+        context: z
+          .record(z.string().max(100), z.unknown())
+          .refine((value) => JSON.stringify(value).length <= 16_384, {
+            message: "context exceeds 16 KiB",
+          })
+          .optional(),
+        recipient: z.string().min(1).max(500).optional(),
         amount: z.number().int().positive().optional(),
-        currency: z.string().min(1).optional(),
-        claims: z.array(z.string().min(1)).optional(),
+        currency: z.string().min(1).max(16).optional(),
+        claims: z.array(z.string().min(1).max(200)).max(50).optional(),
       }),
     },
     async (args) => {
+      // The reference host only enforces the pay/disclose privacy gates.
+      // An arbitrary action proposal cannot be gated safely here, so fail
+      // closed instead of reporting it as merely "uncovered".
+      if (opts.privacy !== undefined) {
+        fail("privacy mode: ptf_request_action is not supported");
+      }
       const { auth } = load();
       const ingress = resolveIngress();
       // Caller-supplied context passes through untouched; the top-level
@@ -1537,13 +1600,17 @@ async function main(): Promise<void> {
   }
   // Stdio MCP protocol uses stdout. Operator health/coverage reports use
   // stderr and disclose no subject, controller, recipient or basis details.
-  const privacyStatus = privacy === undefined
-    ? "DISABLED (legacy authority-only behavior)"
-    : `ENABLED (scoped: ${MCP_PRIVACY_GATED_PATHS.join(", ")};
+  const privacyStatus =
+    privacy === undefined
+      ? "DISABLED (legacy authority-only behavior)"
+      : `ENABLED (scoped: ${MCP_PRIVACY_GATED_PATHS.join(", ")};
 uncovered: ${MCP_PRIVACY_UNCOVERED_PATHS.join(", ")})`;
   process.stderr.write(`[ptf-mcp] privacy: ${privacyStatus}\n`);
   const server = createPtfServer({
-    dir, env, principal, actor,
+    dir,
+    env,
+    principal,
+    actor,
     ...(privacy !== undefined ? { privacy } : {}),
   });
   await server.connect(new StdioServerTransport());

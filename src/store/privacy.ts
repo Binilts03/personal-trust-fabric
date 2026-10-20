@@ -34,16 +34,40 @@ function required(value: unknown, what: string): asserts value is string {
   }
 }
 
-function strings(value: readonly string[], what: string): void {
+function strings(value: unknown, what: string): void {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error(`privacy: ${what} must be a non-empty string array`);
   }
   for (const item of value) required(item, what);
 }
 
+function stringArray(value: unknown, what: string): void {
+  if (!Array.isArray(value)) {
+    throw new Error(`privacy: ${what} must be a string array`);
+  }
+  for (const item of value) required(item, what);
+}
+
+function booleanValue(value: unknown, what: string): void {
+  if (typeof value !== "boolean") {
+    throw new Error(`privacy: ${what} must be a boolean`);
+  }
+}
+
 function epoch(value: number | undefined, what: string): void {
   if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
     throw new Error(`privacy: ${what} must be a non-negative epoch int`);
+  }
+}
+
+function requiredEpoch(value: number | undefined, what: string): void {
+  if (value === undefined) throw new Error(`privacy: ${what} required`);
+  epoch(value, what);
+}
+
+function oneOf(value: unknown, allowed: readonly string[], what: string): void {
+  if (typeof value !== "string" || !allowed.includes(value)) {
+    throw new Error(`privacy: ${what} must be one of: ${allowed.join(", ")}`);
   }
 }
 
@@ -87,7 +111,9 @@ function validateNotice(v: NoticeEvidence): void {
   required(v.noticeRef, "notice noticeRef");
   required(v.noticeHash, "notice noticeHash");
   required(v.assertedBy, "notice assertedBy");
-  epoch(v.presentedAt, "notice presentedAt");
+  requiredEpoch(v.presentedAt, "notice presentedAt");
+  if (v.language !== undefined) required(v.language, "notice language");
+  if (v.version !== undefined) required(v.version, "notice version");
 }
 function validateConsent(v: ConsentEvidence): void {
   required(v.id, "consent id");
@@ -99,11 +125,16 @@ function validateConsent(v: ConsentEvidence): void {
   required(v.method, "consent method");
   required(v.proofRef, "consent proofRef");
   required(v.assertedBy, "consent assertedBy");
-  epoch(v.givenAt, "consent givenAt");
+  requiredEpoch(v.givenAt, "consent givenAt");
   epoch(v.withdrawnAt, "consent withdrawnAt");
   if (v.withdrawnAt !== undefined) {
     required(v.withdrawalProofRef, "consent withdrawalProofRef");
     required(v.withdrawnBy, "consent withdrawnBy");
+  } else if (
+    v.withdrawalProofRef !== undefined ||
+    v.withdrawnBy !== undefined
+  ) {
+    throw new Error("privacy: consent withdrawal fields require withdrawnAt");
   }
 }
 function validateBasis(v: ProcessingBasisEvidence): void {
@@ -112,12 +143,19 @@ function validateBasis(v: ProcessingBasisEvidence): void {
   required(v.purpose, "basis purpose");
   strings(v.dataCategories, "basis dataCategories");
   required(v.assertedBy, "basis assertedBy");
+  booleanValue(v.active, "basis active");
+  oneOf(v.kind, ["consent", "certain-legitimate-use"], "basis kind");
   epoch(v.nbf, "basis nbf");
   epoch(v.exp, "basis exp");
   if (v.kind === "consent") {
     assertOpaquePrivacySubjectRef(v.dataPrincipalRef);
     required(v.consentId, "basis consentId");
   } else {
+    if ("dataPrincipalRef" in v && v.dataPrincipalRef !== undefined) {
+      throw new Error(
+        "privacy: legitimate-use basis must not carry dataPrincipalRef"
+      );
+    }
     required(v.provisionRef, "basis provisionRef");
     required(v.evidenceRef, "basis evidenceRef");
   }
@@ -128,33 +166,70 @@ function validateActivity(v: ProcessingActivity): void {
   required(v.authorityPrincipal, "activity authorityPrincipal");
   required(v.controllerId, "activity controllerId");
   required(v.action, "activity action");
-  if (!v.action.startsWith("/")) throw new Error("privacy: activity action must start with /");
+  if (!v.action.startsWith("/"))
+    throw new Error("privacy: activity action must start with /");
   required(v.resourceType, "activity resourceType");
   required(v.purpose, "activity purpose");
   strings(v.dataCategories, "activity dataCategories");
   required(v.basisId, "activity basisId");
+  booleanValue(v.active, "activity active");
   epoch(v.nbf, "activity nbf");
   epoch(v.exp, "activity exp");
-  if (v.subjects.kind === "exact") assertOpaquePrivacySubjectRef(v.subjects.ref);
-  if (v.subjects.kind === "set") {
+  if (typeof v.subjects !== "object" || v.subjects === null) {
+    throw new Error("privacy: activity subjects required");
+  }
+  if (v.subjects.kind === "exact")
+    assertOpaquePrivacySubjectRef(v.subjects.ref);
+  else if (v.subjects.kind === "set") {
     strings(v.subjects.refs, "activity subject refs");
     for (const ref of v.subjects.refs) assertOpaquePrivacySubjectRef(ref);
+  } else if (v.subjects.kind !== "any") {
+    throw new Error(
+      "privacy: activity subjects.kind must be exact, set, or any"
+    );
   }
-  for (const r of v.recipients) required(r.id, "activity recipient id");
+  if (!Array.isArray(v.recipients)) {
+    throw new Error("privacy: activity recipients must be an array");
+  }
+  for (const r of v.recipients) {
+    required(r.id, "activity recipient id");
+    oneOf(
+      r.role,
+      ["data-processor", "data-fiduciary", "third-party", "other"],
+      "activity recipient role"
+    );
+  }
+  if (v.allowedTransferDestinations !== undefined) {
+    stringArray(
+      v.allowedTransferDestinations,
+      "activity allowedTransferDestinations"
+    );
+  }
 }
 function validateHold(v: RetentionHold): void {
   required(v.id, "hold id");
   assertOpaquePrivacySubjectRef(v.dataPrincipalRef);
+  if (!Array.isArray(v.recordIds)) {
+    throw new Error("privacy: hold recordIds must be an array");
+  }
+  if (!Array.isArray(v.dataCategories)) {
+    throw new Error("privacy: hold dataCategories must be an array");
+  }
   if (v.recordIds.length === 0 && v.dataCategories.length === 0) {
     throw new Error("privacy: hold requires recordIds or dataCategories");
   }
-  for (const id of v.recordIds) required(id, "hold record id");
-  for (const category of v.dataCategories) required(category, "hold data category");
+  stringArray(v.recordIds, "hold record id");
+  stringArray(v.dataCategories, "hold data category");
   required(v.reasonRef, "hold reasonRef");
   required(v.assertedBy, "hold assertedBy");
-  epoch(v.effectiveAt, "hold effectiveAt");
-  if (v.retainUntil !== null) epoch(v.retainUntil, "hold retainUntil");
+  requiredEpoch(v.effectiveAt, "hold effectiveAt");
+  if (v.retainUntil !== null)
+    requiredEpoch(v.retainUntil ?? undefined, "hold retainUntil");
   epoch(v.releasedAt, "hold releasedAt");
+  if (v.releasedAt !== undefined) required(v.releasedBy, "hold releasedBy");
+  else if (v.releasedBy !== undefined) {
+    throw new Error("privacy: hold releasedBy requires releasedAt");
+  }
 }
 
 export class PrivacyStore {
@@ -225,7 +300,11 @@ export class PrivacyStore {
 
   withdrawConsent(
     consentId: string,
-    input: { readonly at: number; readonly proofRef: string; readonly assertedBy: string }
+    input: {
+      readonly at: number;
+      readonly proofRef: string;
+      readonly assertedBy: string;
+    }
   ): ConsentEvidence {
     required(consentId, "consent id");
     epoch(input.at, "withdrawal at");
@@ -233,7 +312,8 @@ export class PrivacyStore {
     required(input.assertedBy, "withdrawal assertedBy");
     const existing = this.consents.get(consentId);
     if (existing === undefined) throw new Error("privacy: unknown consent");
-    if (existing.withdrawnAt !== undefined) throw new Error("privacy: consent already withdrawn");
+    if (existing.withdrawnAt !== undefined)
+      throw new Error("privacy: consent already withdrawn");
     const value: ConsentEvidence = {
       ...existing,
       dataCategories: [...existing.dataCategories],
@@ -254,7 +334,8 @@ export class PrivacyStore {
     required(input.assertedBy, "hold releasedBy");
     const existing = this.holds.get(id);
     if (existing === undefined) throw new Error("privacy: unknown hold");
-    if (existing.releasedAt !== undefined) throw new Error("privacy: hold already released");
+    if (existing.releasedAt !== undefined)
+      throw new Error("privacy: hold already released");
     const value: RetentionHold = {
       ...existing,
       recordIds: [...existing.recordIds],
@@ -284,7 +365,8 @@ export class PrivacyStore {
     return this.knownLineage;
   }
   adoptRevision(rev: number): void {
-    if (!Number.isInteger(rev) || rev < 0) throw new Error("privacy: bad revision");
+    if (!Number.isInteger(rev) || rev < 0)
+      throw new Error("privacy: bad revision");
     this.snapshotRevision = rev;
     this.knownLineage = true;
   }
@@ -297,8 +379,15 @@ export class PrivacyStore {
       throw new Error("privacy snapshot must be an object");
     }
     const rec = data as Record<string, unknown>;
-    for (const key of ["notices", "consents", "bases", "activities", "holds"] as const) {
-      if (!Array.isArray(rec[key])) throw new Error(`privacy snapshot: ${key} must be an array`);
+    for (const key of [
+      "notices",
+      "consents",
+      "bases",
+      "activities",
+      "holds",
+    ] as const) {
+      if (!Array.isArray(rec[key]))
+        throw new Error(`privacy snapshot: ${key} must be an array`);
     }
     const store = new PrivacyStore(opts.nowSec);
     store.knownLineage = true;
@@ -307,10 +396,14 @@ export class PrivacyStore {
       throw new Error("privacy snapshot: bad revision");
     }
     store.adoptRevision(revision as number);
-    for (const item of rec["notices"] as NoticeEvidence[]) store.addNotice(item);
-    for (const item of rec["consents"] as ConsentEvidence[]) store.addConsent(item);
-    for (const item of rec["bases"] as ProcessingBasisEvidence[]) store.addBasis(item);
-    for (const item of rec["activities"] as ProcessingActivity[]) store.addActivity(item);
+    for (const item of rec["notices"] as NoticeEvidence[])
+      store.addNotice(item);
+    for (const item of rec["consents"] as ConsentEvidence[])
+      store.addConsent(item);
+    for (const item of rec["bases"] as ProcessingBasisEvidence[])
+      store.addBasis(item);
+    for (const item of rec["activities"] as ProcessingActivity[])
+      store.addActivity(item);
     for (const item of rec["holds"] as RetentionHold[]) store.addHold(item);
     return store;
   }
@@ -320,9 +413,7 @@ export function createPrivacyDek(): Uint8Array {
   return new Uint8Array(randomBytes(DEK_BYTES));
 }
 
-export function ensurePrivacyDek(
-  keys: Record<string, Uint8Array>
-): Uint8Array {
+export function ensurePrivacyDek(keys: Record<string, Uint8Array>): Uint8Array {
   const existing = keys[PRIVACY_DEK_ALIAS];
   if (existing !== undefined) {
     assertSealedDek(existing, "privacy");
@@ -334,7 +425,10 @@ export function ensurePrivacyDek(
 }
 
 export function privacyDekFingerprint(dek: Uint8Array): string {
-  return sealedDekFingerprint(dek, { kidBytes: KID_BYTES, errorPrefix: "privacy" });
+  return sealedDekFingerprint(dek, {
+    kidBytes: KID_BYTES,
+    errorPrefix: "privacy",
+  });
 }
 
 export function resolvePrivacyDek(
@@ -347,12 +441,14 @@ export function resolvePrivacyDek(
         candidate instanceof Uint8Array &&
         candidate.length === DEK_BYTES &&
         privacyDekFingerprint(candidate) === kidHex
-      ) return candidate;
+      )
+        return candidate;
     }
     throw new Error(`privacy: no DEK matches envelope kid ${kidHex}`);
   }
   const current = keys[PRIVACY_DEK_ALIAS];
-  if (current instanceof Uint8Array && current.length === DEK_BYTES) return current;
+  if (current instanceof Uint8Array && current.length === DEK_BYTES)
+    return current;
   throw new Error(`privacy: no DEK under ${PRIVACY_DEK_ALIAS}`);
 }
 
@@ -385,7 +481,11 @@ export function readPrivacyKid(dir: string): string | null {
   );
 }
 
-function openPrivacySnapshot(parsed: unknown, dek: Uint8Array, path: string): PrivacySnapshot {
+function openPrivacySnapshot(
+  parsed: unknown,
+  dek: Uint8Array,
+  path: string
+): PrivacySnapshot {
   return openSnapshotEnvelope(
     parsed,
     dek,
@@ -417,7 +517,9 @@ function withNextPrivacyRevision(
   let stamped: PrivacySnapshot;
   if (!existsSync(path)) {
     if (store.loadedRevision() !== 0 || store.hasKnownLineage()) {
-      throw new Error(`privacy store missing: ${path} (refusing stale resurrection)`);
+      throw new Error(
+        `privacy store missing: ${path} (refusing stale resurrection)`
+      );
     }
     stamped = { ...store.snapshot(), revision: 0 };
     store.adoptRevision(0);
@@ -432,7 +534,9 @@ function withNextPrivacyRevision(
       );
     }
     if (current.revision === 0 && !store.hasKnownLineage()) {
-      throw new Error(`privacy store exists at ${path} but this instance never loaded it`);
+      throw new Error(
+        `privacy store exists at ${path} but this instance never loaded it`
+      );
     }
     stamped = { ...store.snapshot(), revision: current.revision + 1 };
     store.adoptRevision(current.revision + 1);

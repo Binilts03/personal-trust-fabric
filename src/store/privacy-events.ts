@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 import { canonicalize, sha256Hex } from "../core/canonical.js";
 import type {
+  PreparedEventResolution,
   PrivacyEventRepository,
   ProcessingEventFinalize,
   ProcessingEventPrepare,
@@ -71,39 +72,24 @@ function openRecord(path: string, dek: Uint8Array): ProcessingEventRecord {
   } catch {
     throw new Error(`privacy event store corrupt: ${path}`);
   }
-  return openSnapshotEnvelope(
-    parsed,
-    dek,
-    eventOptions(),
-    path,
-    (value) => {
-      if (
-        typeof value !== "object" ||
-        value === null ||
-        Array.isArray(value) ||
-        typeof (value as Record<string, unknown>)["eventId"] !== "string" ||
-        typeof (value as Record<string, unknown>)["idempotencyKey"] !== "string" ||
-        typeof (value as Record<string, unknown>)["state"] !== "string"
-      ) {
-        throw new Error("privacy event: bad payload");
-      }
-      return value as ProcessingEventRecord;
+  return openSnapshotEnvelope(parsed, dek, eventOptions(), path, (value) => {
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      Array.isArray(value) ||
+      typeof (value as Record<string, unknown>)["eventId"] !== "string" ||
+      typeof (value as Record<string, unknown>)["idempotencyKey"] !==
+        "string" ||
+      typeof (value as Record<string, unknown>)["state"] !== "string"
+    ) {
+      throw new Error("privacy event: bad payload");
     }
-  );
+    return value as ProcessingEventRecord;
+  });
 }
 
 function sealRecord(record: ProcessingEventRecord, dek: Uint8Array): string {
   return JSON.stringify(sealSnapshotEnvelope(record, dek, eventOptions()));
-}
-
-function isSameFinalize(
-  current: ProcessingEventRecord,
-  patch: ProcessingEventFinalize
-): boolean {
-  return (
-    current.finalizedAt === patch.finalizedAt &&
-    current.evidenceRef === patch.evidenceRef
-  );
 }
 
 export class FilePrivacyEventRepository implements PrivacyEventRepository {
@@ -132,8 +118,10 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
 
   prepare(input: ProcessingEventPrepare): ProcessingEventRecord {
     assertOpaquePrivacySubjectRef(input.dataPrincipalRef);
-    if (input.attemptRef !== undefined &&
-        !/^[A-Za-z0-9_.:-]{1,200}$/.test(input.attemptRef)) {
+    if (
+      input.attemptRef !== undefined &&
+      !/^[A-Za-z0-9_.:-]{1,200}$/.test(input.attemptRef)
+    ) {
       throw new Error("privacy event: invalid attempt reference");
     }
     const key = stableKey(input);
@@ -147,7 +135,9 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
       return cloneEvent(existing);
     }
     if (this.all().length >= this.maxRecords) {
-      throw new Error("privacy event store full — archive safely before creating another record");
+      throw new Error(
+        "privacy event store full — archive safely before creating another record"
+      );
     }
     const record: ProcessingEventRecord = {
       ...input,
@@ -209,9 +199,10 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
     if (!existsSync(path)) throw new Error("privacy event: unknown event");
     const current = openRecord(path, this.dek);
     if (current.state !== "PREPARED") {
-      if (current.state === to && isSameFinalize(current, patch)) {
-        return cloneEvent(current);
-      }
+      // Idempotent retry: the first final evidence wins and is never
+      // rewritten. This closes the crash-after-finalize/retry wedge without
+      // letting a later call replace a receipt.
+      if (current.state === to) return cloneEvent(current);
       // A crash or ambiguous provider result may later be reconciled.
       // FAILED_FINAL and SUCCEEDED are terminal; UNKNOWN may be resolved.
       if (
@@ -222,7 +213,9 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
       }
     }
     if (!Number.isInteger(patch.finalizedAt) || patch.finalizedAt < 0) {
-      throw new Error("privacy event: finalizedAt must be a non-negative epoch int");
+      throw new Error(
+        "privacy event: finalizedAt must be a non-negative epoch int"
+      );
     }
     const next: ProcessingEventRecord = {
       ...current,
@@ -244,16 +237,25 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
   }
 
   listBySubject(dataPrincipalRef: string): readonly ProcessingEventRecord[] {
-    return this.all().filter((record) => record.dataPrincipalRef === dataPrincipalRef);
+    return this.all().filter(
+      (record) => record.dataPrincipalRef === dataPrincipalRef
+    );
   }
 
-  recoverPrepared(nowSec: number = this.nowSec()): readonly ProcessingEventRecord[] {
+  recoverPrepared(
+    nowSec: number = this.nowSec(),
+    resolve?: (event: ProcessingEventRecord) => PreparedEventResolution | null
+  ): readonly ProcessingEventRecord[] {
     const recovered: ProcessingEventRecord[] = [];
     for (const record of this.all()) {
       if (record.state !== "PREPARED") continue;
+      const proven = resolve?.(record) ?? null;
       recovered.push(
-        this.transition(record.eventId, "OUTCOME_UNKNOWN", {
-          finalizedAt: nowSec,
+        this.transition(record.eventId, proven?.state ?? "OUTCOME_UNKNOWN", {
+          finalizedAt: proven?.finalizedAt ?? nowSec,
+          ...(proven?.evidenceRef !== undefined
+            ? { evidenceRef: proven.evidenceRef }
+            : {}),
         })
       );
     }
@@ -271,12 +273,8 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
   }
 }
 
-
 /** Verify every durable event by decrypting/validating it. */
-export function verifyPrivacyEvents(
-  dir: string,
-  dek: Uint8Array
-): number {
+export function verifyPrivacyEvents(dir: string, dek: Uint8Array): number {
   const root = join(dir, "privacy-events");
   if (!existsSync(root)) return 0;
   let count = 0;
@@ -302,7 +300,9 @@ export function rotatePrivacyEventsDek(
   const root = join(dir, "privacy-events");
   if (!existsSync(root)) return 0;
   let count = 0;
-  for (const name of readdirSync(root).filter((n) => n.endsWith(".json")).sort()) {
+  for (const name of readdirSync(root)
+    .filter((n) => n.endsWith(".json"))
+    .sort()) {
     const path = join(root, name);
     let parsed: unknown;
     try {

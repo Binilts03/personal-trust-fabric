@@ -20,35 +20,31 @@ import {
   rotatePrivacyEventsDek,
   verifyPrivacyEvents,
 } from "../store/privacy-events.js";
+import { listExecutions } from "../store/execution.js";
 import {
   eraseRecord,
   loadVault,
   readVaultKid,
   resolveVaultDek,
 } from "../store/vault.js";
-import {
-  dpdpProfile,
-} from "../privacy/dpdp.js";
-import {
-  PrivacyRuntime,
-} from "../privacy/runtime.js";
+import { dpdpProfile } from "../privacy/dpdp.js";
+import { PrivacyRuntime } from "../privacy/runtime.js";
 import {
   resolveMcpPrivacyConfig,
   MCP_PRIVACY_GATED_PATHS,
   MCP_PRIVACY_UNCOVERED_PATHS,
 } from "../privacy/mcp.js";
-import {
-  planErasure,
-  summarizeProcessing,
-} from "../privacy/rights.js";
+import { planErasure, summarizeProcessing } from "../privacy/rights.js";
 import type {
   ConsentEvidence,
   NoticeEvidence,
   ProcessingActivity,
   ProcessingBasisEvidence,
+  ProcessingEventPrepare,
   RetentionHold,
   TrustedProcessingContext,
 } from "../privacy/model.js";
+import { canonicalize, sha256Hex } from "../core/canonical.js";
 import type {
   AuthorityOperation,
   VerifiedIdentity,
@@ -69,10 +65,7 @@ export interface PrivacyCliContext {
   readonly persistKeys: () => void;
 }
 
-function flag(
-  flags: Record<string, string | boolean>,
-  name: string
-): string {
+function flag(flags: Record<string, string | boolean>, name: string): string {
   const value = flags[name];
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`usage: --${name} is required`);
@@ -108,7 +101,8 @@ function printJson(ctx: PrivacyCliContext, value: unknown): void {
 
 function privacyDek(ctx: PrivacyCliContext): Uint8Array {
   const kid = readPrivacyKid(ctx.dir);
-  if (kid === null) throw new Error("privacy: not initialized (run: ptf privacy init)");
+  if (kid === null)
+    throw new Error("privacy: not initialized (run: ptf privacy init)");
   return resolvePrivacyDek(ctx.keys, kid);
 }
 
@@ -133,7 +127,10 @@ function persistMutation(
   });
 }
 
-function repo(ctx: PrivacyCliContext, dek = privacyDek(ctx)): FilePrivacyEventRepository {
+function repo(
+  ctx: PrivacyCliContext,
+  dek = privacyDek(ctx)
+): FilePrivacyEventRepository {
   return new FilePrivacyEventRepository({
     dir: ctx.dir,
     dek,
@@ -161,7 +158,9 @@ function consentView(value: ConsentEvidence) {
     purpose: value.purpose,
     dataCategories: [...value.dataCategories],
     givenAt: value.givenAt,
-    ...(value.withdrawnAt !== undefined ? { withdrawnAt: value.withdrawnAt } : {}),
+    ...(value.withdrawnAt !== undefined
+      ? { withdrawnAt: value.withdrawnAt }
+      : {}),
   };
 }
 
@@ -213,7 +212,9 @@ function withdrawConsent(ctx: PrivacyCliContext, store: PrivacyStore): void {
   ctx.io.print(`consent withdrawn: ${value.id}`);
 }
 
-export async function runPrivacyCommand(ctx: PrivacyCliContext): Promise<number> {
+export async function runPrivacyCommand(
+  ctx: PrivacyCliContext
+): Promise<number> {
   switch (ctx.path) {
     case "init": {
       if (existsSync(join(ctx.dir, "privacy-state.json"))) {
@@ -343,8 +344,24 @@ export async function runPrivacyCommand(ctx: PrivacyCliContext): Promise<number>
 
     case "summary": {
       const subject = flag(ctx.flags, "subject-ref");
-      const events = repo(ctx).listBySubject(subject);
-      printJson(ctx, summarizeProcessing(events, subject));
+      const store = loadStore(ctx);
+      const owner = optional(ctx.flags, "owner");
+      const records =
+        owner === undefined
+          ? undefined
+          : loadVault(ctx.dir, {
+              nowSec: ctx.io.now,
+              keys: ctx.keys,
+            }).listMetadata(owner);
+      printJson(
+        ctx,
+        summarizeProcessing(repo(ctx).listBySubject(subject), subject, {
+          consents: store.snapshot().consents,
+          ...(records !== undefined ? { records } : {}),
+          holds: store.snapshot().holds,
+          nowSec: ctx.io.now(),
+        })
+      );
       return 0;
     }
 
@@ -379,11 +396,13 @@ export async function runPrivacyCommand(ctx: PrivacyCliContext): Promise<number>
         .split(",")
         .map((id) => id.trim())
         .filter((id) => id.length > 0);
-      if (ids.length === 0) throw new Error("privacy erase: --ids must be non-empty");
+      if (ids.length === 0)
+        throw new Error("privacy erase: --ids must be non-empty");
       const byId = new Map(plan.map((item) => [item.record.id, item]));
       for (const id of ids) {
         const item = byId.get(id);
-        if (item === undefined) throw new Error(`privacy erase: unknown record ${id}`);
+        if (item === undefined)
+          throw new Error(`privacy erase: unknown record ${id}`);
         if (item.status !== "eligible") {
           throw new Error(`privacy erase: record ${id} is held`);
         }
@@ -408,9 +427,32 @@ export async function runPrivacyCommand(ctx: PrivacyCliContext): Promise<number>
       // could classify an in-flight operation as ambiguous. No auto-startup
       // sweep: operators must quiesce hosts and explicitly acknowledge.
       if (ctx.flags["yes"] !== true) {
-        throw new Error("privacy events reconcile requires stopped writers and --yes");
+        throw new Error(
+          "privacy events reconcile requires stopped writers and --yes"
+        );
       }
-      const recovered = repo(ctx).recoverPrepared(ctx.io.now());
+      // Use the execution journal as the outcome oracle when it can prove a
+      // terminal result for the exact terms. Anything else stays conservatively
+      // OUTCOME_UNKNOWN; this sweep never guesses.
+      const journal = new Map(
+        listExecutions(ctx.dir).map((record) => [record.termsDigest, record])
+      );
+      const recovered = repo(ctx).recoverPrepared(ctx.io.now(), (event) => {
+        const record =
+          journal.get(event.attemptRef ?? "") ?? journal.get(event.termsDigest);
+        if (record === undefined) return null;
+        if (record.state === "SUCCEEDED" && record.receiptId !== undefined) {
+          return {
+            state: "SUCCEEDED",
+            finalizedAt: record.receiptAt ?? ctx.io.now(),
+            evidenceRef: `execution-receipt:${record.receiptId}`,
+          };
+        }
+        if (record.state === "FAILED_FINAL") {
+          return { state: "FAILED_FINAL", finalizedAt: record.updatedAt };
+        }
+        return null;
+      });
       ctx.audit.append({
         actor: "operator",
         action: "privacy.events.reconcile",
@@ -419,30 +461,42 @@ export async function runPrivacyCommand(ctx: PrivacyCliContext): Promise<number>
       printJson(ctx, {
         recovered: recovered.length,
         eventIds: recovered.map((r) => r.eventId),
-        status: "OUTCOME_UNKNOWN",
-        note: "Effects require independent journal/provider reconciliation",
+        resolved: recovered.map((r) => ({
+          eventId: r.eventId,
+          state: r.state,
+        })),
+        note: "Only journal-proven outcomes are final; the rest remain OUTCOME_UNKNOWN",
       });
       return 0;
     }
 
     case "events/resolve": {
       if (ctx.flags["yes"] !== true) {
-        throw new Error("privacy events resolve requires stopped writers and --yes");
+        throw new Error(
+          "privacy events resolve requires stopped writers and --yes"
+        );
       }
       const eventId = flag(ctx.flags, "id");
       const state = flag(ctx.flags, "state");
       const evidenceRef = flag(ctx.flags, "evidence-ref");
       if (state !== "SUCCEEDED" && state !== "FAILED_FINAL") {
-        throw new Error("privacy events resolve: state must be SUCCEEDED or FAILED_FINAL");
+        throw new Error(
+          "privacy events resolve: state must be SUCCEEDED or FAILED_FINAL"
+        );
       }
       if (!/^[A-Za-z0-9._:/#-]{1,200}$/.test(evidenceRef)) {
-        throw new Error("privacy events resolve: evidence-ref must be an opaque identifier");
+        throw new Error(
+          "privacy events resolve: evidence-ref must be an opaque identifier"
+        );
       }
       const events = repo(ctx);
       const current = events.load(eventId);
-      if (current === null) throw new Error("privacy events resolve: unknown event");
+      if (current === null)
+        throw new Error("privacy events resolve: unknown event");
       if (current.state !== "OUTCOME_UNKNOWN") {
-        throw new Error("privacy events resolve: only OUTCOME_UNKNOWN may be resolved");
+        throw new Error(
+          "privacy events resolve: only OUTCOME_UNKNOWN may be resolved"
+        );
       }
       const resolved = events.transition(eventId, state, {
         finalizedAt: ctx.io.now(),
@@ -461,6 +515,119 @@ export async function runPrivacyCommand(ctx: PrivacyCliContext): Promise<number>
       return 0;
     }
 
+    case "correction": {
+      // Correction itself stays an operator-controlled vault-put (exact
+      // record versioning). This command records the DPDP evidence for that
+      // correction; it never reads or prints the corrected value.
+      const id = flag(ctx.flags, "id");
+      const owner = flag(ctx.flags, "owner");
+      const subject = flag(ctx.flags, "subject-ref");
+      const activityId = flag(ctx.flags, "activity-id");
+      const basisId = flag(ctx.flags, "basis-id");
+      const store = loadStore(ctx);
+      const snap = store.snapshot();
+      const activity = snap.activities.find((value) => value.id === activityId);
+      const basis = snap.bases.find((value) => value.id === basisId);
+      if (activity === undefined || basis === undefined) {
+        throw new Error("privacy correction: unknown activity or basis");
+      }
+      if (activity.basisId !== basis.id) {
+        throw new Error("privacy correction: activity basis does not match");
+      }
+      if (!activity.active || !basis.active) {
+        throw new Error(
+          "privacy correction: activity and basis must be active"
+        );
+      }
+      if (
+        (activity.subjects.kind === "exact" &&
+          activity.subjects.ref !== subject) ||
+        (activity.subjects.kind === "set" &&
+          !activity.subjects.refs.includes(subject))
+      ) {
+        throw new Error(
+          "privacy correction: subject is outside the activity scope"
+        );
+      }
+      const record = loadVault(ctx.dir, {
+        nowSec: ctx.io.now,
+        keys: ctx.keys,
+      })
+        .listMetadata(owner)
+        .find((value) => value.id === id);
+      if (record === undefined) {
+        throw new Error("privacy correction: unknown vault record");
+      }
+      if (
+        !activity.dataCategories.includes(record.type) ||
+        !basis.dataCategories.includes(record.type)
+      ) {
+        throw new Error(
+          "privacy correction: record category is outside the basis"
+        );
+      }
+      const now = ctx.io.now();
+      const evidenceRef =
+        optional(ctx.flags, "evidence-ref") ??
+        `vault-record:${record.id}:v${record.version}`;
+      if (!/^[A-Za-z0-9._:/#-]{1,200}$/.test(evidenceRef)) {
+        throw new Error(
+          "privacy correction: evidence-ref must be an opaque identifier"
+        );
+      }
+      const termsDigest = sha256Hex(
+        canonicalize({
+          action: "/correct",
+          recordId: record.id,
+          recordVersion: record.version,
+          dataPrincipalRef: subject,
+          activityId,
+          basisId,
+        })
+      );
+      const input: ProcessingEventPrepare = {
+        profileId: activity.profileId,
+        profileRevision: dpdpProfile.revision,
+        dataPrincipalRef: subject,
+        authorityPrincipal: activity.authorityPrincipal,
+        actor: "operator",
+        controllerId: activity.controllerId,
+        activityId,
+        basisId,
+        purpose: activity.purpose,
+        action: "/correct",
+        resource: { type: record.type, id: record.id },
+        dataCategories: [record.type],
+        recipients: [],
+        termsDigest,
+        authorityCitationIds: [],
+        attemptRef: `correction:${termsDigest}`,
+        preparedAt: now,
+      };
+      const events = repo(ctx);
+      const prepared = events.prepare(input);
+      const event =
+        prepared.state === "PREPARED"
+          ? events.transition(prepared.eventId, "SUCCEEDED", {
+              finalizedAt: now,
+              evidenceRef,
+            })
+          : prepared;
+      ctx.audit.append({
+        actor: "operator",
+        action: "privacy.correction",
+        detail: `${record.id}:${event.eventId}`,
+      });
+      printJson(ctx, {
+        eventId: event.eventId,
+        state: event.state,
+        recordId: record.id,
+        recordVersion: record.version,
+        evidenceRef: event.evidenceRef,
+      });
+      return 0;
+    }
+
     case "verify": {
       const dek = privacyDek(ctx);
       const store = loadStore(ctx);
@@ -474,15 +641,17 @@ export async function runPrivacyCommand(ctx: PrivacyCliContext): Promise<number>
         processingEvents: eventCount,
         verified: true,
         enforcement: {
-          mode: configPath === undefined
-            ? "not-inspected"
-            : "configured-reference-host",
+          mode:
+            configPath === undefined
+              ? "not-inspected"
+              : "configured-reference-host",
           runtimeAttested: false,
           coveredPaths: [...MCP_PRIVACY_GATED_PATHS],
           uncoveredPaths: [...MCP_PRIVACY_UNCOVERED_PATHS],
-          note: configPath === undefined
-            ? "No MCP operator config inspected: store verification is not enforcement proof"
-            : "Configuration is valid, but this CLI cannot attest a separately running MCP host",
+          note:
+            configPath === undefined
+              ? "No MCP operator config inspected: store verification is not enforcement proof"
+              : "Configuration is valid, but this CLI cannot attest a separately running MCP host",
         },
       });
       return 0;

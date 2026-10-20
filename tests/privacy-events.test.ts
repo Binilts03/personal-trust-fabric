@@ -3,9 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  type ProcessingEventPrepare,
-} from "../src/index.js";
+import { type ProcessingEventPrepare } from "../src/index.js";
 import { createPrivacyDek } from "../src/store/privacy.js";
 import { FilePrivacyEventRepository } from "../src/store/privacy-events.js";
 
@@ -36,7 +34,11 @@ describe("durable privacy processing events", () => {
   it("prepares idempotently and finalizes once", () => {
     const dir = tmp();
     const dek = createPrivacyDek();
-    const repo = new FilePrivacyEventRepository({ dir, dek, nowSec: () => NOW });
+    const repo = new FilePrivacyEventRepository({
+      dir,
+      dek,
+      nowSec: () => NOW,
+    });
     const a = repo.prepare(PREPARE);
     const b = repo.prepare(PREPARE);
     assert.equal(a.eventId, b.eventId);
@@ -66,7 +68,9 @@ describe("durable privacy processing events", () => {
   it("records separate disclosure attempts with identical terms but different nonces", () => {
     const dir = tmp();
     const repo = new FilePrivacyEventRepository({
-      dir, dek: createPrivacyDek(), nowSec: () => NOW,
+      dir,
+      dek: createPrivacyDek(),
+      nowSec: () => NOW,
     });
     const first = repo.prepare({ ...PREPARE, attemptRef: "nonce:first" });
     const second = repo.prepare({ ...PREPARE, attemptRef: "nonce:second" });
@@ -77,7 +81,11 @@ describe("durable privacy processing events", () => {
   it("reconciles OUTCOME_UNKNOWN to a final observed result", () => {
     const dir = tmp();
     const dek = createPrivacyDek();
-    const repo = new FilePrivacyEventRepository({ dir, dek, nowSec: () => NOW });
+    const repo = new FilePrivacyEventRepository({
+      dir,
+      dek,
+      nowSec: () => NOW,
+    });
     const prepared = repo.prepare(PREPARE);
     const unknown = repo.transition(prepared.eventId, "OUTCOME_UNKNOWN", {
       finalizedAt: NOW + 1,
@@ -121,11 +129,14 @@ describe("durable privacy processing events", () => {
 
   it("rejects path-like and malformed event identifiers before file access", () => {
     const repo = new FilePrivacyEventRepository({
-      dir: tmp(), dek: createPrivacyDek(), nowSec: () => NOW,
+      dir: tmp(),
+      dek: createPrivacyDek(),
+      nowSec: () => NOW,
     });
     assert.throws(() => repo.load("../authority"), /event.*id|invalid/i);
     assert.throws(
-      () => repo.transition("../../authority", "SUCCEEDED", { finalizedAt: NOW }),
+      () =>
+        repo.transition("../../authority", "SUCCEEDED", { finalizedAt: NOW }),
       /event.*id|invalid/i
     );
   });
@@ -133,7 +144,11 @@ describe("durable privacy processing events", () => {
   it("rejects direct identifiers as privacy subject references", () => {
     const dir = tmp();
     const dek = createPrivacyDek();
-    const repo = new FilePrivacyEventRepository({ dir, dek, nowSec: () => NOW });
+    const repo = new FilePrivacyEventRepository({
+      dir,
+      dek,
+      nowSec: () => NOW,
+    });
     assert.throws(
       () =>
         repo.prepare({
@@ -147,11 +162,18 @@ describe("durable privacy processing events", () => {
   it("encrypts event payloads and recovers abandoned PREPARED as OUTCOME_UNKNOWN", () => {
     const dir = tmp();
     const dek = createPrivacyDek();
-    const repo = new FilePrivacyEventRepository({ dir, dek, nowSec: () => NOW });
+    const repo = new FilePrivacyEventRepository({
+      dir,
+      dek,
+      nowSec: () => NOW,
+    });
     const prepared = repo.prepare(PREPARE);
     const files = readdirSync(join(dir, "privacy-events"));
     assert.equal(files.length, 1);
-    const blob = readFileSync(join(dir, "privacy-events", files[0] as string), "utf8");
+    const blob = readFileSync(
+      join(dir, "privacy-events", files[0] as string),
+      "utf8"
+    );
     assert.ok(!blob.includes("subject:opaque-1"));
     assert.ok(!blob.includes("grant-1"));
 
@@ -160,5 +182,52 @@ describe("durable privacy processing events", () => {
     assert.equal(recovered[0]?.eventId, prepared.eventId);
     assert.equal(recovered[0]?.state, "OUTCOME_UNKNOWN");
     assert.equal(repo.listBySubject("subject:opaque-1").length, 1);
+  });
+
+  it("keeps the first terminal evidence on a same-state retry", () => {
+    const repo = new FilePrivacyEventRepository({
+      dir: tmp(),
+      dek: createPrivacyDek(),
+      nowSec: () => NOW,
+    });
+    const prepared = repo.prepare(PREPARE);
+    const first = repo.transition(prepared.eventId, "SUCCEEDED", {
+      finalizedAt: NOW + 1,
+      evidenceRef: "receipt:first",
+    });
+    const retry = repo.transition(prepared.eventId, "SUCCEEDED", {
+      finalizedAt: NOW + 2,
+      evidenceRef: "receipt:second",
+    });
+    assert.equal(retry.finalizedAt, first.finalizedAt);
+    assert.equal(retry.evidenceRef, "receipt:first");
+    assert.throws(
+      () =>
+        repo.transition(prepared.eventId, "FAILED_FINAL", {
+          finalizedAt: NOW + 3,
+        }),
+      /terminal transition forbidden/
+    );
+  });
+
+  it("uses a proven journal outcome when recovering a prepared event", () => {
+    const repo = new FilePrivacyEventRepository({
+      dir: tmp(),
+      dek: createPrivacyDek(),
+      nowSec: () => NOW,
+    });
+    const prepared = repo.prepare(PREPARE);
+    const recovered = repo.recoverPrepared(NOW + 10, (event) =>
+      event.eventId === prepared.eventId
+        ? {
+            state: "SUCCEEDED",
+            finalizedAt: NOW + 5,
+            evidenceRef: "execution-receipt:receipt-1",
+          }
+        : null
+    );
+    assert.equal(recovered[0]?.state, "SUCCEEDED");
+    assert.equal(recovered[0]?.finalizedAt, NOW + 5);
+    assert.equal(recovered[0]?.evidenceRef, "execution-receipt:receipt-1");
   });
 });

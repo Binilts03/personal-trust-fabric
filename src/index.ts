@@ -40,4 +40,3 @@ export * from "./adapters/providers.js";
 
 // The privacy package owns its public, persistence-free contract.
 export * from "./privacy/api.js";
-export * from "./privacy/mcp.js";
