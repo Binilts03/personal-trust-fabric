@@ -22,18 +22,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run eval
-      - name: seam check (tests via public barrel; bins exempt)
-        run: |
-          # Repo-owned privacy persistence tests may reach only these two
-          # internal modules; the published ./privacy API excludes them.
-          if grep -R 'from "\.\./src/[^"]*\.js"' tests --include="*.ts" | grep -v 'from "\.\./src/index\.js"' | grep -v 'from "\.\./src/cli\.js"' | grep -v 'from "\.\./src/mcp-server\.js"' | grep -v 'from "\.\./src/pdp-server\.js"' | grep -v 'from "\.\./src/store/privacy\.js"' | grep -v 'from "\.\./src/store/privacy-events\.js"'; then
-            echo "FAIL: test reaches past public seam"; exit 1;
-          fi
-      - name: zero-dep check (core is node:crypto + relative only)
-        run: |
-          if grep -R 'from "' src/core --include="*.ts" | grep -v 'from "node:crypto"' | grep -v 'from "\./' | grep -v 'from "\.\./'; then
-            echo "FAIL: core has non-allowlisted import"; exit 1;
-          fi
+      # One implementation shared with scripts/harness.sh: seam rules cannot drift.
+      - name: seam + zero-dep checks (tests via public barrel; bins exempt)
+        run: node scripts/check-seams.mjs
   docs:
     runs-on: ubuntu-latest
     permissions:
