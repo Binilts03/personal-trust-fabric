@@ -31,6 +31,61 @@ import {
 
 const EVENT_VERSION = 1;
 const EVENT_AAD = "ptf-privacy-event/v1";
+/**
+ * The attempt index is a CACHE, not evidence: it maps an attempt reference
+ * to the event files that cover it, so a lookup does not have to decrypt
+ * every event. A missing, stale, or unreadable index is a cache miss - the
+ * lookup falls back to the full scan, so the index can never hide an event.
+ * It lives beside the store (not inside the event directory) so the backup
+ * manifest keeps counting events, not cache files.
+ */
+const INDEX_FILE = "privacy-event-index.json";
+
+interface AttemptIndex {
+  readonly attempts: Readonly<Record<string, readonly string[]>>;
+}
+
+function attemptKey(termsDigest: string, attemptRef: string): string {
+  return sha256Hex(canonicalize([termsDigest, attemptRef]));
+}
+
+function indexPath(dir: string): string {
+  return join(dir, INDEX_FILE);
+}
+
+function readIndex(dir: string, dek: Uint8Array): AttemptIndex | null {
+  const path = indexPath(dir);
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return openSnapshotEnvelope(parsed, dek, eventOptions(), path, (value) => {
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        Array.isArray(value) ||
+        typeof (value as { attempts?: unknown }).attempts !== "object"
+      ) {
+        throw new Error("privacy event: bad index payload");
+      }
+      return value as AttemptIndex;
+    });
+  } catch {
+    // A stale index (or one sealed with a rotated key) is a cache miss.
+    return null;
+  }
+}
+
+function writeIndex(dir: string, dek: Uint8Array, index: AttemptIndex): void {
+  try {
+    atomicWrite(
+      indexPath(dir),
+      JSON.stringify(sealSnapshotEnvelope(index, dek, eventOptions()))
+    );
+  } catch {
+    // The index is a cache: failing to write it must never fail the
+    // evidence write. The next lookup falls back to the full scan.
+  }
+}
 
 function stableKey(input: ProcessingEventPrepare): string {
   const { preparedAt: _preparedAt, ...stable } = input;
@@ -129,10 +184,8 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
     // A caller that did not supply a retry reference gets a fresh attempt.
     // Without this, identical terms would collapse distinct effects into one
     // evidence record.
-    const normalized: ProcessingEventPrepare =
-      input.attemptRef === undefined
-        ? { ...input, attemptRef: randomUUID() }
-        : input;
+    const attemptRef = input.attemptRef ?? randomUUID();
+    const normalized: ProcessingEventPrepare = { ...input, attemptRef };
     const key = stableKey(normalized);
     const eventId = eventIdFor(key);
     const path = eventFile(this.dir, eventId);
@@ -195,7 +248,23 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
       }
       throw error;
     }
+    this.indexAttempt(normalized.termsDigest, attemptRef, eventId);
     return cloneEvent(record);
+  }
+
+  /** Point the attempt cache at this event. Best effort by design. */
+  private indexAttempt(
+    termsDigest: string,
+    attemptRef: string,
+    eventId: string
+  ): void {
+    const key = attemptKey(termsDigest, attemptRef);
+    const index = readIndex(this.dir, this.dek) ?? { attempts: {} };
+    const ids = index.attempts[key] ?? [];
+    if (ids.includes(eventId)) return;
+    writeIndex(this.dir, this.dek, {
+      attempts: { ...index.attempts, [key]: [...ids, eventId] },
+    });
   }
 
   load(eventId: string): ProcessingEventRecord | null {
@@ -243,10 +312,13 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
   }
 
   findByKey(idempotencyKey: string): ProcessingEventRecord | null {
-    for (const record of this.all()) {
-      if (record.idempotencyKey === idempotencyKey) return record;
-    }
-    return null;
+    // The event id is derived from the idempotency key, so the lookup is a
+    // single file read instead of a scan that decrypts every event.
+    if (!/^[0-9a-f]{64}$/.test(idempotencyKey)) return null;
+    const path = eventFile(this.dir, eventIdFor(idempotencyKey));
+    if (!existsSync(path)) return null;
+    const record = openRecord(path, this.dek);
+    return record.idempotencyKey === idempotencyKey ? cloneEvent(record) : null;
   }
 
   listBySubject(dataPrincipalRef: string): readonly ProcessingEventRecord[] {
@@ -259,6 +331,26 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
     termsDigest: string,
     attemptRef: string
   ): readonly ProcessingEventRecord[] {
+    // The attempt cache turns this into a single event read. A cache miss
+    // (no index, a stale index, an index that does not cover the attempt)
+    // falls back to the full scan, so the index can never hide an event.
+    const key = attemptKey(termsDigest, attemptRef);
+    const indexed = readIndex(this.dir, this.dek)?.attempts[key];
+    if (indexed !== undefined) {
+      const found: ProcessingEventRecord[] = [];
+      for (const eventId of indexed) {
+        const record = this.load(eventId);
+        if (record === null) continue;
+        if (
+          record.termsDigest !== termsDigest ||
+          record.attemptRef !== attemptRef
+        ) {
+          continue;
+        }
+        found.push(record);
+      }
+      if (found.length > 0) return found;
+    }
     return this.all().filter(
       (record) =>
         record.termsDigest === termsDigest && record.attemptRef === attemptRef

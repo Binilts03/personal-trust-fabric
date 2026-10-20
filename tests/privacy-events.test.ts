@@ -1,6 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ProcessingEventPrepare } from "../src/index.js";
@@ -224,6 +230,46 @@ describe("durable privacy processing events", () => {
         }),
       /terminal transition forbidden/
     );
+  });
+
+  it("indexes attempts and still finds the event without the index", () => {
+    const dir = tmp();
+    const dek = createPrivacyDek();
+    const repo = new FilePrivacyEventRepository({
+      dir,
+      dek,
+      nowSec: () => NOW,
+    });
+    const prepared = repo.prepare(PREPARE);
+    // The index is a cache: the lookup works with it...
+    const indexed = repo.findByAttempt(PREPARE.termsDigest, "attempt:1");
+    assert.equal(indexed.length, 1);
+    assert.equal(indexed[0]?.eventId, prepared.eventId);
+    // ...and without it. A missing index is a cache miss, never a lost
+    // event.
+    rmSync(join(dir, "privacy-event-index.json"), { force: true });
+    const scanned = repo.findByAttempt(PREPARE.termsDigest, "attempt:1");
+    assert.equal(scanned.length, 1);
+    assert.equal(scanned[0]?.eventId, prepared.eventId);
+    // A wrong index entry falls back to the scan too.
+    writeFileSync(join(dir, "privacy-event-index.json"), "{not-json");
+    const afterTamper = repo.findByAttempt(PREPARE.termsDigest, "attempt:1");
+    assert.equal(afterTamper.length, 1);
+    assert.equal(afterTamper[0]?.eventId, prepared.eventId);
+  });
+
+  it("finds an event by its idempotency key without scanning", () => {
+    const dir = tmp();
+    const dek = createPrivacyDek();
+    const repo = new FilePrivacyEventRepository({
+      dir,
+      dek,
+      nowSec: () => NOW,
+    });
+    const prepared = repo.prepare(PREPARE);
+    const found = repo.findByKey(prepared.idempotencyKey);
+    assert.equal(found?.eventId, prepared.eventId);
+    assert.equal(repo.findByKey("cd".repeat(32)), null);
   });
 
   it("uses a proven journal outcome when recovering a prepared event", () => {
