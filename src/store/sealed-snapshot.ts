@@ -41,6 +41,49 @@ export function sealedDekFingerprint(
   return sha256Hex(Buffer.from(dek)).slice(0, kidBytes * 2);
 }
 
+/**
+ * Resolve the key that opens a sealed snapshot. One rule for every sealed
+ * store: when the envelope names a kid, the key whose fingerprint matches
+ * that kid opens it (a partial rotation resumes); otherwise the store's
+ * alias entry does.
+ */
+export function resolveSealedDek(
+  keys: Record<string, Uint8Array>,
+  opts: {
+    readonly alias: string;
+    readonly kidHex?: string | null;
+    readonly bytes: number;
+    readonly kidBytes: number;
+    readonly errorPrefix: string;
+    readonly missingHint: string;
+  }
+): Uint8Array {
+  if (opts.kidHex !== undefined && opts.kidHex !== null) {
+    for (const candidate of Object.values(keys)) {
+      if (
+        candidate instanceof Uint8Array &&
+        candidate.length === opts.bytes &&
+        sealedDekFingerprint(candidate, {
+          kidBytes: opts.kidBytes,
+          errorPrefix: opts.errorPrefix,
+        }) === opts.kidHex
+      ) {
+        return candidate;
+      }
+    }
+    throw new Error(
+      `${opts.errorPrefix}: no DEK matches envelope kid ${opts.kidHex}${opts.missingHint}`
+    );
+  }
+  const current = keys[opts.alias];
+  if (current instanceof Uint8Array && current.length === opts.bytes) {
+    return current;
+  }
+  throw new Error(
+    `${opts.errorPrefix}: no DEK under ${opts.alias}${opts.missingHint}`
+  );
+}
+
 /** The envelope shape check the kid reader and the opener share. */
 function assertSealedEnvelope(
   parsed: unknown,

@@ -24,6 +24,7 @@ import { assertOpaquePrivacySubjectRef } from "../privacy/model.js";
 import {
   openSnapshotEnvelope,
   readSealedEnvelopeKid,
+  resolveSealedDek,
   sealSnapshotEnvelope,
   sealedDekFingerprint,
 } from "./sealed-snapshot.js";
@@ -346,18 +347,14 @@ export function rotatePrivacyEventsDek(
       throw new Error(`privacy event store corrupt: ${path}`);
     }
     const kid = readSealedEnvelopeKid(parsed, eventOptions(), path);
-    const opening = Object.values(opts.keys).find(
-      (candidate) =>
-        candidate instanceof Uint8Array &&
-        candidate.length === 32 &&
-        sealedDekFingerprint(candidate, {
-          kidBytes: 8,
-          errorPrefix: "privacy event",
-        }) === kid
-    );
-    if (opening === undefined) {
-      throw new Error(`privacy event: no DEK matches envelope kid ${kid}`);
-    }
+    const opening = resolveSealedDek(opts.keys, {
+      alias: "",
+      kidHex: kid,
+      bytes: 32,
+      kidBytes: 8,
+      errorPrefix: "privacy event",
+      missingHint: "",
+    });
     const record = openRecord(path, opening);
     atomicWrite(path, sealRecord(record, opts.newDek));
     count += 1;

@@ -5,12 +5,14 @@ import {
   atomicWrite,
   checkFreshness,
   FileAuditLog,
+  nextStoreRevision,
   parseStoreFile,
 } from "./files.js";
 import {
   assertSealedDek,
   openSnapshotEnvelope,
   readSealedEnvelopeKid,
+  resolveSealedDek,
   sealSnapshotEnvelope,
   sealedDekFingerprint,
 } from "./sealed-snapshot.js";
@@ -111,27 +113,14 @@ export function resolveVaultDek(
   keys: Record<string, Uint8Array>,
   kidHex?: string | null
 ): Uint8Array {
-  if (kidHex !== undefined && kidHex !== null) {
-    for (const candidate of Object.values(keys)) {
-      if (
-        candidate instanceof Uint8Array &&
-        candidate.length === DEK_BYTES &&
-        vaultDekFingerprint(candidate) === kidHex
-      ) {
-        return candidate;
-      }
-    }
-    throw new Error(
-      `vault: no DEK matches envelope kid ${kidHex} (rotation incomplete — re-run vault-rekey)`
-    );
-  }
-  const current = keys[VAULT_DEK_ALIAS];
-  if (current instanceof Uint8Array && current.length === DEK_BYTES) {
-    return current;
-  }
-  throw new Error(
-    `no vault DEK under ${VAULT_DEK_ALIAS} (run: vault-put first)`
-  );
+  return resolveSealedDek(keys, {
+    alias: VAULT_DEK_ALIAS,
+    ...(kidHex !== undefined ? { kidHex } : {}),
+    bytes: DEK_BYTES,
+    kidBytes: KID_BYTES,
+    errorPrefix: "vault",
+    missingHint: " (run: vault-put first)",
+  });
 }
 
 /** Envelope kid for a store dir, or null when no vault file exists. */
@@ -226,35 +215,21 @@ function withNextVaultRevision(
   const sealDek = opts.sealDek ?? opts.dek;
   checkDek(sealDek);
   const path = join(dir, "personal-state.json");
-  if (!existsSync(path)) {
-    if (vault.loadedRevision() !== 0 || vault.hasKnownLineage()) {
-      throw new Error(
-        `vault store missing: ${path} (instance at revision ${vault.loadedRevision()} — the store was deleted under us; refusing to resurrect stale state — re-init deliberately)`
-      );
-    }
-    const stamped = { ...vault.snapshot(), revision: 0 };
-    vault.adoptRevision(0);
-    return sealSnapshot(stamped, sealDek);
+  let fileRevision: unknown;
+  if (existsSync(path)) {
+    const parsed = parseVaultFile(path);
+    if (isLegacyPlaintext(parsed)) throw legacyError(path);
+    fileRevision = openSnapshot(parsed, opts.dek, path).revision;
   }
-  const parsed = parseVaultFile(path);
-  if (isLegacyPlaintext(parsed)) throw legacyError(path);
-  const current = openSnapshot(parsed, opts.dek, path);
-  const currentRev = current.revision;
-  if (!Number.isInteger(currentRev) || currentRev < 0) {
-    throw new Error(`vault store corrupt: ${path} (bad revision)`);
-  }
-  if (currentRev !== vault.loadedRevision()) {
-    throw new Error(
-      `vault store changed under us (file revision ${currentRev}, loaded ${vault.loadedRevision()}) — reload and retry, never overwrite`
-    );
-  }
-  if (currentRev === 0 && !vault.hasKnownLineage()) {
-    throw new Error(
-      `vault store exists at ${path} but this instance never loaded it — refusing a fresh overwrite (load first, or init a new dir)`
-    );
-  }
-  const stamped = { ...vault.snapshot(), revision: currentRev + 1 };
-  vault.adoptRevision(currentRev + 1);
+  const next = nextStoreRevision({
+    what: "vault",
+    path,
+    fileRevision,
+    loadedRevision: vault.loadedRevision(),
+    hasKnownLineage: vault.hasKnownLineage(),
+  });
+  const stamped = { ...vault.snapshot(), revision: next };
+  vault.adoptRevision(next);
   return sealSnapshot(stamped, sealDek);
 }
 
