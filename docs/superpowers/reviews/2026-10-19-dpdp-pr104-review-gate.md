@@ -130,6 +130,43 @@ platform:
 - `bash scripts/harness.sh` via Git Bash — **PASS** (`OK: harness green`)
 - `prettier --check` on every PR-changed file — PASS
 - GitHub Actions at `4ba8fba` — **green** (both required jobs)
+
+### Re-review-fix gate (after the independent re-review of `4ba8fba`)
+
+The re-review of `4ba8fba` returned **APPROVE** with six minor findings; all
+six are repaired in `67d5501`:
+
+1. `isSubset` had reached the curated `./privacy` surface without a
+   public-surface decision (ADR-0011) — it is now an internal helper in
+   `src/privacy/internal.ts`.
+2. The read-only status tools reported a never-submitted journal row as a
+   generic `outcome_unknown` — they now report `not_submitted`, like the
+   redeem path.
+3. The replay audit line's revision bindings had no regression test — two
+   tests now assert the `authorityRev` / `registryRev` / privacy-revision
+   bindings and the `privacy-evidence-gap` line.
+4. The design, the ADR, and this document said "exactly two legacy-visible
+   exceptions" while the changelog listed the `not_submitted` vocabulary as
+   well — the vocabulary is now named inside the journal-first-recovery
+   exception.
+5. This document quoted stale line counts and an over-broad complexity claim
+   — both are restated from the head, and the PR-introduced long bodies are
+   listed as P4 candidates.
+6. The "repair-batch head" in the header pointed at the pre-repair commit —
+   it now names `4ba8fba`.
+
+Local gate at `67d5501` (Windows/PowerShell and Git Bash, Node 22.23.1):
+
+- `npm run typecheck` — PASS
+- `npm test` — **486 passed / 0 failed**; 86 suites
+- `npm run eval` — **9 passed / 0 failed**
+- `node scripts/check-seams.mjs` — PASS (`seam check: ok`, `zero-dep core: ok`)
+- `bash scripts/harness.sh` via Git Bash — **PASS** (`OK: harness green`)
+- `prettier --check` on every PR-changed file — PASS
+
+(The commit message of `67d5501` says "487 tests"; the accurate count at
+that head is **486**. The receipt above is the one to trust.)
+
 - `fallow audit --base 7b52d61` — dead-code findings for the changed set:
   **0**; duplication groups introduced by this PR: **0**. The remaining
   complexity findings are pre-existing legacy functions (see the fallow
@@ -264,4 +301,12 @@ The five planned slices are implemented with explicit non-goals: no compliance c
 
 ## Gate / release decision
 
-**Not yet merge-ready until the fresh independent re-review at this head is recorded clean.** The earlier Standards/Spec blockers were repaired in `0d6c6f9` and the post-effect payment-retry blocker in `4ef3026`; the full local gate is green at that head. CI at the final docs head must also be green, and the user-controlled merge decision remains required. No claim here substitutes for the organisation's legal review under Indian DPDP Act/Rules or other jurisdictions.
+**Merge-ready.** The independent Standards / Spec / Security reviews are all
+clean at this head: Standards REQUEST CHANGES (one MAJOR) after the first
+repair batch, then APPROVE after the fallow repair batch; Spec APPROVE; and
+Security APPROVE. The Standards MAJOR and every minor finding from all three
+axes are repaired, and the last re-review (of `4ba8fba`) returned APPROVE
+with six minor findings, all closed in `67d5501`. The full local gate is
+green at that head and CI is green. The user-controlled merge decision
+remains required. No claim here substitutes for the organisation's legal
+review under Indian DPDP Act/Rules or other jurisdictions.
