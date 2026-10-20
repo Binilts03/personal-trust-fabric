@@ -254,6 +254,16 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
     );
   }
 
+  findByAttempt(
+    termsDigest: string,
+    attemptRef: string
+  ): readonly ProcessingEventRecord[] {
+    return this.all().filter(
+      (record) =>
+        record.termsDigest === termsDigest && record.attemptRef === attemptRef
+    );
+  }
+
   recoverPrepared(
     nowSec: number = this.nowSec(),
     resolve?: (event: ProcessingEventRecord) => PreparedEventResolution | null,

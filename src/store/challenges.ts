@@ -256,3 +256,33 @@ export function transitionProposal(
   durableWriteFile(path, JSON.stringify(next));
   return next;
 }
+
+/**
+ * Repair a proposal from a conclusive execution-journal record. A completed
+ * effect may be discovered after the proposal was left pending, or after an
+ * older release misclassified the retry as denied. Only the exact journal
+ * evidence path calls this; a concurrent executed transition is an idempotent
+ * success. Denials are never fabricated or reversed without that proof.
+ */
+export function recoverExecutedProposal(
+  storeDir: string,
+  digest: string,
+  receipt: unknown,
+  nowSec: number = Math.floor(Date.now() / 1000)
+): ChallengeRecord {
+  const path = pathOf(storeDir, digest);
+  const current = readRecord(path);
+  if (nowSec > current.updatedAt + current.ttlSec)
+    throw new Error("challenges: proposal expired: propose again");
+  if (current.state === "executed") return current;
+  if (current.state !== "pending" && current.state !== "denied")
+    throw new Error(`challenges: cannot recover ${current.state}`);
+  const next: ChallengeRecord = {
+    ...current,
+    state: "executed",
+    receipt,
+    updatedAt: nowSec,
+  };
+  durableWriteFile(path, JSON.stringify(next));
+  return next;
+}

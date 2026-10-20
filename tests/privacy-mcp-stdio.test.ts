@@ -1,7 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  writeFileSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +25,10 @@ import {
   paymentBounds,
   signBytes,
   openKeystore,
+  loadAuthority,
   VAULT_DEK_ALIAS,
+  DPDP_PROFILE_ID,
+  DPDP_PROFILE_REVISION,
 } from "../src/index.js";
 import {
   PrivacyStore,
@@ -28,12 +37,20 @@ import {
   PRIVACY_DEK_ALIAS,
 } from "../src/store/privacy.js";
 import { FilePrivacyEventRepository } from "../src/store/privacy-events.js";
+import {
+  createExecution,
+  deriveIdempotencyKey,
+  transitionExecution,
+} from "../src/index.js";
 
 const SERVER = fileURLToPath(new URL("../src/mcp-server.js", import.meta.url));
 const P = "did:test:p";
 const A = "did:test:a";
 
-function setup(active: boolean): {
+function setup(
+  active: boolean,
+  paymentMaxUses?: number
+): {
   dir: string;
   configPath: string;
   recipientDer: Uint8Array;
@@ -62,6 +79,7 @@ function setup(active: boolean): {
     resource: { type: "ptf-resource", id: "invoice:1" },
     purpose: "support",
     bounds: paymentBounds({ amountMax: 5000, currency: "INR" }),
+    ...(paymentMaxUses !== undefined ? { maxUses: paymentMaxUses } : {}),
     exp: at + 300,
   });
   saveAuthority(dir, auth);
@@ -163,6 +181,94 @@ function setup(active: boolean): {
     recipientDer,
     recipientPub: recipient.publicKeyRaw,
   };
+}
+
+function paymentEventRepo(dir: string): FilePrivacyEventRepository {
+  const keys = openKeystore(
+    JSON.parse(readFileSync(join(dir, "keystore.json"), "utf8")),
+    "privacy-test-pass"
+  );
+  return new FilePrivacyEventRepository({
+    dir,
+    dek: keys[PRIVACY_DEK_ALIAS] as Uint8Array,
+  });
+}
+
+function seedPaymentEvent(
+  dir: string,
+  termsDigest: string,
+  state: "PREPARED" | "SUCCEEDED" | "FAILED_FINAL" | "OUTCOME_UNKNOWN"
+): void {
+  const at = Math.floor(Date.now() / 1000);
+  const repo = paymentEventRepo(dir);
+  const record = repo.prepare({
+    profileId: DPDP_PROFILE_ID,
+    profileRevision: DPDP_PROFILE_REVISION,
+    dataPrincipalRef: "subject:opaque-1",
+    authorityPrincipal: P,
+    actor: A,
+    controllerId: "acme",
+    activityId: "act-payment",
+    basisId: "basis-support",
+    purpose: "support",
+    action: "/pay",
+    resource: { type: "ptf-resource", id: "invoice:1" },
+    dataCategories: ["payment"],
+    recipients: [{ id: "seller:1", role: "third-party" }],
+    termsDigest,
+    authorityCitationIds: ["grant-payment"],
+    attemptRef: termsDigest,
+    preparedAt: at,
+  });
+  if (state !== "PREPARED") {
+    repo.transition(record.eventId, state, {
+      finalizedAt: at,
+      ...(state === "SUCCEEDED" ? { evidenceRef: "seed:receipt-1" } : {}),
+    });
+  }
+}
+
+function seedPaymentJournal(
+  dir: string,
+  termsDigest: string,
+  overrides: {
+    readonly recipient?: string;
+    readonly amount?: number;
+    readonly currency?: string;
+    readonly purpose?: string;
+  } = {}
+): void {
+  const at = Math.floor(Date.now() / 1000);
+  const record = createExecution(
+    dir,
+    {
+      idempotencyKey: deriveIdempotencyKey(termsDigest, "payment"),
+      capabilityId: "c".repeat(32),
+      termsDigest,
+      action: "/pay",
+      recipient: overrides.recipient ?? "seller:1",
+      resource: "invoice:1",
+      purpose: overrides.purpose ?? "support",
+      context: {
+        amount: overrides.amount ?? 100,
+        currency: overrides.currency ?? "INR",
+      },
+    },
+    at
+  );
+  transitionExecution(dir, record.executionId, "AUTHORIZED", {}, at);
+  transitionExecution(dir, record.executionId, "SUBMITTING", {}, at);
+  transitionExecution(
+    dir,
+    record.executionId,
+    "SUCCEEDED",
+    {
+      externalRef: "provider-tx-1",
+      receiptId: "receipt-1",
+      receiptAt: at,
+    },
+    at
+  );
 }
 
 async function withRpc<T>(
@@ -461,5 +567,330 @@ describe("opt-in privacy disclosure over stdio", () => {
         assert.equal(out.allowed, true);
       }
     );
+  });
+
+  it("returns a journaled payment receipt after a post-effect crash without a new challenge", async () => {
+    const { dir, configPath } = setup(true);
+    let digest = "";
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const proposal = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        assert.equal(proposal.allowed, true);
+        digest = proposal.termsDigest;
+        seedPaymentJournal(dir, digest);
+        seedPaymentEvent(dir, digest, "OUTCOME_UNKNOWN");
+
+        // No recipient proof: the journal must win before the challenge
+        // branch, otherwise this would return needProof or burn authority.
+        const paid = resultData(
+          await call("ptf_redeem", { termsDigest: digest })
+        );
+        assert.equal(paid.receiptId, "receipt-1");
+        assert.equal(paid.amount, 100);
+        assert.equal(paid.currency, "INR");
+        assert.equal(paid.transaction, "provider-tx-1");
+
+        const checked = resultData(
+          await call("ptf_check", { termsDigest: digest })
+        );
+        assert.equal(checked.status, "executed");
+        assert.equal(checked.receipt.receiptId, "receipt-1");
+
+        const fetched = resultData(
+          await call("ptf_get_receipt", { termsDigest: digest })
+        );
+        assert.equal(fetched.status, "executed");
+        assert.equal(fetched.receipt.receiptId, "receipt-1");
+      }
+    );
+    const events = paymentEventRepo(dir).findByAttempt(digest, digest);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.state, "SUCCEEDED");
+    assert.equal(events[0]?.evidenceRef, "journal:receipt-1");
+  });
+
+  it("reconstructs missing processing evidence from a succeeded journal", async () => {
+    const { dir, configPath } = setup(true);
+    let digest = "";
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const proposal = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        digest = proposal.termsDigest;
+        seedPaymentJournal(dir, digest);
+        // Deliberately no Processing Event: the journal proves the effect,
+        // and recovery must fill the missing evidence rather than deny.
+        const paid = resultData(
+          await call("ptf_redeem", { termsDigest: digest })
+        );
+        assert.equal(paid.receiptId, "receipt-1");
+      }
+    );
+    const events = paymentEventRepo(dir).findByAttempt(digest, digest);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.state, "SUCCEEDED");
+  });
+
+  it("recovers a spent single-use payment without consuming again", async () => {
+    const { dir, configPath, recipientDer, recipientPub } = setup(true, 1);
+    let digest = "";
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const proposal = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        digest = proposal.termsDigest;
+        const challenge = resultData(
+          await call("ptf_redeem", { termsDigest: digest })
+        );
+        const { createPrivateKey } = await import("node:crypto");
+        const privateKey = createPrivateKey({
+          key: Buffer.from(recipientDer),
+          format: "der",
+          type: "pkcs8",
+        });
+        const signature = signBytes(
+          privateKey,
+          new Uint8Array(Buffer.from(challenge.cidHex, "hex"))
+        );
+        const paid = resultData(
+          await call("ptf_redeem", {
+            termsDigest: digest,
+            recipientKeyHex: Buffer.from(recipientPub).toString("hex"),
+            recipientSigHex: Buffer.from(signature).toString("hex"),
+          })
+        );
+        assert.ok(paid.receiptId);
+      }
+    );
+    // Simulate the crash window: the effect and journal exist, but the
+    // proposal transition did not land. Reopen it as pending with no receipt.
+    const proposalPath = join(dir, "proposals", `${digest}.json`);
+    const stored = JSON.parse(readFileSync(proposalPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    delete stored["receipt"];
+    stored["state"] = "pending";
+    writeFileSync(proposalPath, JSON.stringify(stored));
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const replay = resultData(
+          await call("ptf_redeem", { termsDigest: digest })
+        );
+        assert.ok(replay.receiptId);
+        assert.equal(replay.amount, 100);
+      }
+    );
+    const used = Object.fromEntries(loadAuthority(dir).snapshot().used);
+    assert.equal(used["grant-payment"], 1);
+  });
+
+  it("surfaces journal ambiguity as outcome_unknown rather than denial", async () => {
+    const { dir, configPath } = setup(true);
+    let digest = "";
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const proposal = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        digest = proposal.termsDigest;
+        mkdirSync(join(dir, "executions"), { recursive: true });
+        writeFileSync(join(dir, "executions", "corrupt.json"), "{not-json");
+
+        const replay = resultData(
+          await call("ptf_redeem", { termsDigest: digest })
+        );
+        assert.equal(replay.status, "outcome_unknown");
+        assert.match(replay.instruction, /[Rr]econcile/);
+
+        const checked = resultData(
+          await call("ptf_check", { termsDigest: digest })
+        );
+        assert.equal(checked.status, "outcome_unknown");
+        const fetched = resultData(
+          await call("ptf_get_receipt", { termsDigest: digest })
+        );
+        assert.equal(fetched.status, "outcome_unknown");
+      }
+    );
+    const stillPending = JSON.parse(
+      readFileSync(join(dir, "proposals", `${digest}.json`), "utf8")
+    ) as { state: string };
+    assert.equal(stillPending.state, "pending");
+  });
+
+  it("does not return a receipt when journal fields drift from the proposal", async () => {
+    const { dir, configPath } = setup(true);
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const proposal = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        seedPaymentJournal(dir, proposal.termsDigest, {
+          recipient: "attacker:1",
+        });
+        const replay = resultData(
+          await call("ptf_redeem", { termsDigest: proposal.termsDigest })
+        );
+        assert.equal(replay.status, "outcome_unknown");
+      }
+    );
+  });
+
+  it("reports a journal/event terminal conflict without denying the proposal", async () => {
+    const { dir, configPath } = setup(true);
+    let digest = "";
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const proposal = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        digest = proposal.termsDigest;
+        seedPaymentJournal(dir, digest);
+        seedPaymentEvent(dir, digest, "FAILED_FINAL");
+        const replay = resultData(
+          await call("ptf_redeem", { termsDigest: digest })
+        );
+        assert.equal(replay.status, "evidence_conflict");
+        assert.equal(replay.processingState, "FAILED_FINAL");
+      }
+    );
+    const stillPending = JSON.parse(
+      readFileSync(join(dir, "proposals", `${digest}.json`), "utf8")
+    ) as { state: string };
+    assert.equal(stillPending.state, "pending");
+  });
+
+  it("recovers journal-backed status across a server restart", async () => {
+    const { dir, configPath } = setup(true);
+    let digest = "";
+    const env = {
+      PTF_STORE_DIR: dir,
+      PTF_PASSPHRASE: "privacy-test-pass",
+      PTF_MCP_PRINCIPAL: P,
+      PTF_MCP_ACTOR: A,
+      PTF_MCP_PRIVACY_CONFIG: configPath,
+    };
+    await withRpc(env, async (call) => {
+      const proposal = resultData(
+        await call("ptf_propose", {
+          cmd: "/pay",
+          purpose: "support",
+          resource: "invoice:1",
+          recipient: "seller:1",
+          amount: 100,
+          currency: "INR",
+        })
+      );
+      digest = proposal.termsDigest;
+    });
+    seedPaymentJournal(dir, digest);
+    seedPaymentEvent(dir, digest, "OUTCOME_UNKNOWN");
+    await withRpc(env, async (call) => {
+      const checked = resultData(
+        await call("ptf_check", { termsDigest: digest })
+      );
+      assert.equal(checked.status, "executed");
+      assert.equal(checked.receipt.receiptId, "receipt-1");
+      const paid = resultData(
+        await call("ptf_redeem", { termsDigest: digest })
+      );
+      assert.equal(paid.receiptId, "receipt-1");
+    });
   });
 });

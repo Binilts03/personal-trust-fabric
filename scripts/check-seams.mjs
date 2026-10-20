@@ -45,6 +45,10 @@ const TEST_IMPORT_EXEMPTIONS = new Map([
     "tests/privacy-mcp-stdio.test.ts",
     new Set(["../src/store/privacy.js", "../src/store/privacy-events.js"]),
   ],
+  [
+    "tests/privacy-payment-replay.test.ts",
+    new Set(["../src/privacy/payment-replay.js"]),
+  ],
 ]);
 
 const CORE_ALLOWED_IMPORT = "node:crypto";

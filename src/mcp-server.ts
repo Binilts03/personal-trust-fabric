@@ -54,8 +54,10 @@ import {
   createProposal,
   gcChallenges,
   loadProposal,
+  recoverExecutedProposal,
   transitionProposal,
 } from "./store/challenges.js";
+import { inspectPaymentJournal } from "./privacy/payment-replay.js";
 import { FileReplay } from "./store/repositories.js";
 import type {
   ActorSelector,
@@ -208,6 +210,33 @@ function privacyEvidenceConflictResult(termsDigest: string, state: string) {
             processingState: state,
             instruction:
               "Existing processing evidence already covers this attempt; no new effect was started. Reconcile that evidence or the execution journal before retrying.",
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+}
+
+/**
+ * The execution journal for these terms is unsettled, unreadable, or no
+ * longer matches the proposal. No new effect was started and no new
+ * challenge was issued: issuing one would burn authority on an operation
+ * whose outcome is already unknown. The agent must reconcile the journal
+ * (provider query or operator) instead of retrying blind.
+ */
+function paymentJournalUnsettledResult(termsDigest: string) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            status: "outcome_unknown",
+            termsDigest,
+            instruction:
+              "The execution journal for these terms is unsettled, unreadable, or no longer matches the proposal. No new effect and no new challenge was started. Reconcile the execution journal (provider query or operator) before retrying; do not propose new terms.",
           },
           null,
           2
@@ -539,6 +568,59 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     }
   };
 
+  /**
+   * Journal-aware status for read-only tools. A completed execution is
+   * conclusive even when the proposal transition never landed (the crash
+   * window this recovery path exists for). Ambiguity is surfaced as
+   * outcome_unknown, never as a denial.
+   */
+  const journalView = (
+    digest: string,
+    demand: Proposal["demand"]
+  ):
+    | { readonly status: "executed"; readonly receipt: Record<string, unknown> }
+    | { readonly status: "failed" }
+    | { readonly status: "outcome_unknown" }
+    | null => {
+    if (demand.action.name !== "/pay") return null;
+    const amount: unknown = demand.context["amount"];
+    const currency: unknown = demand.context["currency"];
+    const recipient: unknown = demand.context["recipient"];
+    if (
+      typeof amount !== "number" ||
+      !Number.isFinite(amount) ||
+      !(amount > 0) ||
+      typeof currency !== "string" ||
+      currency.length === 0 ||
+      typeof recipient !== "string" ||
+      recipient.length === 0
+    ) {
+      return null;
+    }
+    const replay = inspectPaymentJournal({
+      dir: opts.dir,
+      termsDigest: digest,
+      action: "/pay",
+      recipient,
+      resource: demand.resource.id,
+      purpose: demand.purpose ?? "payment",
+      context: { amount, currency },
+    });
+    switch (replay.kind) {
+      case "none":
+        return null;
+      case "succeeded":
+        return {
+          status: "executed",
+          receipt: replay.receipt as unknown as Record<string, unknown>,
+        };
+      case "failed_final":
+        return { status: "failed" };
+      case "unknown":
+        return { status: "outcome_unknown" };
+    }
+  };
+
   const recordProposal = (
     digest: string,
     demand: Proposal["demand"],
@@ -790,7 +872,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_check",
     {
       description:
-        "Check a proposal's status by terms digest (pending = authority would allow, awaiting live redeem; denied/executed are terminal).",
+        "Check a proposal's status by terms digest (pending = authority would allow, awaiting live redeem; denied/executed/failed are terminal; outcome_unknown means inspect the execution journal before retrying).",
       inputSchema: z.object({
         termsDigest: z
           .string()
@@ -807,17 +889,16 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           ],
         };
       }
+      const journal = journalView(args.termsDigest, found.demand);
+      const status =
+        found.status === "executed"
+          ? { status: found.status, receipt: found.receipt }
+          : (journal ?? { status: found.status });
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              found.status === "executed"
-                ? { status: found.status, receipt: found.receipt }
-                : { status: found.status },
-              null,
-              2
-            ),
+            text: JSON.stringify(status, null, 2),
           },
         ],
       };
@@ -860,9 +941,6 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
             },
           ],
         };
-      }
-      if (proposal.status === "denied") {
-        fail("proposal denied: propose again");
       }
       const { auth, reg, audit, keys } = load();
       const ingress = resolveIngress();
@@ -924,6 +1002,83 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       const resource: string = demand.resource.id;
       const purpose: string = demand.purpose ?? "payment";
       const agent: string = demand.actor;
+      // Journal-first recovery: a completed payment is conclusive even when
+      // the proposal transition or Processing Event finalization was
+      // interrupted. Run before any authority preview/challenge so a retry
+      // never spends another use or asks for another recipient proof.
+      const replay = inspectPaymentJournal({
+        dir: opts.dir,
+        termsDigest: args.termsDigest,
+        action: "/pay",
+        recipient,
+        resource,
+        purpose,
+        context: { amount, currency },
+      });
+      if (replay.kind === "succeeded") {
+        if (opts.privacy !== undefined) {
+          try {
+            const scoped = privacyForConfiguredOperation(
+              keys,
+              auth,
+              ingress,
+              demand
+            );
+            scoped.runtime.reconcileAttemptEvent(scoped.gate, {
+              termsDigest: args.termsDigest,
+              attemptRef: args.termsDigest,
+              state: "SUCCEEDED",
+              finalizedAt: replay.receipt.at,
+              evidenceRef: `journal:${replay.receipt.receiptId}`,
+              preparedAt: replay.record.createdAt,
+              createIfMissing: true,
+            });
+          } catch (error) {
+            if (error instanceof PrivacyEventConflictError) {
+              return privacyEvidenceConflictResult(
+                args.termsDigest,
+                error.state
+              );
+            }
+            return privacyOutcomeUnknownResult(args.termsDigest, "payment");
+          }
+        }
+        const receipt: Record<string, unknown> =
+          replay.receipt as unknown as Record<string, unknown>;
+        try {
+          audit.append({
+            actor: agent,
+            action: "redeem",
+            capabilityId: replay.receipt.capabilityId,
+            detail: replay.receipt.transaction,
+          });
+          recoverExecutedProposal(
+            opts.dir,
+            args.termsDigest,
+            replay.receipt,
+            now()
+          );
+        } catch {
+          // The journal still proves the effect; leave the proposal pending
+          // for another idempotent replay instead of reporting a denial.
+          return privacyOutcomeUnknownResult(args.termsDigest, "payment");
+        }
+        return {
+          content: [{ type: "text", text: JSON.stringify(receipt, null, 2) }],
+        };
+      }
+      if (replay.kind === "unknown") {
+        // Live, reconciled, corrupt, or field-mismatched evidence is not a
+        // denial and must not trigger a new challenge: a fresh capability
+        // would burn authority on an operation whose outcome is unknown.
+        return paymentJournalUnsettledResult(args.termsDigest);
+      }
+      if (replay.kind === "failed_final") {
+        fail("payment failed finally: propose new terms");
+      }
+      if (proposal.status === "denied") {
+        fail("proposal denied: propose again");
+      }
       const seed = keys[demand.principal];
       if (seed === undefined)
         fail(`server holds no key for principal ${demand.principal}`);
@@ -1532,7 +1687,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_get_receipt",
     {
       description:
-        "Look up a proposal/receipt by terms digest. Durable across restarts (ADR-0017); unknown when absent or expired.",
+        "Look up a proposal/receipt by terms digest. Durable across restarts (ADR-0017); journal-backed successes are visible even if the proposal transition was interrupted; unknown when absent or expired.",
       inputSchema: z.object({
         termsDigest: z
           .string()
@@ -1549,17 +1704,16 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           ],
         };
       }
+      const journal = journalView(args.termsDigest, found.demand);
+      const status =
+        found.status === "executed"
+          ? { status: found.status, receipt: found.receipt }
+          : (journal ?? { status: found.status });
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              found.status === "executed"
-                ? { status: found.status, receipt: found.receipt }
-                : { status: found.status },
-              null,
-              2
-            ),
+            text: JSON.stringify(status, null, 2),
           },
         ],
       };

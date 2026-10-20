@@ -232,6 +232,16 @@ export interface PrivacyEventRepository {
   findByKey(idempotencyKey: string): ProcessingEventRecord | null;
   listBySubject(dataPrincipalRef: string): readonly ProcessingEventRecord[];
   /**
+   * Replay/reconciliation lookup by exact terms and attempt reference.
+   * Optional so alternative backends can opt out; a caller that needs
+   * conclusive evidence must treat an unsupported lookup as unavailable,
+   * never as absence.
+   */
+  findByAttempt?(
+    termsDigest: string,
+    attemptRef: string
+  ): readonly ProcessingEventRecord[];
+  /**
    * Recover abandoned PREPARED events. A resolver may supply a proven
    * journal/provider outcome; otherwise the conservative result is
    * OUTCOME_UNKNOWN. Must run only while processing writers are stopped.

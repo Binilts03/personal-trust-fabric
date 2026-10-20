@@ -450,6 +450,34 @@ secret-free result returned
 
 No privacy layer reimplements the execution journal.
 
+#### 9.2.1 Journal-first replay (post-effect recovery)
+
+A crash can leave an effect in the execution journal while the proposal, the
+authority use, or the Processing Event finalization is still outstanding. A
+retry of the same exact terms must then recover the recorded outcome instead
+of starting a second effect:
+
+- the journal is consulted **before** any live-authority preview, challenge, or
+  consumption, so a recovery never spends another authority use, never mints a
+  second capability, and never demands a fresh recipient proof;
+- the journal key is derived from the exact terms digest
+  (`deriveIdempotencyKey(termsDigest, "payment")`), and every stored field
+  (action, recipient, resource, purpose, amount, currency) must match the
+  proposal exactly; any drift is ambiguous evidence, never a receipt;
+- a conclusive `SUCCEEDED` record returns the same external receipt, finalizes
+  the Processing Event idempotently (reconstructing a missing event from the
+  still-valid privacy decision, and reporting a terminal event conflict as an
+  evidence conflict), and repairs the proposal to `executed`;
+- a live, reconciled, corrupt, or mismatched record is **ambiguous**, never a
+  denial: no new challenge is issued, no authority is consumed, and the agent
+  is told to reconcile the journal;
+- a conclusive `FAILED_FINAL` record is a terminal failure (no effect
+  happened), and new terms are required.
+
+Replay reads history; it never authorizes a new effect. A later revocation of
+the grant stops new effects but does not unmake a recorded one, so the
+historical receipt stays retrievable for the exact terms it belongs to.
+
 ## 10. Processing evidence
 
 Each Processing Event contains only identifiers/metadata:
@@ -581,6 +609,19 @@ Agents must not be able to:
 - edit Processing Events.
 
 When privacy mode is enabled for an MCP server, existing agent tools use host-resolved privacy context. The agent schema does not grow fields such as `basisId`, `dpdpPurpose`, subject age/classification, controller id, or direct subject identifier. Unauthorized callers receive coarse failures; detailed privacy deny reasons remain on trusted operator/audit surfaces.
+
+The agent-facing result vocabulary adds two non-terminal statuses, both of
+which are explicitly **not** denials:
+
+- `outcome_unknown` - the outcome of the attempt is unknown (an unsettled
+  execution journal, or privacy evidence that could not be finalized). The
+  instruction names the reconciliation and forbids proposing new terms;
+- `evidence_conflict` - durable processing evidence already covers this
+  attempt with a different terminal state, so no new effect was started.
+
+Read-only status tools (`ptf_check`, `ptf_get_receipt`) are journal-aware: a
+journal-backed success is reported as `executed` with the stored receipt even
+when the proposal transition was interrupted.
 
 Existing deployments with privacy mode disabled retain current behavior.
 
