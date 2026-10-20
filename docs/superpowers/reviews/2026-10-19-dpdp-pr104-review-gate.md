@@ -118,6 +118,23 @@ Local gate executed on Windows/PowerShell and Git Bash against
 
 The earlier 465-test receipt is historical and must not be applied to this head.
 
+### Repair-batch gate (after the fallow review session)
+
+The fallow repair batch (`4ba8fba`) re-ran the whole gate on the same
+platform:
+
+- `npm run typecheck` — PASS
+- `npm test` — **484 passed / 0 failed**; 86 suites
+- `npm run eval` — **9 passed / 0 failed**
+- `node scripts/check-seams.mjs` — PASS (`seam check: ok`, `zero-dep core: ok`)
+- `bash scripts/harness.sh` via Git Bash — **PASS** (`OK: harness green`)
+- `prettier --check` on every PR-changed file — PASS
+- GitHub Actions at `4ba8fba` — **green** (both required jobs)
+- `fallow audit --base 7b52d61` — dead-code findings for the changed set:
+  **0**; duplication groups introduced by this PR: **0**. The remaining
+  complexity findings are pre-existing legacy functions (see the fallow
+  section above).
+
 ## Fallow codebase-intelligence review (2026-10-21)
 
 `fallow` 3.34.1 (`npx fallow audit --base 7b52d61`) was run over the
