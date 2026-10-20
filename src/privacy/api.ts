@@ -7,6 +7,7 @@
  */
 export * from "./model.js";
 export { evaluateProcessing } from "./engine.js";
+export { resolveJournalOutcome } from "./recovery.js";
 export { DPDP_PROFILE_ID, DPDP_PROFILE_REVISION, dpdpProfile } from "./dpdp.js";
 export { PrivacyRuntime } from "./runtime.js";
 export type {
@@ -20,6 +21,7 @@ export {
   PrivacyPreEffectError,
 } from "./providers.js";
 export {
+  MCP_PRIVACY_DENIED_PATHS,
   MCP_PRIVACY_GATED_PATHS,
   MCP_PRIVACY_UNCOVERED_PATHS,
   resolveMcpPrivacyConfig,

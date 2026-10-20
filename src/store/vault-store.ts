@@ -20,6 +20,8 @@ export interface VaultRecord {
   readonly value: unknown;
   readonly sensitivity: VaultSensitivity;
   readonly source: string;
+  /** Opaque privacy subject binding; required for privacy-mode erasure. */
+  readonly dataPrincipalRef?: string;
   /**
    * Optional resource address (e.g. `{type:"credential", id:"credential:issuer-1"}`).
    * When set, the record is selected ONLY for reads whose operation
@@ -45,6 +47,7 @@ export interface VaultRecordInput {
   readonly value: unknown;
   readonly sensitivity: VaultSensitivity;
   readonly source: string;
+  readonly dataPrincipalRef?: string;
   readonly resource?: { readonly type: string; readonly id: string };
   readonly allowedPurposes: readonly string[];
   readonly allowedAgents: readonly string[];
@@ -57,6 +60,7 @@ export interface VaultRecordMetadata {
   readonly type: string;
   readonly sensitivity: VaultSensitivity;
   readonly source: string;
+  readonly dataPrincipalRef?: string;
   readonly resource?: { readonly type: string; readonly id: string };
   readonly allowedPurposes: readonly string[];
   readonly allowedAgents: readonly string[];
@@ -119,6 +123,15 @@ function checkInput(input: VaultRecordInput): void {
   parseSensitivity(input.sensitivity);
   if (!isNonEmptyString(input.source))
     throw new Error("vault: source required");
+  if (
+    input.dataPrincipalRef !== undefined &&
+    (typeof input.dataPrincipalRef !== "string" ||
+      !/^subject:[A-Za-z][A-Za-z0-9_-]{5,127}$/.test(input.dataPrincipalRef))
+  ) {
+    throw new Error(
+      "vault: dataPrincipalRef must be an opaque subject reference"
+    );
+  }
   if (input.resource !== undefined) {
     if (
       typeof input.resource !== "object" ||
@@ -170,6 +183,12 @@ export class VaultStore {
     if (prev !== undefined && prev.owner !== input.owner) {
       throw new Error("vault: owner is immutable (use a new id)");
     }
+    if (
+      prev?.dataPrincipalRef !== undefined &&
+      prev.dataPrincipalRef !== input.dataPrincipalRef
+    ) {
+      throw new Error("vault: dataPrincipalRef is immutable (use a new id)");
+    }
     const rec: VaultRecord = {
       id: input.id,
       owner: input.owner,
@@ -177,6 +196,9 @@ export class VaultStore {
       value: input.value,
       sensitivity: input.sensitivity,
       source: input.source,
+      ...(input.dataPrincipalRef !== undefined
+        ? { dataPrincipalRef: input.dataPrincipalRef }
+        : {}),
       ...(input.resource !== undefined
         ? {
             resource: {
@@ -413,6 +435,9 @@ export class VaultStore {
         type: rec.type,
         sensitivity: rec.sensitivity,
         source: rec.source,
+        ...(rec.dataPrincipalRef !== undefined
+          ? { dataPrincipalRef: rec.dataPrincipalRef }
+          : {}),
         ...(rec.resource !== undefined
           ? { resource: { type: rec.resource.type, id: rec.resource.id } }
           : {}),
@@ -433,7 +458,8 @@ export class VaultStore {
     at?: number
   ): VaultErasureReceipt {
     if (!isNonEmptyString(input.id)) throw new Error("vault: id required");
-    if (!isNonEmptyString(input.owner)) throw new Error("vault: owner required");
+    if (!isNonEmptyString(input.owner))
+      throw new Error("vault: owner required");
     const now = at ?? this.nowSec();
     if (!Number.isInteger(now) || now < 0) {
       throw new Error("vault: at must be a non-negative epoch int");
@@ -526,6 +552,9 @@ export class VaultStore {
         value: r["value"],
         sensitivity: r["sensitivity"] as VaultSensitivity,
         source: r["source"] as string,
+        ...(typeof r["dataPrincipalRef"] === "string"
+          ? { dataPrincipalRef: r["dataPrincipalRef"] }
+          : {}),
         allowedPurposes: r["allowedPurposes"] as readonly string[],
         allowedAgents: r["allowedAgents"] as readonly string[],
         ...(r["expiresAt"] === null || typeof r["expiresAt"] === "number"

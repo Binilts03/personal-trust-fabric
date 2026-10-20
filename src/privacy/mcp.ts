@@ -4,12 +4,15 @@ export const MCP_PRIVACY_GATED_PATHS = [
   "ptf_present_data",
   "ptf_propose:/pay",
   "ptf_redeem:/pay",
-  "ptf_request_action",
 ] as const;
+
+/** Paths present in the MCP surface but denied when privacy mode is on. */
+export const MCP_PRIVACY_DENIED_PATHS = ["ptf_request_action"] as const;
 
 export const MCP_PRIVACY_UNCOVERED_PATHS = [
   "custom-provider-adapters",
   "operator-cli-pay",
+  "operator-cli-disclose",
 ] as const;
 
 import type { AuthorityRequest, VerifiedIdentity } from "../core/authority.js";

@@ -6,6 +6,7 @@ import {
 } from "../core/authority.js";
 import { evaluateProcessing } from "./engine.js";
 import { canonicalize, sha256Hex } from "../core/canonical.js";
+import { randomUUID } from "node:crypto";
 import type {
   PrivacyDecision,
   PrivacyDenyReason,
@@ -171,7 +172,7 @@ export class PrivacyRuntime {
   prepareEvent(
     allowed: Extract<PrivacyGateResult, { allow: true }>,
     req: PrivacyGateRequest,
-    attemptRef: string = allowed.termsDigest
+    attemptRef: string = randomUUID()
   ): ProcessingEventRecord {
     // Bind the prepared evidence to the exact gate result, not just to the
     // mutable request object. Library callers cannot swap the action,
@@ -187,7 +188,7 @@ export class PrivacyRuntime {
     if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(attemptRef)) {
       throw new Error("privacy runtime: invalid attempt reference");
     }
-    return this.events.prepare({
+    const event = this.events.prepare({
       attemptRef,
       profileId: allowed.privacy.profileId,
       profileRevision: allowed.privacy.profileRevision,
@@ -206,6 +207,14 @@ export class PrivacyRuntime {
       authorityCitationIds: [...allowed.authorityCitationIds],
       preparedAt: this.nowSec(),
     });
+    if (event.state !== "PREPARED") {
+      // Never run a new external effect against terminal evidence. A retry
+      // of the same attempt must be resolved from the execution journal.
+      throw new Error(
+        `privacy event: attempt already ${event.state} (${event.eventId})`
+      );
+    }
+    return event;
   }
 
   finalizeEvent(

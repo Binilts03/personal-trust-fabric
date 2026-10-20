@@ -760,7 +760,12 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     {
       description:
         "Check a proposal's status by terms digest (pending = authority would allow, awaiting live redeem; denied/executed are terminal).",
-      inputSchema: z.object({ termsDigest: z.string().min(16) }),
+      inputSchema: z.object({
+        termsDigest: z
+          .string()
+          .length(64)
+          .regex(/^[0-9a-f]+$/),
+      }),
     },
     async (args) => {
       const found = readStored(args.termsDigest);
@@ -794,9 +799,20 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       description:
         "Redeem a pending proposal. Without a proof this checks live authority (dry-run) and returns its id to sign (challenge); with a recipient proof it authorizes the capability first, then spends live authority, executes, and returns a receipt. Payment demands only. Accepts any /pay proposal in the shared store regardless of which propose tool created it; re-redeeming executed terms returns the stored receipt without re-executing. Fails closed on anything stale.",
       inputSchema: z.object({
-        termsDigest: z.string().min(16),
-        recipientKeyHex: z.string().min(64).optional(),
-        recipientSigHex: z.string().min(128).optional(),
+        termsDigest: z
+          .string()
+          .length(64)
+          .regex(/^[0-9a-f]+$/),
+        recipientKeyHex: z
+          .string()
+          .length(64)
+          .regex(/^[0-9a-f]+$/)
+          .optional(),
+        recipientSigHex: z
+          .string()
+          .length(128)
+          .regex(/^[0-9a-f]+$/)
+          .optional(),
       }),
     },
     async (args) => {
@@ -998,7 +1014,9 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       // The privacy wrapper precommits an attempt before ANY consumption or
       // provider effect. Legacy mode executes this exact closure directly.
       let consumedAuthorityId: string | undefined;
-      const consumeAndExecute = async () => {
+      const consumeAndExecute = async (
+        markEffectStarted: () => void = () => {}
+      ) => {
         const decision = auth.evaluate(op, ingress, {
           consume: true,
           nowSec: now(),
@@ -1027,28 +1045,28 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           redemption: redeemed,
           nowSec: now(),
           at: now(),
+          onEffectStart: markEffectStarted,
         });
       };
-      const journaled =
-        opts.privacy === undefined
-          ? await consumeAndExecute()
-          : await (async () => {
-              let scoped: ReturnType<typeof privacyForOperation>;
-              try {
-                scoped = privacyForOperation(keys, auth, ingress, demand);
-              } catch {
-                // Never leak store paths, key ids or configuration detail to
-                // the agent-facing error surface.
-                markDenied(args.termsDigest);
-                fail("privacy denied");
-              }
-              return executeProtectedActionWithPrivacy({
-                runtime: scoped.runtime,
-                gate: scoped.gate,
-                execute: consumeAndExecute,
-                attemptRef: args.termsDigest,
-              });
-            })();
+      let journaled: Awaited<ReturnType<typeof consumeAndExecute>>;
+      if (opts.privacy === undefined) {
+        journaled = await consumeAndExecute();
+      } else {
+        try {
+          const scoped = privacyForOperation(keys, auth, ingress, demand);
+          journaled = await executeProtectedActionWithPrivacy({
+            runtime: scoped.runtime,
+            gate: scoped.gate,
+            execute: consumeAndExecute,
+            attemptRef: args.termsDigest,
+          });
+        } catch {
+          // Never leak store paths, key ids, journal details or configuration
+          // detail to the agent-facing error surface.
+          markDenied(args.termsDigest);
+          fail("privacy denied");
+        }
+      }
       // Project the /pay receipt shape from the journal receipt. Amount and
       // currency come from the exact authorized terms verified above
       // (authorizedTermsCover inside the journal) — never invented.
@@ -1189,10 +1207,13 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_present_data",
     {
       description:
-        "Present a pending /disclose proposal as a holder-signed presentation (read-only: a read, no uses consumed). Fails closed unless the proposal is pending and unexpired. Nonce-uniqueness + freshness enforcement is verifier duty (Disclose.verify maxAgeSec default 300). /disclose only; pay via ptf_redeem.",
+        "Present a pending /disclose proposal as a holder-signed presentation (consumes one authority use; no funds move). Fails closed unless the proposal is pending and unexpired. Nonce-uniqueness + freshness enforcement is verifier duty (Disclose.verify maxAgeSec default 300). /disclose only; pay via ptf_redeem.",
       inputSchema: z.object({
-        termsDigest: z.string().min(16),
-        nonce: z.string().min(16),
+        termsDigest: z
+          .string()
+          .length(64)
+          .regex(/^[0-9a-f]+$/),
+        nonce: z.string().min(16).max(512),
       }),
     },
     async (args) => {
@@ -1308,6 +1329,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         }
       } catch (err) {
         markDenied(args.termsDigest);
+        if (opts.privacy !== undefined) fail("privacy denied");
         throw err instanceof Error ? err : new Error(String(err));
       }
       const disclosed = pres.disclosures.map((d) => d.name);
@@ -1344,7 +1366,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
                 // data delivery, not a payment authorization. Display this
                 // notice wherever the presentation is shown.
                 notice:
-                  "read-only /disclose presentation, not a payment authorization: holder-signed data delivery only — no uses consumed, no funds moved",
+                  "presentation consumes one authority use; not a payment authorization: holder-signed data delivery only - no funds moved",
                 termsDigest: args.termsDigest,
                 disclosed,
                 presentation,
@@ -1362,7 +1384,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_request_action",
     {
       description:
-        "Propose any /-path action (dry-run, disclose tier excluded). Redeem stays /pay-only via ptf_redeem.",
+        "Propose any /-path action (dry-run, disclose tier excluded). Redeem stays /pay-only via ptf_redeem. Unavailable in privacy mode.",
       inputSchema: z.object({
         cmd: z.string().min(2).max(200).regex(/^\//),
         purpose: z.string().min(1).max(500).optional(),
@@ -1459,7 +1481,12 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     {
       description:
         "Look up a proposal/receipt by terms digest. Durable across restarts (ADR-0017); unknown when absent or expired.",
-      inputSchema: z.object({ termsDigest: z.string().min(16) }),
+      inputSchema: z.object({
+        termsDigest: z
+          .string()
+          .length(64)
+          .regex(/^[0-9a-f]+$/),
+      }),
     },
     async (args) => {
       const found = readStored(args.termsDigest);

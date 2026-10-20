@@ -751,6 +751,8 @@ export async function executeWithJournal(opts: {
   readonly maxAttempts?: number;
   readonly nowSec?: number;
   readonly at?: number;
+  /** Called immediately before the provider submit boundary. */
+  readonly onEffectStart?: () => void;
 }): Promise<ExecutionReceipt> {
   const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
   const at = opts.at ?? nowSec;
@@ -927,6 +929,7 @@ export async function executeWithJournal(opts: {
   }
 
   rec = J.transition(opts.dir, rec.executionId, "SUBMITTING", {}, nowSec);
+  opts.onEffectStart?.();
   const reqWithKey: ProviderRequest = {
     ...opts.req,
     metadata: { ...(opts.req.metadata ?? {}), idempotencyKey: key },

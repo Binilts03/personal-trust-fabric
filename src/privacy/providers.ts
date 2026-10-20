@@ -29,7 +29,9 @@ function deny(result: Exclude<PrivacyGateResult, { allow: true }>): never {
 export async function executeProtectedActionWithPrivacy(opts: {
   readonly runtime: PrivacyRuntime;
   readonly gate: PrivacyGateRequest;
-  readonly execute: () => Promise<ExecutionReceipt>;
+  readonly execute: (
+    markEffectStarted: () => void
+  ) => Promise<ExecutionReceipt>;
   readonly attemptRef?: string;
 }): Promise<ExecutionReceipt> {
   const first = opts.runtime.preflight(opts.gate);
@@ -44,17 +46,17 @@ export async function executeProtectedActionWithPrivacy(opts: {
 
   const event = opts.runtime.prepareEvent(live, opts.gate, opts.attemptRef);
   let receipt: ExecutionReceipt;
+  let effectStarted = false;
+  const markEffectStarted = () => {
+    effectStarted = true;
+  };
   try {
-    receipt = await opts.execute();
+    receipt = await opts.execute(markEffectStarted);
   } catch (error) {
-    // The provider/journal may have effected before surfacing an error.
-    // Privacy evidence records uncertainty and lets the execution journal
-    // remain the authoritative outcome/reconciliation mechanism. A typed
-    // pre-effect failure is different: no external change happened.
-    const state =
-      error instanceof PrivacyPreEffectError
-        ? "FAILED_FINAL"
-        : "OUTCOME_UNKNOWN";
+    // A caller that has not crossed the effect boundary has provably not
+    // changed external state. After that boundary, preserve ambiguity and
+    // let the execution journal remain the reconciliation oracle.
+    const state = effectStarted ? "OUTCOME_UNKNOWN" : "FAILED_FINAL";
     try {
       opts.runtime.finalizeEvent(event.eventId, state, {
         finalizedAt: Math.floor(Date.now() / 1000),

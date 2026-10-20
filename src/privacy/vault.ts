@@ -11,9 +11,14 @@ import {
   type PrivacyGateRequest,
   type PrivacyGateResult,
 } from "./runtime.js";
+import { canonicalize, sha256Hex } from "../core/canonical.js";
 
 function deny(result: Exclude<PrivacyGateResult, { allow: true }>): never {
-  throw new Error(result.publicReason === "authority-denied" ? "authority denied" : "privacy denied");
+  throw new Error(
+    result.publicReason === "authority-denied"
+      ? "authority denied"
+      : "privacy denied"
+  );
 }
 
 function requireDisclosureBinding(
@@ -28,7 +33,9 @@ function requireDisclosureBinding(
     gate.ingress.id !== disclosure.ingress.id ||
     gate.ingress.principal !== disclosure.ingress.principal
   ) {
-    throw new Error("privacy vault: disclosure gate does not match vault request");
+    throw new Error(
+      "privacy vault: disclosure gate does not match vault request"
+    );
   }
   const ctx = gate.operation.context;
   const claims = ctx["claims"];
@@ -39,7 +46,9 @@ function requireDisclosureBinding(
     claims.some((v, i) => v !== disclosure.requested[i]) ||
     verifier !== disclosure.verifier
   ) {
-    throw new Error("privacy vault: disclosure terms differ from authorized operation");
+    throw new Error(
+      "privacy vault: disclosure terms differ from authorized operation"
+    );
   }
   const recipient = gate.processing.recipients.find(
     (item) => item.id === disclosure.verifier
@@ -77,7 +86,15 @@ export async function discloseWithPrivacy(opts: {
     throw new Error("privacy denied");
   }
 
-  const event = opts.runtime.prepareEvent(live, gate, opts.disclosure.nonce);
+  // Verifier nonces are arbitrary strings. Hash domain-separated so the
+  // event attempt reference stays a bounded opaque identifier.
+  const attemptRef = sha256Hex(
+    canonicalize({
+      kind: "privacy-disclosure-attempt",
+      nonce: opts.disclosure.nonce,
+    })
+  );
+  const event = opts.runtime.prepareEvent(live, gate, attemptRef);
   try {
     const presentation = readForPurpose(opts.vault, opts.disclosure);
     await opts.onAuthorityConsumed(opts.disclosure.authority);
@@ -128,6 +145,8 @@ export async function useCredentialWithPrivacy(opts: {
   readonly gate: PrivacyGateRequest;
   readonly vault: VaultStore;
   readonly secret: SecretUseOptions;
+  /** Stable retry id; omit for a new, distinct protected use. */
+  readonly attemptRef?: string;
 }): Promise<Awaited<ReturnType<typeof useCredential>>> {
   // Authority must reject an unauthorised request BEFORE vault metadata is
   // inspected; otherwise "unknown record" becomes an existence oracle.
@@ -150,20 +169,30 @@ export async function useCredentialWithPrivacy(opts: {
     throw new Error("privacy denied");
   }
 
-  const event = opts.runtime.prepareEvent(live, gate);
+  const event = opts.runtime.prepareEvent(live, gate, opts.attemptRef);
+  let effectStarted = false;
+  const secret: SecretUseOptions = {
+    ...opts.secret,
+    use: async (instruction) => {
+      effectStarted = true;
+      return opts.secret.use(instruction);
+    },
+  };
   try {
-    const result = await useCredential(opts.vault, opts.secret);
+    const result = await useCredential(opts.vault, secret);
     opts.runtime.finalizeEvent(event.eventId, "SUCCEEDED", {
       finalizedAt: opts.secret.nowSec,
-      evidenceRef: `protected-use:${live.termsDigest.slice(0, 16)}`,
+      evidenceRef: `protected-use:${result.receipt}`,
     });
     return result;
   } catch (error) {
-    // Once protected use starts, an external callback may have taken effect
-    // before throwing. Preserve ambiguity rather than claiming final failure.
-    opts.runtime.finalizeEvent(event.eventId, "OUTCOME_UNKNOWN", {
-      finalizedAt: opts.secret.nowSec,
-    });
+    // Before the callback starts, no secret was released and no external
+    // effect can have happened. Once it starts, preserve ambiguity.
+    opts.runtime.finalizeEvent(
+      event.eventId,
+      effectStarted ? "OUTCOME_UNKNOWN" : "FAILED_FINAL",
+      { finalizedAt: opts.secret.nowSec }
+    );
     throw error;
   }
 }

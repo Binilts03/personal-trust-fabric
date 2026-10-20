@@ -157,6 +157,7 @@ const PRIVACY_PATHS = new Set([
 
 const BOOLEAN_FLAGS = new Set([
   "yes",
+  "include-unknown",
   "verify",
   "list",
   "help",
@@ -185,7 +186,7 @@ export function helpText(): string {
     "         --any-agent is an explicit wildcard (audited, deliberate) — prefer --agent / --actor-set",
     "  pay --principal P --agent A --recipient R --amount N --currency C --resource R [--purpose T] [--yes]",
     "  disclose --holder H --verifier V --claims a,b --credential JSON [--allowed a,b] [--yes]",
-    "  vault-put --id ID --owner O --type T --sensitivity general|sensitive|secret --source S --purposes p1,p2 --agents a1,a2 --value-file PATH [--expires-at EPOCH]",
+    "  vault-put --id ID --owner O --type T --sensitivity general|sensitive|secret --source S --purposes p1,p2 --agents a1,a2 --value-file PATH [--subject-ref REF] [--expires-at EPOCH]",
     "         value from a 0600 file only (never argv: argv leaks into shell history/process list); one trailing newline stripped; values never print or audit",
     "  vault-read --holder H --agent A --purpose P --claims a,b --verifier V [--nonce N]",
     "         prints disclosed claim NAMES only (ids-only audit); secrets never leave via read (use in-host useCredential)",
@@ -196,10 +197,10 @@ export function helpText(): string {
     "  restore --from DIR                     copy a backup over fresh --dir, never merges; verifies chain + freshness + anchor",
     "  privacy <subcommand>                    DPDP/privacy evidence, runtime checks, summaries, exact erasure and rekey",
     "  privacy verify [--mcp-config FILE]      verify encrypted privacy store and inspect host configuration (not live attestation)",
-    "  privacy events reconcile --yes         OFFLINE ONLY: resolve PREPARED attempts from the execution journal, else OUTCOME_UNKNOWN; stop writers first",
+    "  privacy events reconcile --yes [--include-unknown]  OFFLINE ONLY: resolve PREPARED attempts from exact journal proof, else OUTCOME_UNKNOWN; stop writers first",
     "  privacy events resolve --id ID --state SUCCEEDED|FAILED_FINAL --evidence-ref REF --yes",
     "                                         reconcile ambiguous processing from independently verified evidence",
-    "  privacy correction --id ID --owner OWNER --subject-ref REF --activity-id ID --basis-id ID",
+    "  privacy correction --id ID --owner OWNER --subject-ref REF --activity-id ID --basis-id ID --request-ref REF --previous-version N",
     "                                         record evidence after an operator vault-put correction (never reads values)",
     "  revoke (--grant ID | --recipient ALIAS)",
     "  review [--digest D]                  list pending proposals (sanitized) or show one in full",
@@ -352,6 +353,7 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "source",
     "purposes",
     "agents",
+    "subject-ref",
     "value-file",
     "expires-at",
   ]),
@@ -381,6 +383,9 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "evidence-ref",
     "activity-id",
     "basis-id",
+    "request-ref",
+    "previous-version",
+    "include-unknown",
     "mcp-config",
     "yes",
   ]),
@@ -1140,6 +1145,7 @@ export async function run(
     const type = str(flags, "type");
     const sensitivity = parseSensitivity(str(flags, "sensitivity"));
     const source = str(flags, "source");
+    const subjectRef = opt(flags, "subject-ref");
     const purposes = str(flags, "purposes").split(",");
     if (purposes.some((x) => x.length === 0)) {
       throw new Error("usage: --purposes must be a non-empty comma list");
@@ -1203,6 +1209,7 @@ export async function run(
         value,
         sensitivity,
         source,
+        ...(subjectRef !== undefined ? { dataPrincipalRef: subjectRef } : {}),
         allowedPurposes: purposes,
         allowedAgents: agents,
         ...(expiresAt !== null ? { expiresAt } : {}),

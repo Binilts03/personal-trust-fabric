@@ -42,6 +42,11 @@ packaging (`src/api.ts` + the `exports` map), not by comments.
 
 - Narrower is the point: when unsure, a symbol stays out of `api.ts`.
   Extending the public surface needs an ADR.
+- Later subpaths follow the same rule rather than widening the root barrel:
+  `./profiles/data`, `./providers`, `./vault`, and (per ADR-0024) the curated
+  `./privacy` surface. The privacy subpath deliberately exports the runtime,
+  models and gates but not the file-backed stores, which remain host internals.
+  Adding a symbol still needs an explicit public-surface decision.
 - `src/index.ts` keeps every export (tests import `../src/index.js`); no
   test file changes in this ticket. `tests/hygiene.test.ts` still pins
   `main`/`types` at `index` — the main session updates it to `api`.

@@ -31,6 +31,7 @@ import { dpdpProfile } from "../privacy/dpdp.js";
 import { PrivacyRuntime } from "../privacy/runtime.js";
 import {
   resolveMcpPrivacyConfig,
+  MCP_PRIVACY_DENIED_PATHS,
   MCP_PRIVACY_GATED_PATHS,
   MCP_PRIVACY_UNCOVERED_PATHS,
 } from "../privacy/mcp.js";
@@ -45,6 +46,8 @@ import type {
   TrustedProcessingContext,
 } from "../privacy/model.js";
 import { canonicalize, sha256Hex } from "../core/canonical.js";
+import { evaluateProcessing } from "../privacy/engine.js";
+import { resolveJournalOutcome } from "../privacy/recovery.js";
 import type {
   AuthorityOperation,
   VerifiedIdentity,
@@ -398,11 +401,26 @@ export async function runPrivacyCommand(
         .filter((id) => id.length > 0);
       if (ids.length === 0)
         throw new Error("privacy erase: --ids must be non-empty");
-      const byId = new Map(plan.map((item) => [item.record.id, item]));
+      // Re-plan immediately before deleting: a hold added after the plan
+      // command (or a subject binding change) must still fail closed. Apply
+      // from this freshly loaded instance, not the earlier plan snapshot.
+      const liveVault = loadVault(ctx.dir, {
+        nowSec: ctx.io.now,
+        keys: ctx.keys,
+      });
+      const livePlan = planErasure({
+        records: liveVault.listMetadata(owner),
+        holds: loadStore(ctx).snapshot().holds,
+        dataPrincipalRef: subject,
+        nowSec: ctx.io.now(),
+      });
+      const byId = new Map(livePlan.map((item) => [item.record.id, item]));
       for (const id of ids) {
         const item = byId.get(id);
         if (item === undefined)
           throw new Error(`privacy erase: unknown record ${id}`);
+        if (item.status === "unscoped")
+          throw new Error(`privacy erase: record ${id} has no subject binding`);
         if (item.status !== "eligible") {
           throw new Error(`privacy erase: record ${id} is held`);
         }
@@ -413,7 +431,7 @@ export async function runPrivacyCommand(
       const receipts = ids.map((id) =>
         eraseRecord(
           ctx.dir,
-          vault,
+          liveVault,
           { id, owner },
           { at: ctx.io.now(), audit: ctx.audit, dek }
         )
@@ -431,32 +449,27 @@ export async function runPrivacyCommand(
           "privacy events reconcile requires stopped writers and --yes"
         );
       }
-      // Use the execution journal as the outcome oracle when it can prove a
-      // terminal result for the exact terms. Anything else stays conservatively
-      // OUTCOME_UNKNOWN; this sweep never guesses.
-      const journal = new Map(
-        listExecutions(ctx.dir).map((record) => [record.termsDigest, record])
+      // Use the execution journal as the outcome oracle only when it proves
+      // a unique terminal result for the exact action/terms/resource/purpose
+      // and destination. Anything else stays conservatively UNKNOWN.
+      const journal = listExecutions(ctx.dir);
+      const includeUnknown = ctx.flags["include-unknown"] === true;
+      const recovered = repo(ctx).recoverPrepared(
+        ctx.io.now(),
+        (event) => resolveJournalOutcome(event, journal),
+        { includeUnknown }
       );
-      const recovered = repo(ctx).recoverPrepared(ctx.io.now(), (event) => {
-        const record =
-          journal.get(event.attemptRef ?? "") ?? journal.get(event.termsDigest);
-        if (record === undefined) return null;
-        if (record.state === "SUCCEEDED" && record.receiptId !== undefined) {
-          return {
-            state: "SUCCEEDED",
-            finalizedAt: record.receiptAt ?? ctx.io.now(),
-            evidenceRef: `execution-receipt:${record.receiptId}`,
-          };
-        }
-        if (record.state === "FAILED_FINAL") {
-          return { state: "FAILED_FINAL", finalizedAt: record.updatedAt };
-        }
-        return null;
-      });
+      for (const record of recovered) {
+        ctx.audit.append({
+          actor: "operator",
+          action: "privacy.events.reconcile",
+          detail: `${record.eventId}:${record.state}:${record.evidenceRef ?? "-"}`,
+        });
+      }
       ctx.audit.append({
         actor: "operator",
-        action: "privacy.events.reconcile",
-        detail: `count:${recovered.length}`,
+        action: "privacy.events.reconcile.summary",
+        detail: `count:${recovered.length}:includeUnknown:${includeUnknown}`,
       });
       printJson(ctx, {
         recovered: recovered.length,
@@ -524,6 +537,20 @@ export async function runPrivacyCommand(
       const subject = flag(ctx.flags, "subject-ref");
       const activityId = flag(ctx.flags, "activity-id");
       const basisId = flag(ctx.flags, "basis-id");
+      const requestRef = flag(ctx.flags, "request-ref");
+      if (!/^[A-Za-z0-9._:/#-]{1,160}$/.test(requestRef)) {
+        throw new Error("privacy correction: request-ref must be opaque");
+      }
+      const previousVersionRaw = flag(ctx.flags, "previous-version");
+      if (!/^[0-9]+$/.test(previousVersionRaw)) {
+        throw new Error(
+          "privacy correction: previous-version must be an integer"
+        );
+      }
+      const previousVersion = Number(previousVersionRaw);
+      if (!Number.isSafeInteger(previousVersion)) {
+        throw new Error("privacy correction: previous-version is too large");
+      }
       const store = loadStore(ctx);
       const snap = store.snapshot();
       const activity = snap.activities.find((value) => value.id === activityId);
@@ -534,20 +561,11 @@ export async function runPrivacyCommand(
       if (activity.basisId !== basis.id) {
         throw new Error("privacy correction: activity basis does not match");
       }
-      if (!activity.active || !basis.active) {
-        throw new Error(
-          "privacy correction: activity and basis must be active"
-        );
+      if (activity.action !== "/correct") {
+        throw new Error("privacy correction: activity action must be /correct");
       }
-      if (
-        (activity.subjects.kind === "exact" &&
-          activity.subjects.ref !== subject) ||
-        (activity.subjects.kind === "set" &&
-          !activity.subjects.refs.includes(subject))
-      ) {
-        throw new Error(
-          "privacy correction: subject is outside the activity scope"
-        );
+      if (activity.profileId !== dpdpProfile.id) {
+        throw new Error("privacy correction: activity profile is not DPDP");
       }
       const record = loadVault(ctx.dir, {
         nowSec: ctx.io.now,
@@ -558,19 +576,56 @@ export async function runPrivacyCommand(
       if (record === undefined) {
         throw new Error("privacy correction: unknown vault record");
       }
-      if (
-        !activity.dataCategories.includes(record.type) ||
-        !basis.dataCategories.includes(record.type)
-      ) {
+      if (record.owner !== activity.authorityPrincipal) {
         throw new Error(
-          "privacy correction: record category is outside the basis"
+          "privacy correction: record owner is outside the activity"
+        );
+      }
+      if (record.dataPrincipalRef === undefined) {
+        throw new Error(
+          "privacy correction: record has no opaque subject binding"
+        );
+      }
+      if (record.dataPrincipalRef !== subject) {
+        throw new Error(
+          "privacy correction: subject is outside the record binding"
+        );
+      }
+      if (record.version !== previousVersion + 1) {
+        throw new Error(
+          "privacy correction: record version does not prove the correction write"
         );
       }
       const now = ctx.io.now();
+      const context: TrustedProcessingContext = {
+        authorityPrincipal: activity.authorityPrincipal,
+        actor: "operator",
+        dataPrincipalRef: subject,
+        controllerId: activity.controllerId,
+        purpose: activity.purpose,
+        action: "/correct",
+        resource: { type: activity.resourceType, id: record.id },
+        dataCategories: [record.type],
+        recipients: [],
+      };
+      const decision = evaluateProcessing({
+        ...snap,
+        context,
+        profile: dpdpProfile,
+        nowSec: now,
+      });
+      if (!decision.allow) {
+        throw new Error(`privacy correction denied: ${decision.reason}`);
+      }
+      if (decision.activityId !== activityId || decision.basisId !== basisId) {
+        throw new Error(
+          "privacy correction: engine did not select the supplied activity/basis"
+        );
+      }
       const evidenceRef =
         optional(ctx.flags, "evidence-ref") ??
-        `vault-record:${record.id}:v${record.version}`;
-      if (!/^[A-Za-z0-9._:/#-]{1,200}$/.test(evidenceRef)) {
+        `correction:${requestRef}:vault-record:${record.id}:v${previousVersion}-v${record.version}`;
+      if (!/^[A-Za-z0-9._:/#-]{1,300}$/.test(evidenceRef)) {
         throw new Error(
           "privacy correction: evidence-ref must be an opaque identifier"
         );
@@ -578,7 +633,9 @@ export async function runPrivacyCommand(
       const termsDigest = sha256Hex(
         canonicalize({
           action: "/correct",
+          requestRef,
           recordId: record.id,
+          previousVersion,
           recordVersion: record.version,
           dataPrincipalRef: subject,
           activityId,
@@ -586,7 +643,7 @@ export async function runPrivacyCommand(
         })
       );
       const input: ProcessingEventPrepare = {
-        profileId: activity.profileId,
+        profileId: dpdpProfile.id,
         profileRevision: dpdpProfile.revision,
         dataPrincipalRef: subject,
         authorityPrincipal: activity.authorityPrincipal,
@@ -596,7 +653,7 @@ export async function runPrivacyCommand(
         basisId,
         purpose: activity.purpose,
         action: "/correct",
-        resource: { type: record.type, id: record.id },
+        resource: { type: activity.resourceType, id: record.id },
         dataCategories: [record.type],
         recipients: [],
         termsDigest,
@@ -606,17 +663,32 @@ export async function runPrivacyCommand(
       };
       const events = repo(ctx);
       const prepared = events.prepare(input);
-      const event =
-        prepared.state === "PREPARED"
-          ? events.transition(prepared.eventId, "SUCCEEDED", {
-              finalizedAt: now,
-              evidenceRef,
-            })
-          : prepared;
+      if (prepared.state === "SUCCEEDED") {
+        printJson(ctx, {
+          eventId: prepared.eventId,
+          state: prepared.state,
+          recordId: record.id,
+          recordVersion: record.version,
+          evidenceRef: prepared.evidenceRef,
+        });
+        return 0;
+      }
+      if (prepared.state !== "PREPARED") {
+        throw new Error(
+          `privacy correction: existing event is ${prepared.state}`
+        );
+      }
+      const event = events.transition(prepared.eventId, "SUCCEEDED", {
+        finalizedAt: now,
+        evidenceRef,
+      });
+      if (event.state !== "SUCCEEDED") {
+        throw new Error("privacy correction: event did not finalize");
+      }
       ctx.audit.append({
         actor: "operator",
         action: "privacy.correction",
-        detail: `${record.id}:${event.eventId}`,
+        detail: `${record.id}:${event.eventId}:${requestRef}`,
       });
       printJson(ctx, {
         eventId: event.eventId,
@@ -647,6 +719,7 @@ export async function runPrivacyCommand(
               : "configured-reference-host",
           runtimeAttested: false,
           coveredPaths: [...MCP_PRIVACY_GATED_PATHS],
+          deniedPaths: [...MCP_PRIVACY_DENIED_PATHS],
           uncoveredPaths: [...MCP_PRIVACY_UNCOVERED_PATHS],
           note:
             configPath === undefined

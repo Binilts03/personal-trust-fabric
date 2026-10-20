@@ -196,7 +196,7 @@ describe("privacy operator CLI", () => {
       authorityPrincipal: "did:test:owner",
       controllerId: "acme",
       subjects: { kind: "exact", ref: "subject:opaque-1" },
-      action: "/disclose",
+      action: "/correct",
       resourceType: "vault",
       purpose: "support",
       dataCategories: ["email"],
@@ -244,6 +244,8 @@ describe("privacy operator CLI", () => {
           "general",
           "--source",
           "user",
+          "--subject-ref",
+          "subject:opaque-1",
           "--purposes",
           "support",
           "--agents",
@@ -274,6 +276,10 @@ describe("privacy operator CLI", () => {
           "activity-1",
           "--basis-id",
           "basis-1",
+          "--request-ref",
+          "dsar-1",
+          "--previous-version",
+          "0",
         ],
         t.value,
         env
@@ -289,7 +295,202 @@ describe("privacy operator CLI", () => {
     const correction = events.listBySubject("subject:opaque-1")[0];
     assert.equal(correction?.action, "/correct");
     assert.equal(correction?.state, "SUCCEEDED");
-    assert.equal(correction?.evidenceRef, "vault-record:rec-1:v1");
+    assert.equal(
+      correction?.evidenceRef,
+      "correction:dsar-1:vault-record:rec-1:v0-v1"
+    );
+    await assert.rejects(
+      () =>
+        run(
+          [
+            "--dir",
+            dir,
+            "privacy",
+            "correction",
+            "--id",
+            "rec-1",
+            "--owner",
+            "did:test:owner",
+            "--subject-ref",
+            "subject:opaque-1",
+            "--activity-id",
+            "activity-1",
+            "--basis-id",
+            "basis-1",
+            "--request-ref",
+            "dsar-1",
+            "--previous-version",
+            "1",
+          ],
+          t.value,
+          env
+        ),
+      /does not prove the correction write/
+    );
+    await assert.rejects(
+      () =>
+        run(
+          [
+            "--dir",
+            dir,
+            "privacy",
+            "correction",
+            "--id",
+            "rec-1",
+            "--owner",
+            "did:test:owner",
+            "--subject-ref",
+            "subject:opaque-1",
+            "--activity-id",
+            "missing",
+            "--basis-id",
+            "basis-1",
+            "--request-ref",
+            "dsar-1",
+            "--previous-version",
+            "0",
+          ],
+          t.value,
+          env
+        ),
+      /unknown activity or basis/
+    );
+  });
+
+  it("erases only records bound to the requested subject", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-privacy-erase-subject-"));
+    const t = io();
+    const env = { PTF_PASSPHRASE: PASS };
+    await run(["--dir", dir, "init"], t.value, env);
+    await run(["--dir", dir, "privacy", "init"], t.value, env);
+    for (const [id, subject] of [
+      ["rec-a", "subject:opaque-1"],
+      ["rec-b", "subject:opaque-2"],
+    ] as const) {
+      const valueFile = join(dir, `${id}.txt`);
+      writeFileSync(valueFile, `value-${id}\n`, { mode: 0o600 });
+      assert.equal(
+        await run(
+          [
+            "--dir",
+            dir,
+            "vault-put",
+            "--id",
+            id,
+            "--owner",
+            "did:test:owner",
+            "--type",
+            "email",
+            "--sensitivity",
+            "general",
+            "--source",
+            "user",
+            "--subject-ref",
+            subject,
+            "--purposes",
+            "support",
+            "--agents",
+            "agent-1",
+            "--value-file",
+            valueFile,
+          ],
+          t.value,
+          env
+        ),
+        0
+      );
+    }
+    t.out.length = 0;
+    await run(
+      [
+        "--dir",
+        dir,
+        "privacy",
+        "erase",
+        "plan",
+        "--owner",
+        "did:test:owner",
+        "--subject-ref",
+        "subject:opaque-1",
+      ],
+      t.value,
+      env
+    );
+    const plan = JSON.parse(t.out.at(-1) as string) as Array<{
+      id: string;
+      status: string;
+    }>;
+    assert.deepEqual(
+      plan.map((item) => [item.id, item.status]),
+      [["rec-a", "eligible"]]
+    );
+    await assert.rejects(
+      () =>
+        run(
+          [
+            "--dir",
+            dir,
+            "privacy",
+            "erase",
+            "apply",
+            "--owner",
+            "did:test:owner",
+            "--subject-ref",
+            "subject:opaque-1",
+            "--ids",
+            "rec-b",
+            "--yes",
+          ],
+          t.value,
+          env
+        ),
+      /unknown record/
+    );
+    assert.equal(
+      await run(
+        [
+          "--dir",
+          dir,
+          "privacy",
+          "erase",
+          "apply",
+          "--owner",
+          "did:test:owner",
+          "--subject-ref",
+          "subject:opaque-1",
+          "--ids",
+          "rec-a",
+          "--yes",
+        ],
+        t.value,
+        env
+      ),
+      0
+    );
+    t.out.length = 0;
+    await run(
+      [
+        "--dir",
+        dir,
+        "privacy",
+        "erase",
+        "plan",
+        "--owner",
+        "did:test:owner",
+        "--subject-ref",
+        "subject:opaque-2",
+      ],
+      t.value,
+      env
+    );
+    const remaining = JSON.parse(t.out.at(-1) as string) as Array<{
+      id: string;
+      status: string;
+    }>;
+    assert.deepEqual(
+      remaining.map((item) => [item.id, item.status]),
+      [["rec-b", "eligible"]]
+    );
   });
 
   it("requires explicit offline operator recovery and evidence-bound reconciliation", async () => {
@@ -473,6 +674,140 @@ describe("privacy operator CLI", () => {
     assert.equal(reconciled?.state, "SUCCEEDED");
     assert.equal(reconciled?.finalizedAt, NOW);
     assert.equal(reconciled?.evidenceRef, "execution-receipt:receipt-1");
+
+    // Same terms, different action: a /pay journal row must never prove a
+    // /use event.
+    const mismatch = events.prepare({
+      profileId: "IN-DPDP-2025",
+      profileRevision: "2025-r1",
+      dataPrincipalRef: "subject:opaque-1",
+      authorityPrincipal: "owner",
+      actor: "agent",
+      controllerId: "acme",
+      activityId: "act",
+      basisId: "basis",
+      purpose: "support",
+      action: "/use",
+      resource: { type: "vault-record", id: "r-pan" },
+      dataCategories: ["pan"],
+      recipients: [],
+      termsDigest: terms,
+      authorityCitationIds: ["g1"],
+      attemptRef: "mismatch-action",
+      preparedAt: NOW,
+    });
+    const pay = createExecution(
+      dir,
+      {
+        executionId: "b".repeat(32),
+        idempotencyKey: `ptf-${terms}-pay`,
+        capabilityId: "cap-1",
+        termsDigest: terms,
+        action: "/pay",
+        recipient: "verifier",
+        resource: "ptf-resource:order-1",
+        purpose: "support",
+        context: {},
+      },
+      NOW
+    );
+    transitionExecution(dir, pay.executionId, "AUTHORIZED", {}, NOW);
+    transitionExecution(dir, pay.executionId, "SUBMITTING", {}, NOW);
+    transitionExecution(
+      dir,
+      pay.executionId,
+      "SUCCEEDED",
+      { receiptId: "receipt-2", receiptAt: NOW },
+      NOW
+    );
+    assert.equal(
+      await run(
+        ["--dir", dir, "privacy", "events", "reconcile", "--yes"],
+        t.value,
+        env
+      ),
+      0
+    );
+    assert.equal(events.load(mismatch.eventId)?.state, "OUTCOME_UNKNOWN");
+
+    // A journal result that appears after the first sweep is adopted only
+    // when the operator explicitly asks to revisit unknown outcomes.
+    const unknownTerms = "ef".repeat(32);
+    const upgrade = events.prepare({
+      profileId: "IN-DPDP-2025",
+      profileRevision: "2025-r1",
+      dataPrincipalRef: "subject:opaque-1",
+      authorityPrincipal: "owner",
+      actor: "agent",
+      controllerId: "acme",
+      activityId: "act",
+      basisId: "basis",
+      purpose: "support",
+      action: "/pay",
+      resource: { type: "ptf-resource", id: "order-9" },
+      dataCategories: ["payment"],
+      recipients: [{ id: "seller:1", role: "third-party" }],
+      termsDigest: unknownTerms,
+      authorityCitationIds: ["g1"],
+      attemptRef: "unknown-upgrade",
+      preparedAt: NOW,
+    });
+    assert.equal(
+      await run(
+        ["--dir", dir, "privacy", "events", "reconcile", "--yes"],
+        t.value,
+        env
+      ),
+      0
+    );
+    assert.equal(events.load(upgrade.eventId)?.state, "OUTCOME_UNKNOWN");
+    const later = createExecution(
+      dir,
+      {
+        executionId: "c".repeat(32),
+        idempotencyKey: `ptf-${unknownTerms}-pay`,
+        capabilityId: "cap-1",
+        termsDigest: unknownTerms,
+        action: "/pay",
+        recipient: "seller:1",
+        resource: "ptf-resource:order-9",
+        purpose: "support",
+        context: {},
+      },
+      NOW
+    );
+    transitionExecution(dir, later.executionId, "AUTHORIZED", {}, NOW);
+    transitionExecution(dir, later.executionId, "SUBMITTING", {}, NOW);
+    transitionExecution(
+      dir,
+      later.executionId,
+      "SUCCEEDED",
+      { receiptId: "receipt-3", receiptAt: NOW + 5 },
+      NOW + 5
+    );
+    await run(
+      ["--dir", dir, "privacy", "events", "reconcile", "--yes"],
+      t.value,
+      env
+    );
+    assert.equal(events.load(upgrade.eventId)?.state, "OUTCOME_UNKNOWN");
+    await run(
+      [
+        "--dir",
+        dir,
+        "privacy",
+        "events",
+        "reconcile",
+        "--yes",
+        "--include-unknown",
+      ],
+      t.value,
+      env
+    );
+    const upgraded = events.load(upgrade.eventId);
+    assert.equal(upgraded?.state, "SUCCEEDED");
+    assert.equal(upgraded?.finalizedAt, NOW + 5);
+    assert.equal(upgraded?.evidenceRef, "execution-receipt:receipt-3");
   });
 
   it("reports configured MCP coverage without claiming running-host attestation", async () => {
@@ -502,7 +837,7 @@ describe("privacy operator CLI", () => {
     assert.equal(diagnostic.enforcement.runtimeAttested, false);
     assert.ok(diagnostic.enforcement.coveredPaths.includes("ptf_present_data"));
     assert.ok(
-      diagnostic.enforcement.coveredPaths.includes("ptf_request_action")
+      diagnostic.enforcement.deniedPaths.includes("ptf_request_action")
     );
     assert.ok(
       diagnostic.enforcement.uncoveredPaths.includes("operator-cli-pay")
@@ -564,5 +899,11 @@ describe("privacy operator CLI", () => {
     assert.ok(rendered.includes("email"));
     assert.ok(rendered.includes("SUCCEEDED"));
     assert.ok(!rendered.includes("owner@example.com"));
+    const summary = JSON.parse(t.out.at(-1) as string) as {
+      activityIds: string[];
+      erasure: { status: string };
+    };
+    assert.deepEqual(summary.activityIds, ["act"]);
+    assert.equal(summary.erasure.status, "not-computed");
   });
 });

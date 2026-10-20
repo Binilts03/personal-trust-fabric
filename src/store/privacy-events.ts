@@ -8,6 +8,7 @@ import {
   fsyncSync,
   writeSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { canonicalize, sha256Hex } from "../core/canonical.js";
 import type {
@@ -124,7 +125,14 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
     ) {
       throw new Error("privacy event: invalid attempt reference");
     }
-    const key = stableKey(input);
+    // A caller that did not supply a retry reference gets a fresh attempt.
+    // Without this, identical terms would collapse distinct effects into one
+    // evidence record.
+    const normalized: ProcessingEventPrepare =
+      input.attemptRef === undefined
+        ? { ...input, attemptRef: randomUUID() }
+        : input;
+    const key = stableKey(normalized);
     const eventId = eventIdFor(key);
     const path = eventFile(this.dir, eventId);
     if (existsSync(path)) {
@@ -140,11 +148,11 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
       );
     }
     const record: ProcessingEventRecord = {
-      ...input,
-      resource: { ...input.resource },
-      dataCategories: [...input.dataCategories],
-      recipients: input.recipients.map((r) => ({ ...r })),
-      authorityCitationIds: [...input.authorityCitationIds],
+      ...normalized,
+      resource: { ...normalized.resource },
+      dataCategories: [...normalized.dataCategories],
+      recipients: normalized.recipients.map((r) => ({ ...r })),
+      authorityCitationIds: [...normalized.authorityCitationIds],
       eventId,
       idempotencyKey: key,
       state: "PREPARED",
@@ -244,12 +252,17 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
 
   recoverPrepared(
     nowSec: number = this.nowSec(),
-    resolve?: (event: ProcessingEventRecord) => PreparedEventResolution | null
+    resolve?: (event: ProcessingEventRecord) => PreparedEventResolution | null,
+    opts: { readonly includeUnknown?: boolean } = {}
   ): readonly ProcessingEventRecord[] {
     const recovered: ProcessingEventRecord[] = [];
     for (const record of this.all()) {
-      if (record.state !== "PREPARED") continue;
+      const eligible =
+        record.state === "PREPARED" ||
+        (opts.includeUnknown === true && record.state === "OUTCOME_UNKNOWN");
+      if (!eligible) continue;
       const proven = resolve?.(record) ?? null;
+      if (proven === null && record.state !== "PREPARED") continue;
       recovered.push(
         this.transition(record.eventId, proven?.state ?? "OUTCOME_UNKNOWN", {
           finalizedAt: proven?.finalizedAt ?? nowSec,

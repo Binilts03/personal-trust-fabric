@@ -238,7 +238,8 @@ export interface PrivacyEventRepository {
    */
   recoverPrepared(
     nowSec: number,
-    resolve?: (event: ProcessingEventRecord) => PreparedEventResolution | null
+    resolve?: (event: ProcessingEventRecord) => PreparedEventResolution | null,
+    opts?: { readonly includeUnknown?: boolean }
   ): readonly ProcessingEventRecord[];
 }
 

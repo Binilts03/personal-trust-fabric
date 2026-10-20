@@ -34,7 +34,7 @@ A storage snapshot is not a lifetime guarantee. Other processors, vendor systems
 
 The operator command is `ptf privacy`. Run `ptf privacy init` in an existing PTF store first; it creates encrypted privacy state under a separate privacy DEK. Use `notice add`, `consent add`, `basis add`, `activity add` with operator-reviewed JSON evidence/configuration files. See `ptf privacy --help` for current CLI flags. A PTF Standing Grant must **also** independently cover the agent's exact operation.
 
-An enabled *stdio reference host* can use a separate locally protected JSON file:
+An enabled _stdio reference host_ can use a separate locally protected JSON file:
 
 ```json
 {
@@ -59,17 +59,19 @@ Set `PTF_MCP_PRIVACY_CONFIG=/absolute/path/to/privacy-config.json` in the host p
 
 In the reference MCP server, the opt-in mode gates **`ptf_request_data` / `ptf_present_data`** disclosures and **`ptf_propose` / `ptf_redeem` payment processing**. A payment additionally requires operator-defined `actionCategories["/pay"]`, an approved recipient role, a live corresponding Processing Activity and an active Basis Evidence. A payment effect is wrapped so privacy evidence is precommitted **before authority consumption and journaled execution**. It uses existing agent tool schemas; neither the legal basis nor the Data Principal is accepted from agents. Missing/invalid configured controls fail closed. Absence of the setting retains the existing PTF behavior.
 
-**Limits of this MCP slice:** the `/pay` pathway is gated only when the host explicitly enables privacy mode and configures its payment categories. General `ptf_request_action`, independently invoked provider adapters, operator CLI payment/disclosure paths and other custom host paths are **not automatically privacy-enforced**. A privacy profile is therefore not a universal interceptor. The last live privacy recheck is not an atomic cross-file/cross-provider fence against concurrent withdrawal; see [audit limits](../audit/limits.md).
+**Limits of this MCP slice:** the `/pay` pathway is gated only when the host explicitly enables privacy mode and configures its payment categories. General `ptf_request_action` is denied in privacy mode, but independently invoked provider adapters, operator CLI payment/disclosure paths and other custom host paths are **not automatically privacy-enforced**. A privacy profile is therefore not a universal interceptor. The last live privacy recheck is not an atomic cross-file/cross-provider fence against concurrent withdrawal; see [audit limits](../audit/limits.md).
 
 ## Data and privacy records
 
 A Processing Activity declares its PTF Authority principal, Data Fiduciary, subject scope, exact action, resource type, purpose, permitted categories/recipients and basis reference.
 
-The initial `IN-DPDP-2025` profile supports **consent evidence** and operator-asserted **certain legitimate use** evidence. It does not infer legal sufficiency from an AI explanation. Consent withdrawal prevents *future* consent-based processing under that evidence without automatically revoking an unrelated Standing Grant.
+The initial `IN-DPDP-2025` profile supports **consent evidence** and operator-asserted **certain legitimate use** evidence. It does not infer legal sufficiency from an AI explanation. Consent withdrawal prevents _future_ consent-based processing under that evidence without automatically revoking an unrelated Standing Grant.
 
 `privacy-events/` stores one encrypted per-attempt record, separate from `privacy-state.json`. A precommitted attempt that cannot prove success or non-effect is tracked as `OUTCOME_UNKNOWN`; it is **not** erased or reported as a completed success. This is not a full external system activity log.
 
-Erasure uses exact PTF Vault record IDs and is subject to configured retention holds. The implementation cannot automatically erase copies in external systems, historical backups, processor systems or independent audit stores.
+Erasure uses exact PTF Vault record IDs and is subject to configured retention holds. Create records with an opaque `vault-put --subject-ref` binding so `privacy erase` can scope them to the requesting Data Principal; records bound to another subject are never planned, and legacy/unbound records are reported as `unscoped` and refused rather than guessed. The implementation cannot automatically erase copies in external systems, historical backups, processor systems or independent audit stores.
+
+A correction remains an operator-controlled `vault-put` followed by `privacy correction`. The evidence command requires a `/correct` Processing Activity, an active matching basis, the record owner and opaque subject binding, an opaque `--request-ref`, and `--previous-version` proving the record advanced by exactly one version. It never reads or prints the corrected value and does not decide legal sufficiency. A rights summary without `--owner`/holds reports `not-computed`, not a false empty eligibility list.
 
 ## DPDP sources and dates
 
@@ -90,6 +92,6 @@ PTF does not replace complete notices/consent UX, lawful-basis review, grievance
 
 ## Recovery and enforcement diagnostics
 
-Stop all live PTF processing writers before using `ptf privacy events reconcile --yes`. It marks PREPARED attempts as `OUTCOME_UNKNOWN`, never as success or proven non-effect. Compare the external provider and execution journal, then use `ptf privacy events resolve --id <event-id> --state SUCCEEDED|FAILED_FINAL --evidence-ref <external-proof-id> --yes`. The evidence reference is an operator-provided pointer, not independently verified attestation. Never infer non-effect from a timeout.
+Stop all live PTF processing writers before using `ptf privacy events reconcile --yes`. It adopts a terminal journal outcome only when exactly one row matches the event's terms digest, action, resource, purpose and single destination; duplicate terminal rows, mismatches and non-terminal rows remain `OUTCOME_UNKNOWN`, never success or proven non-effect. Use `--include-unknown` only when you deliberately want an earlier unknown outcome re-examined. Compare the external provider and execution journal, then use `ptf privacy events resolve --id <event-id> --state SUCCEEDED|FAILED_FINAL --evidence-ref <external-proof-id> --yes`. The evidence reference is an operator-provided pointer, not independently verified attestation. Never infer non-effect from a timeout.
 
 `ptf privacy verify` inspects encryption/integrity; `ptf privacy verify --mcp-config /path/to/privacy-config.json` additionally validates the reference host configuration and displays **configured coverage**, but cannot prove a separately running MCP process actually enabled it. Verify startup environment and exercise real MCP processing with the end-to-end tests before asserting enforcement.

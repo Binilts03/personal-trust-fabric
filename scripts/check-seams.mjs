@@ -28,10 +28,7 @@ const PUBLIC_TEST_IMPORTS = new Set([
 // Exact, reviewed exceptions: test file -> specifiers it may import.
 // Do not widen these to other tests or modules.
 const TEST_IMPORT_EXEMPTIONS = new Map([
-  [
-    "tests/privacy-store.test.ts",
-    new Set(["../src/store/privacy.js"]),
-  ],
+  ["tests/privacy-store.test.ts", new Set(["../src/store/privacy.js"])],
   [
     "tests/backup.test.ts",
     new Set(["../src/store/privacy.js", "../src/store/privacy-events.js"]),
@@ -46,10 +43,7 @@ const TEST_IMPORT_EXEMPTIONS = new Map([
   ],
   [
     "tests/privacy-mcp-stdio.test.ts",
-    new Set([
-      "../src/store/privacy.js",
-      "../src/store/privacy-events.js",
-    ]),
+    new Set(["../src/store/privacy.js", "../src/store/privacy-events.js"]),
   ],
 ]);
 
@@ -84,8 +78,26 @@ function walkTypeScriptFiles(dir) {
 }
 
 function importSpecifier(line) {
-  const match = /\bfrom\s+["']([^"']+)["']/.exec(line);
-  return match === null ? undefined : match[1];
+  const patterns = [
+    /\bfrom\s+["']([^"']+)["']/,
+    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/,
+    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/,
+    /^\s*import\s+["']([^"']+)["']/,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(line);
+    if (match !== null) return match[1];
+  }
+  return undefined;
+}
+
+function isAbsoluteSpecifier(specifier) {
+  return (
+    specifier.startsWith("/") ||
+    specifier.startsWith("\\\\") ||
+    specifier.startsWith("file:") ||
+    /^[A-Za-z]:[\\/]/.test(specifier)
+  );
 }
 
 function scan(root, target, allow) {
@@ -111,6 +123,8 @@ function scan(root, target, allow) {
 }
 
 function allowTestImport(file, specifier) {
+  if (isAbsoluteSpecifier(specifier))
+    return "absolute import paths are not allowed";
   if (!specifier.startsWith("../src/")) return true;
   if (PUBLIC_TEST_IMPORTS.has(specifier)) return true;
   const exemptions = TEST_IMPORT_EXEMPTIONS.get(file);
@@ -119,6 +133,8 @@ function allowTestImport(file, specifier) {
 }
 
 function allowCoreImport(_file, specifier) {
+  if (isAbsoluteSpecifier(specifier))
+    return "absolute import paths are not allowed";
   if (specifier === CORE_ALLOWED_IMPORT) return true;
   if (specifier.startsWith("./") || specifier.startsWith("../")) return true;
   return `core may import only ${CORE_ALLOWED_IMPORT} and relative modules`;

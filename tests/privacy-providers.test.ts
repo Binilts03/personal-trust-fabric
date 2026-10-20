@@ -205,7 +205,8 @@ describe("privacy-wrapped protected execution", () => {
             operation: OPERATION,
             processing: PROCESSING,
           },
-          execute: async () => {
+          execute: async (markEffectStarted) => {
+            markEffectStarted();
             throw new Error("ambiguous provider failure");
           },
         }),

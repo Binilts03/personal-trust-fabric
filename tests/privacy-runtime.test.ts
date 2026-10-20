@@ -273,7 +273,12 @@ describe("privacy runtime ordering", () => {
     assert.deepEqual(event.authorityCitationIds, ["g-disclose"]);
     assert.equal(event.dataPrincipalRef, "subject:opaque-1");
     assert.match(event.termsDigest, /^[0-9a-f]{64}$/);
-    assert.equal(event.attemptRef, allowed.termsDigest);
+    // Each call is a distinct attempt unless the caller supplies a retry ref;
+    // the terms digest alone is not an attempt identity.
+    assert.match(
+      event.attemptRef ?? "",
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    );
   });
 
   it("refuses to prepare evidence when the request changed after recheck", () => {

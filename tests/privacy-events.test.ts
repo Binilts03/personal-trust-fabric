@@ -27,6 +27,7 @@ const PREPARE: ProcessingEventPrepare = {
   recipients: [{ id: "verifier", role: "third-party" }],
   termsDigest: "ab".repeat(32),
   authorityCitationIds: ["grant-1"],
+  attemptRef: "attempt:1",
   preparedAt: NOW,
 };
 
@@ -63,6 +64,21 @@ describe("durable privacy processing events", () => {
         }),
       /terminal|transition/
     );
+  });
+
+  it("creates a fresh attempt when no retry reference is supplied", () => {
+    const dir = tmp();
+    const repo = new FilePrivacyEventRepository({
+      dir,
+      dek: createPrivacyDek(),
+      nowSec: () => NOW,
+    });
+    const { attemptRef: _omit, ...withoutRef } = PREPARE;
+    const first = repo.prepare(withoutRef);
+    const second = repo.prepare(withoutRef);
+    assert.notEqual(first.eventId, second.eventId);
+    assert.notEqual(first.attemptRef, second.attemptRef);
+    assert.equal(repo.listBySubject("subject:opaque-1").length, 2);
   });
 
   it("records separate disclosure attempts with identical terms but different nonces", () => {

@@ -4,7 +4,10 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-const CHECKER = join(process.cwd(), "scripts", "check-seams.mjs");
+import { fileURLToPath } from "node:url";
+const CHECKER = fileURLToPath(
+  new URL("../../scripts/check-seams.mjs", import.meta.url)
+);
 const PRIVACY_STORE = "../src/store/privacy.js";
 
 function fixture(): string {
@@ -49,6 +52,43 @@ describe("seam guard fixture", () => {
       const result = check(root);
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stdout, /seam check: ok/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let an exempt file import a different internal module", () => {
+    const root = fixture();
+    try {
+      writeFileSync(
+        join(root, "tests", "privacy-store.test.ts"),
+        `import { FilePrivacyEventRepository } from ${JSON.stringify(
+          "../src/store/privacy-events.js"
+        )};\n`
+      );
+      const result = check(root);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /privacy-events/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects dynamic imports and absolute paths", () => {
+    const root = fixture();
+    try {
+      writeFileSync(
+        join(root, "tests", "dynamic.test.ts"),
+        `import ${JSON.stringify("../src/store/privacy.js")};\nasync function probe() { return import(${JSON.stringify("../src/store/privacy-events.js")}); }\n`
+      );
+      writeFileSync(
+        join(root, "tests", "absolute.test.ts"),
+        `import x from ${JSON.stringify("C:/secrets/module.js")};\n`
+      );
+      const result = check(root);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /dynamic\.test\.ts/);
+      assert.match(result.stderr, /absolute\.test\.ts/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

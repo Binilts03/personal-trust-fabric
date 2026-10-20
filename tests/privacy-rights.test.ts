@@ -40,6 +40,7 @@ const RECORDS: VaultRecordMetadata[] = [
     type: "email",
     sensitivity: "general",
     source: "user",
+    dataPrincipalRef: "subject:opaque-1",
     allowedPurposes: ["support"],
     allowedAgents: ["agent-1"],
     expiresAt: null,
@@ -53,6 +54,7 @@ const RECORDS: VaultRecordMetadata[] = [
     type: "phone",
     sensitivity: "general",
     source: "user",
+    dataPrincipalRef: "subject:opaque-1",
     allowedPurposes: ["support"],
     allowedAgents: ["agent-1"],
     expiresAt: null,
@@ -177,8 +179,10 @@ describe("PTF-observed privacy rights support", () => {
       },
     ]);
     assert.deepEqual(summary.erasure, {
+      status: "computed",
       eligibleRecordIds: ["r-phone"],
       heldRecords: [{ recordId: "r-email", holdIds: ["hold-1"] }],
+      unscopedRecordIds: [],
     });
   });
 
@@ -206,5 +210,84 @@ describe("PTF-observed privacy rights support", () => {
         ["r-phone", "eligible"],
       ]
     );
+  });
+
+  it("never plans another subject's record and marks unbound records unscoped", () => {
+    const other: VaultRecordMetadata = {
+      ...RECORDS[0]!,
+      id: "r-other",
+      dataPrincipalRef: "subject:other",
+    };
+    const { dataPrincipalRef: _boundTo, ...unbound } = RECORDS[1]!;
+    const unscoped: VaultRecordMetadata = {
+      ...unbound,
+      id: "r-unscoped",
+    };
+    const plan = planErasure({
+      records: [...RECORDS, other, unscoped],
+      holds: [],
+      dataPrincipalRef: "subject:opaque-1",
+      nowSec: NOW,
+    });
+    assert.deepEqual(
+      plan.map((item) => [item.record.id, item.status]),
+      [
+        ["r-email", "eligible"],
+        ["r-phone", "eligible"],
+        ["r-unscoped", "unscoped"],
+      ]
+    );
+  });
+
+  it("does not present an empty erasure result when eligibility was not computed", () => {
+    const noOwner = summarizeProcessing([BASE_EVENT], "subject:opaque-1");
+    assert.deepEqual(noOwner.erasure, {
+      status: "not-computed",
+      reason: "owner-required",
+    });
+    const noHolds = summarizeProcessing([BASE_EVENT], "subject:opaque-1", {
+      records: RECORDS,
+    });
+    assert.deepEqual(noHolds.erasure, {
+      status: "not-computed",
+      reason: "holds-required",
+    });
+  });
+
+  it("rejects direct identifiers instead of echoing them in a rights summary", () => {
+    assert.throws(
+      () => summarizeProcessing([], "email:person@example.com"),
+      /opaque dataPrincipalRef required/
+    );
+    assert.throws(
+      () =>
+        planErasure({
+          records: RECORDS,
+          holds: [],
+          dataPrincipalRef: "email:person@example.com",
+          nowSec: NOW,
+        }),
+      /opaque dataPrincipalRef required/
+    );
+  });
+
+  it("reports consent that starts in the future as pending", () => {
+    const consent: ConsentEvidence = {
+      id: "consent-future",
+      noticeId: "notice-1",
+      controllerId: "acme",
+      dataPrincipalRef: "subject:opaque-1",
+      purpose: "support",
+      dataCategories: ["email"],
+      givenAt: NOW + 100,
+      method: "web",
+      proofRef: "proof:1",
+      assertedBy: "privacy-office",
+    };
+    const summary = summarizeProcessing([BASE_EVENT], "subject:opaque-1", {
+      consents: [consent],
+      nowSec: NOW,
+    });
+    assert.equal(summary.consentState[0]?.status, "pending");
   });
 });
