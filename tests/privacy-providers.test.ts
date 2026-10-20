@@ -9,6 +9,8 @@ import {
   executeProtectedActionWithPrivacy,
   type ExecutionReceipt,
   type PrivacyEventRepository,
+  type PrivacyGateRequest,
+  type PrivacyGateResult,
   type PrivacyProfile,
   type PrivacySnapshot,
   type ProcessingEventFinalize,
@@ -98,6 +100,22 @@ function auth(): Authority {
   });
   return value;
 }
+/**
+ * A runtime that counts completed rechecks, so a test can move the privacy
+ * state exactly between the recheck and the effect-boundary fence.
+ */
+class FenceRuntime extends PrivacyRuntime {
+  completedRechecks = 0;
+  override recheck(
+    prior: Extract<PrivacyGateResult, { allow: true }>,
+    req: PrivacyGateRequest
+  ): Extract<PrivacyGateResult, { allow: true }> {
+    const result = super.recheck(prior, req);
+    this.completedRechecks += 1;
+    return result;
+  }
+}
+
 class Events implements PrivacyEventRepository {
   readonly values = new Map<string, ProcessingEventRecord>();
   readonly order: string[] = [];
@@ -316,6 +334,43 @@ describe("privacy-wrapped protected execution", () => {
         error.state === "SUCCEEDED"
     );
     assert.equal(called, false);
+  });
+
+  it("fences the effect boundary: a state that changed after the recheck stops the effect", async () => {
+    const events = new Events();
+    // The privacy state flips as soon as the first recheck has completed, so
+    // the change lands after the recheck and before the effect boundary.
+    let runtime: FenceRuntime;
+    runtime = new FenceRuntime({
+      loadPrivacy: () =>
+        runtime.completedRechecks >= 1 ? snapshot(false) : snapshot(),
+      events,
+      profile,
+      nowSec: () => NOW,
+    });
+    let providerCalled = false;
+    await assert.rejects(
+      () =>
+        executeProtectedActionWithPrivacy({
+          runtime,
+          gate: {
+            authority: auth(),
+            ingress: INGRESS,
+            operation: OPERATION,
+            processing: PROCESSING,
+          },
+          execute: async (_markEffectStarted, fence) => {
+            fence();
+            providerCalled = true;
+            return receipt();
+          },
+        }),
+      /privacy denied/
+    );
+    assert.equal(providerCalled, false);
+    // The effect never happened, so the evidence is a provable pre-effect
+    // failure - not an ambiguous outcome.
+    assert.equal(events.load("pev-1")?.state, "FAILED_FINAL");
   });
 
   it("does not invoke the provider when the live privacy recheck fails", async () => {

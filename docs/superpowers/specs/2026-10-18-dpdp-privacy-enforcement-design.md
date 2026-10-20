@@ -52,7 +52,7 @@ PTF privacy mode will:
 3. record operator-declared processing activities;
 4. deterministically deny personal-data processing that lacks a matching active processing activity/basis;
 5. enforce purpose, data-category and recipient minimisation;
-6. re-check privacy state at actual use/disclosure time so withdrawal or expiry takes effect before processing;
+6. re-check privacy state at actual use/disclosure time so withdrawal or expiry takes effect before processing, and fence the effect boundary: re-evaluate the privacy state immediately before the effect, after the authority use is burned, so a withdrawal that lands after the recheck stops the attempt instead of processing anyway;
 7. create secret-free processing evidence tied to the PTF authority decision and exact operation digest;
 8. support exact-record erasure and retention holds;
 9. provide a PTF-observed processing summary suitable as evidence for rights workflows;

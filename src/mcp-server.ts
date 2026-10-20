@@ -1330,7 +1330,8 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       // provider effect. Legacy mode executes this exact closure directly.
       let consumedAuthorityId: string | undefined;
       const consumeAndExecute = async (
-        markEffectStarted: () => void = () => {}
+        markEffectStarted: () => void = () => {},
+        fence: () => void = () => {}
       ) => {
         const decision = auth.evaluate(op, ingress, {
           consume: true,
@@ -1345,6 +1346,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         consumedAuthorityId = decision.citations[0]?.authorityId;
         // Existing authority CAS and provider journal remain authoritative.
         saveAuthority(opts.dir, auth);
+        // The privacy fence runs after the burn and before the effect: a
+        // withdrawal that lands in this window stops the payment instead of
+        // paying without a live basis.
+        fence();
         return executeWithJournal({
           dir: opts.dir,
           provider: executorAsProvider(executor, "payment", now),
@@ -1377,7 +1382,8 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           journaled = await executeProtectedActionWithPrivacy({
             runtime: scoped.runtime,
             gate: scoped.gate,
-            execute: consumeAndExecute,
+            execute: (markEffectStarted, fence) =>
+              consumeAndExecute(markEffectStarted, fence),
             attemptRef: args.termsDigest,
           });
         } catch (error) {

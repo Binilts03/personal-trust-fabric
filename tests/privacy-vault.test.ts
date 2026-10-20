@@ -9,6 +9,8 @@ import {
   generateEd25519Keypair,
   useCredentialWithPrivacy,
   type PrivacyEventRepository,
+  type PrivacyGateRequest,
+  type PrivacyGateResult,
   type ProcessingEventFinalize,
   type ProcessingEventPrepare,
   type ProcessingEventRecord,
@@ -33,6 +35,23 @@ const profile: PrivacyProfile = {
       ? { ok: true, controlRefs: ["configured:test"] }
       : { ok: false, reason: "basis-inactive" },
 };
+
+/**
+ * A runtime that counts completed rechecks, so a test can move the privacy
+ * state exactly between the recheck and the effect-boundary fence without
+ * depending on how many evaluations a path performs.
+ */
+class FenceRuntime extends PrivacyRuntime {
+  completedRechecks = 0;
+  override recheck(
+    prior: Extract<PrivacyGateResult, { allow: true }>,
+    req: PrivacyGateRequest
+  ): Extract<PrivacyGateResult, { allow: true }> {
+    const result = super.recheck(prior, req);
+    this.completedRechecks += 1;
+    return result;
+  }
+}
 
 class Events implements PrivacyEventRepository {
   readonly values = new Map<string, ProcessingEventRecord>();
@@ -347,6 +366,82 @@ describe("privacy-wrapped vault processing", () => {
       /basis-inactive|privacy denied/
     );
     assert.equal(events.values.size, 0);
+  });
+
+  it("fences the disclosure: a withdrawal after the recheck releases no claim", async () => {
+    const holder = generateEd25519Keypair();
+    const events = new Events();
+    // The privacy state flips to withdrawn as soon as the first recheck has
+    // completed, so the change lands after the recheck and before the
+    // effect-boundary fence.
+    let runtime: FenceRuntime;
+    runtime = new FenceRuntime({
+      loadPrivacy: () =>
+        runtime.completedRechecks >= 1
+          ? privacySnapshot(["email"], false)
+          : privacySnapshot(["email"]),
+      events,
+      profile,
+      nowSec: () => NOW,
+    });
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r-email",
+      owner: P,
+      type: "email",
+      value: "owner@example.com",
+      sensitivity: "general",
+      source: "user",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    const auth = disclosureAuth();
+    await assert.rejects(
+      () =>
+        discloseWithPrivacy({
+          runtime,
+          gate: {
+            authority: auth,
+            ingress: INGRESS,
+            operation: {
+              action: { name: "/disclose" },
+              resource: { type: "vault", id: "personal-state" },
+              context: { claims: ["email"], verifier: "verifier" },
+              purpose: "support",
+            },
+            processing: {
+              authorityPrincipal: P,
+              actor: A,
+              dataPrincipalRef: "subject:opaque-1",
+              controllerId: "acme",
+              action: "/disclose",
+              resource: { type: "vault", id: "personal-state" },
+              purpose: "support",
+              dataCategories: ["email"],
+              recipients: [{ id: "verifier", role: "third-party" }],
+            },
+          },
+          vault,
+          disclosure: {
+            ingress: INGRESS,
+            purpose: "support",
+            requested: ["email"],
+            verifier: "verifier",
+            nonce: "nonce-privacy-fence",
+            nowSec: NOW,
+            authority: auth,
+            resource: { type: "vault", id: "personal-state" },
+            holder: { id: P, privateKey: holder.privateKey },
+          },
+          onAuthorityConsumed: () => {},
+        }),
+      /privacy denied/
+    );
+    // The claim was never released: the evidence is a pre-effect failure.
+    const recorded = [...events.values.values()];
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0]?.state, "FAILED_FINAL");
   });
 
   it("does not inspect secret-record metadata before Authority preflight denies", async () => {
@@ -681,6 +776,106 @@ describe("privacy-wrapped vault processing", () => {
           },
         }),
       /authority persistence failed/
+    );
+    assert.equal(released, false);
+    const event = [...events.values.values()][0];
+    assert.equal(event?.state, "FAILED_FINAL");
+  });
+
+  it("fences the protected use: a withdrawal after the recheck releases no secret", async () => {
+    const events = new Events();
+    const secretSnapshot: PrivacySnapshot = {
+      ...privacySnapshot(["pan"]),
+      activities: [
+        {
+          ...privacySnapshot(["pan"]).activities[0]!,
+          action: "/use",
+          resourceType: "vault-record",
+          recipients: [],
+        },
+      ],
+      bases: [
+        {
+          ...privacySnapshot(["pan"]).bases[0]!,
+          dataCategories: ["pan"],
+        },
+      ],
+    };
+    const withdrawn: PrivacySnapshot = {
+      ...secretSnapshot,
+      bases: secretSnapshot.bases.map((basis) => ({ ...basis, active: false })),
+    };
+    let runtime: FenceRuntime;
+    runtime = new FenceRuntime({
+      loadPrivacy: () =>
+        runtime.completedRechecks >= 1 ? withdrawn : secretSnapshot,
+      events,
+      profile,
+      nowSec: () => NOW,
+    });
+    const vault = new VaultStore(() => NOW);
+    vault.putRecord({
+      id: "r-pan",
+      owner: P,
+      type: "pan",
+      value: "PAN-SECRET-NEVER-EVENT",
+      sensitivity: "secret",
+      source: "issuer",
+      allowedPurposes: ["support"],
+      allowedAgents: [A],
+      expiresAt: null,
+    });
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant({
+      id: "g-use",
+      principal: P,
+      actor: { kind: "exact", id: A },
+      action: { name: "/use" },
+      purpose: "support",
+      resource: { type: "vault-record", id: "r-pan" },
+      bounds: [{ path: ".context.claim", op: "==", value: "pan" }],
+      exp: NOW + 100,
+    });
+    let released = false;
+    await assert.rejects(
+      () =>
+        useCredentialWithPrivacy({
+          runtime,
+          gate: {
+            authority: auth,
+            ingress: INGRESS,
+            operation: {
+              action: { name: "/use" },
+              resource: { type: "vault-record", id: "r-pan" },
+              context: { claim: "pan" },
+              purpose: "support",
+            },
+            processing: {
+              authorityPrincipal: P,
+              actor: A,
+              dataPrincipalRef: "subject:opaque-1",
+              controllerId: "acme",
+              action: "/use",
+              resource: { type: "vault-record", id: "r-pan" },
+              purpose: "support",
+              dataCategories: [],
+              recipients: [],
+            },
+          },
+          vault,
+          secret: {
+            ingress: INGRESS,
+            recordId: "r-pan",
+            purpose: "support",
+            authority: auth,
+            nowSec: NOW,
+            use: async () => {
+              released = true;
+              return { receipt: "never-released" };
+            },
+          },
+        }),
+      /privacy denied/
     );
     assert.equal(released, false);
     const event = [...events.values.values()][0];
