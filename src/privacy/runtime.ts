@@ -190,6 +190,34 @@ export class PrivacyRuntime {
     return live;
   }
 
+  /**
+   * The effect-boundary fence. The privacy decision is re-evaluated against
+   * the current privacy state right before the effect: a withdrawal, a
+   * deactivation, or a changed basis that lands after the recheck stops the
+   * attempt instead of processing anyway. The message stays coarse - the
+   * reason belongs to the operator surface.
+   *
+   * Only the privacy state is re-read. The authority decision was already
+   * made and consumed for this attempt, so re-evaluating it would fail on
+   * the spent use instead of on the privacy state.
+   */
+  fence(
+    prior: Extract<PrivacyGateResult, { allow: true }>,
+    req: PrivacyGateRequest
+  ): void {
+    const privacy = this.evaluatePrivacy(req);
+    if (!privacy.allow) throw new Error("privacy denied");
+    const same = [
+      privacy.activityId === prior.privacy.activityId,
+      privacy.basisId === prior.privacy.basisId,
+      privacy.profileId === prior.privacy.profileId,
+      privacy.profileRevision === prior.privacy.profileRevision,
+    ];
+    if (!same.every((equal) => equal)) {
+      throw new Error("privacy denied");
+    }
+  }
+
   prepareEvent(
     allowed: Extract<PrivacyGateResult, { allow: true }>,
     req: PrivacyGateRequest,

@@ -13,12 +13,19 @@ export { PrivacyPreEffectError } from "./errors.js";
  * Privacy evidence wrapper around an existing protected/journaled execution.
  * The supplied execute callback remains responsible for the provider effect,
  * exact-operation binding, authority consumption and execution reconciliation.
+ *
+ * The callback receives two hooks: `markEffectStarted` (the caller's own
+ * effect boundary) and `fence` (the privacy fence). The caller must invoke
+ * `fence` immediately before the external effect and after any authority
+ * consumption, so a withdrawal that lands in that window stops the attempt
+ * instead of processing anyway.
  */
 export async function executeProtectedActionWithPrivacy(opts: {
   readonly runtime: PrivacyRuntime;
   readonly gate: PrivacyGateRequest;
   readonly execute: (
-    markEffectStarted: () => void
+    markEffectStarted: () => void,
+    fence: () => void
   ) => Promise<ExecutionReceipt>;
   readonly attemptRef?: string;
 }): Promise<ExecutionReceipt> {
@@ -38,8 +45,11 @@ export async function executeProtectedActionWithPrivacy(opts: {
   const markEffectStarted = () => {
     effectStarted = true;
   };
+  const fence = () => {
+    opts.runtime.fence(live, opts.gate);
+  };
   try {
-    receipt = await opts.execute(markEffectStarted);
+    receipt = await opts.execute(markEffectStarted, fence);
   } catch (error) {
     // A caller that has not crossed the effect boundary has provably not
     // changed external state. After that boundary, preserve ambiguity and

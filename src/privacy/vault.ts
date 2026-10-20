@@ -102,6 +102,10 @@ export async function discloseWithPrivacy(opts: {
   const event = opts.runtime.prepareEvent(live, gate, attemptRef);
   let presentation: Presentation;
   try {
+    // Fence: the decision must still hold against the current privacy
+    // state at the effect boundary, so a withdrawal that lands after the
+    // recheck stops the disclosure instead of releasing the claim.
+    opts.runtime.fence(live, gate);
     presentation = readForPurpose(opts.vault, opts.disclosure);
     await opts.onAuthorityConsumed(opts.disclosure.authority);
   } catch (error) {
@@ -186,6 +190,10 @@ export async function useCredentialWithPrivacy(opts: {
   const secret: SecretUseOptions = {
     ...opts.secret,
     use: async (instruction) => {
+      // Fence: the authority use is already burned at this point, so the
+      // privacy state is checked last - a withdrawal stops the release
+      // instead of handing out the secret.
+      opts.runtime.fence(live, gate);
       effectStarted = true;
       return opts.secret.use(instruction);
     },
