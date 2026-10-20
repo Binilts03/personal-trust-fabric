@@ -11,13 +11,13 @@
 
 These are historical slice checkpoints, **not** a claim that the individual SHA independently passed every later gate.
 
-| Slice | Checkpoint SHA | Delivered seam / tests |
-|---|---|---|
-| A — vault foundation | `822212e56b9314acdebb1542392c30e1acab060d` | Exact vault erasure, extracted store and persistence modules, existing vault regressions |
-| B — privacy model/storage | `2b411318d8b5513dae3056d1696bff4c75bf9e56` | Evidence model, DPDP profile, encrypted privacy state/event repositories, TDD suites |
-| C — runtime and rights | `b10a1bcfb2584ad0328e562f632d89a767790874` | Authority-first privacy gate, evidence precommit, vault/provider wrappers and rights views |
-| D — host integration | `578573a2f3bcf13cbafe01be3ace2175bde8edc3` | MCP protected disclosure and payment wrapper integration; evidence precedes authority consumption and journaled payment |
-| E — adversarial repairs | `2c3af1d20896916402a3adc26b0f0a08e1e5d890` | Identifier denial, event state reconciliation, direct-identifier and traversal refusal, proof-of-attempt identity, bounded storage, backup manifest, offline operator recovery, diagnostics, curated exports, structural cleanups |
+| Slice                     | Checkpoint SHA                             | Delivered seam / tests                                                                                                                                                                                                            |
+| ------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A — vault foundation      | `822212e56b9314acdebb1542392c30e1acab060d` | Exact vault erasure, extracted store and persistence modules, existing vault regressions                                                                                                                                          |
+| B — privacy model/storage | `2b411318d8b5513dae3056d1696bff4c75bf9e56` | Evidence model, DPDP profile, encrypted privacy state/event repositories, TDD suites                                                                                                                                              |
+| C — runtime and rights    | `b10a1bcfb2584ad0328e562f632d89a767790874` | Authority-first privacy gate, evidence precommit, vault/provider wrappers and rights views                                                                                                                                        |
+| D — host integration      | `578573a2f3bcf13cbafe01be3ace2175bde8edc3` | MCP protected disclosure and payment wrapper integration; evidence precedes authority consumption and journaled payment                                                                                                           |
+| E — adversarial repairs   | `2c3af1d20896916402a3adc26b0f0a08e1e5d890` | Identifier denial, event state reconciliation, direct-identifier and traversal refusal, proof-of-attempt identity, bounded storage, backup manifest, offline operator recovery, diagnostics, curated exports, structural cleanups |
 
 Slices were implemented incrementally as separate commits. The exact checkpoint CI receipts were:
 
@@ -39,32 +39,46 @@ The last completed full gate at the time of this report is [GitHub Actions 39302
 - CI seam guard and core zero-dependency guard — PASS.
 - Jekyll docs build and verified-secret scan — PASS.
 
-**Important:** verification of newer commits must be read from their own run. Do not apply these green counts to an unverified newer SHA. `npm pack --dry-run` and the complete standalone harness script are **not evidenced by these CI jobs** and are not asserted PASS.
+**Important:** verification of newer commits must be read from their own run. Do not apply these green counts to an unverified newer SHA. CI does not run the standalone harness or `npm pack --dry-run`; the local receipts below record those checks against the seam-parity commit.
+
+## Local full-gate receipts (2026-10-20)
+
+Executed on Windows/Git Bash against `7de4ea55415421e01a60d7e4ed326e6b14e6552f` after `npm ci`, Node 22.23.1:
+
+- `npm run check:brand` — PASS
+- `npm run typecheck` — PASS
+- `npm test` — **436 passed / 0 failed**
+- `npm run eval` — **9 passed / 0 failed**
+- `bash scripts/harness.sh` — **PASS** (`OK: harness green`), including the shared public-seam and zero-dep-core guards
+- `npm pack --dry-run` — **PASS**: 125 files, package 216.0 kB, unpacked 820.8 kB
+- `node scripts/check-seams.mjs` — PASS on the repo; RED (exit 1 with file:line evidence) on a fixture importing `../src/store/vault.js`, `../src/privacy/dpdp.js`, and `node:fs` / `some-package` from core
+
+Cause of the earlier harness gap: CI carried two narrow privacy-persistence seam exemptions that `scripts/harness.sh` lacked. Both gates now call `scripts/check-seams.mjs`, so the exemption list has one reviewed source and cannot drift. The exemptions remain exactly `../src/store/privacy.js` and `../src/store/privacy-events.js`; all other tests must use the public barrel or a bin entry point.
 
 ## Verify-this acceptance matrix
 
 Scoped verification; "VERIFIED" means only the claim and test boundary shown, not statutory legal sufficiency.
 
-| Claim | Status | Evidence / limitation |
-|---|---|---|
-| Authority denial prevents privacy-state reads | **VERIFIED** | `tests/privacy-runtime.test.ts`: zero privacy reads after non-consuming authority denial |
-| Privacy basis cannot grant Authority | **VERIFIED** | `tests/privacy-runtime.test.ts`, `tests/privacy-engine.test.ts`: deny cannot become allow |
-| Inactive/withdrawn basis denies future privacy-wrapped processing | **VERIFIED** | DPDP, runtime and MCP stdio tests; a withdrawal concurrent with post-recheck execution is a documented residual |
-| Data Principal/controller/basis are not selected by MCP agent arguments | **VERIFIED for reference host** | `tests/privacy-mcp.test.ts`; trusted operator JSON and encrypted store determine the context |
-| Actual MCP data presentation is privacy-gated | **VERIFIED for opt-in stdio host** | `tests/privacy-mcp-stdio.test.ts`: active allow, inactive deny, legacy disabled case |
-| Actual MCP payment/protected journal path is privacy-gated | **VERIFIED for opt-in stdio host** | `tests/privacy-mcp-stdio.test.ts` payment proof, receipt and encrypted Processing Event; missing `actionCategories` denies |
-| Extra requested data categories / recipient are denied | **VERIFIED** | `tests/privacy-engine.test.ts`, `tests/privacy-vault.test.ts` |
-| Direct subject identifiers are rejected | **VERIFIED for configured inputs** | `tests/privacy-engine.test.ts`, `tests/privacy-events.test.ts`, `tests/privacy-store.test.ts`; syntax does not prove pseudonymity |
-| Secret record existence is not inspected prior to denied Authority | **VERIFIED** | `tests/privacy-vault.test.ts` traced Vault; zero metadata and privacy reads for unauthorized use |
-| Event precommit/UNKNOWN and terminal reconciliation | **VERIFIED for tested state machine** | `tests/privacy-events.test.ts`, `tests/privacy-cli.test.ts`; physical power-loss survival on all filesystems unproven |
-| Deleted encrypted event in backup is detected | **VERIFIED** | `tests/backup.test.ts`: manifest regression. Manifest has no independent external witness |
-| Record erasure and operator holds | **VERIFIED for exact PTF-managed IDs** | `tests/privacy-rights.test.ts` and existing vault erasure tests; subject-to-record mapping belongs to operator |
-| Legacy MCP and broad existing suite remain unaffected when disabled | **VERIFIED by CI tests** | Existing suites and opt-in-disabled stdio test |
-| Model/Authority boundary preserved | **VERIFIED by code inspection** | Privacy lives in `src/privacy/` and store modules, not Authority grant creation |
-| Privacy package does not expose file-backed repositories | **VERIFIED by source/test** | `src/privacy/api.ts`, `src/index.ts`, `tests/privacy-public-api.test.ts`; CI permits only two explicitly named internal store imports in repo-owned persistence tests |
-| Every possible external processing path is privacy enforced | **NOT VERIFIED** | Deliberately out of scope: general actions, custom providers and unrelated operator CLI flows must compose PrivacyRuntime themselves |
-| Consent-withdrawal/effect ordering is globally atomic | **NOT VERIFIED** | Last recheck → authority CAS → external effect is not one atomic transaction; see audit limits |
-| Statutory DPDP Act compliance / Consent Manager registration | **NOT VERIFIED / not claimed** | The code validates operator evidence; it does not decide lawfulness, register as Consent Manager or provide full DSAR/breach handling |
+| Claim                                                                   | Status                                 | Evidence / limitation                                                                                                                                                 |
+| ----------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authority denial prevents privacy-state reads                           | **VERIFIED**                           | `tests/privacy-runtime.test.ts`: zero privacy reads after non-consuming authority denial                                                                              |
+| Privacy basis cannot grant Authority                                    | **VERIFIED**                           | `tests/privacy-runtime.test.ts`, `tests/privacy-engine.test.ts`: deny cannot become allow                                                                             |
+| Inactive/withdrawn basis denies future privacy-wrapped processing       | **VERIFIED**                           | DPDP, runtime and MCP stdio tests; a withdrawal concurrent with post-recheck execution is a documented residual                                                       |
+| Data Principal/controller/basis are not selected by MCP agent arguments | **VERIFIED for reference host**        | `tests/privacy-mcp.test.ts`; trusted operator JSON and encrypted store determine the context                                                                          |
+| Actual MCP data presentation is privacy-gated                           | **VERIFIED for opt-in stdio host**     | `tests/privacy-mcp-stdio.test.ts`: active allow, inactive deny, legacy disabled case                                                                                  |
+| Actual MCP payment/protected journal path is privacy-gated              | **VERIFIED for opt-in stdio host**     | `tests/privacy-mcp-stdio.test.ts` payment proof, receipt and encrypted Processing Event; missing `actionCategories` denies                                            |
+| Extra requested data categories / recipient are denied                  | **VERIFIED**                           | `tests/privacy-engine.test.ts`, `tests/privacy-vault.test.ts`                                                                                                         |
+| Direct subject identifiers are rejected                                 | **VERIFIED for configured inputs**     | `tests/privacy-engine.test.ts`, `tests/privacy-events.test.ts`, `tests/privacy-store.test.ts`; syntax does not prove pseudonymity                                     |
+| Secret record existence is not inspected prior to denied Authority      | **VERIFIED**                           | `tests/privacy-vault.test.ts` traced Vault; zero metadata and privacy reads for unauthorized use                                                                      |
+| Event precommit/UNKNOWN and terminal reconciliation                     | **VERIFIED for tested state machine**  | `tests/privacy-events.test.ts`, `tests/privacy-cli.test.ts`; physical power-loss survival on all filesystems unproven                                                 |
+| Deleted encrypted event in backup is detected                           | **VERIFIED**                           | `tests/backup.test.ts`: manifest regression. Manifest has no independent external witness                                                                             |
+| Record erasure and operator holds                                       | **VERIFIED for exact PTF-managed IDs** | `tests/privacy-rights.test.ts` and existing vault erasure tests; subject-to-record mapping belongs to operator                                                        |
+| Legacy MCP and broad existing suite remain unaffected when disabled     | **VERIFIED by CI tests**               | Existing suites and opt-in-disabled stdio test                                                                                                                        |
+| Model/Authority boundary preserved                                      | **VERIFIED by code inspection**        | Privacy lives in `src/privacy/` and store modules, not Authority grant creation                                                                                       |
+| Privacy package does not expose file-backed repositories                | **VERIFIED by source/test**            | `src/privacy/api.ts`, `src/index.ts`, `tests/privacy-public-api.test.ts`; CI permits only two explicitly named internal store imports in repo-owned persistence tests |
+| Every possible external processing path is privacy enforced             | **NOT VERIFIED**                       | Deliberately out of scope: general actions, custom providers and unrelated operator CLI flows must compose PrivacyRuntime themselves                                  |
+| Consent-withdrawal/effect ordering is globally atomic                   | **NOT VERIFIED**                       | Last recheck → authority CAS → external effect is not one atomic transaction; see audit limits                                                                        |
+| Statutory DPDP Act compliance / Consent Manager registration            | **NOT VERIFIED / not claimed**         | The code validates operator evidence; it does not decide lawfulness, register as Consent Manager or provide full DSAR/breach handling                                 |
 
 ## Standards axis — structural review
 
