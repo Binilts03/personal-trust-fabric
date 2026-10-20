@@ -12,8 +12,9 @@ PR #104 shipped the privacy enforcement layer and an independent review
 (Standards / Spec / Security). The reviews left no blocker, but they named
 the residuals that are worth engineering next, in this order:
 
-> **Status:** P4-1 (the withdrawal fence) ships in this pull request. P4-2,
-> P4-3, and P4-4 follow as their own pull requests.
+> **Status:** P4-1 (the withdrawal fence) and P4-4 (the per-host enforcement
+> decision) have shipped. P4-2 (the DEK/CAS consolidation) and P4-3 (the
+> indexed event store) follow as their own pull requests.
 
 1. **Consent-withdrawal race** - the privacy recheck happens before the
    effect, but nothing binds the recheck to the effect. A withdrawal that
@@ -109,3 +110,11 @@ to offer it today.
 
 **Done when.** the ADR exists, `docs/audit/limits.md`, the design and the
 changelog all point at it, and the wording in the README/docs matches.
+
+**Shipped (this pull request).** `docs/adr/0025-privacy-enforcement-is-per-host.md`
+decides it: enforcement is per-host, explicit, and composed at the effect
+boundary; the curated `./privacy` surface stays persistence-free; coverage is
+reported, never attested; and the wording rules follow. The ADR also names
+what a future global mode would need and gives the adoption path for a host
+that wants enforcement. `docs/audit/limits.md` points at it where it
+discloses the per-host coverage gap.
