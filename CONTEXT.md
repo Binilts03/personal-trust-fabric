@@ -94,7 +94,6 @@ _Avoid_: Password file, wallet
 Every durable file carries a `revision` bumped atomically with the data; a stale handle's save fails closed instead of last-write-wins. One CLI/MCP writer per store is the supported topology; CAS is the backstop.
 _Avoid_: Locking, transactions (implies multi-writer support)
 
-
 ### Privacy
 
 **Privacy Data Principal Reference**:

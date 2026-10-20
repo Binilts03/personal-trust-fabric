@@ -4,6 +4,8 @@ import {
   Authority,
   PrivacyRuntime,
   PrivacyPreEffectError,
+  PrivacyOutcomeUnknownError,
+  PrivacyEventConflictError,
   executeProtectedActionWithPrivacy,
   type ExecutionReceipt,
   type PrivacyEventRepository,
@@ -99,6 +101,7 @@ function auth(): Authority {
 class Events implements PrivacyEventRepository {
   readonly values = new Map<string, ProcessingEventRecord>();
   readonly order: string[] = [];
+  failSucceeded = false;
   prepare(input: ProcessingEventPrepare): ProcessingEventRecord {
     this.order.push("prepared");
     const existing = [...this.values.values()][0];
@@ -124,6 +127,7 @@ class Events implements PrivacyEventRepository {
     to: "SUCCEEDED" | "FAILED_FINAL" | "OUTCOME_UNKNOWN",
     patch: ProcessingEventFinalize
   ) {
+    if (to === "SUCCEEDED" && this.failSucceeded) throw new Error("disk full");
     const current = this.values.get(id);
     if (current === undefined) throw new Error("missing");
     const next: ProcessingEventRecord = {
@@ -210,9 +214,39 @@ describe("privacy-wrapped protected execution", () => {
             throw new Error("ambiguous provider failure");
           },
         }),
-      /ambiguous provider failure/
+      (error: unknown) =>
+        error instanceof PrivacyOutcomeUnknownError &&
+        error.message === "privacy outcome unknown"
     );
     assert.equal(events.load("pev-1")?.state, "OUTCOME_UNKNOWN");
+  });
+
+  it("reports a post-effect finalize failure as unknown, not a denial", async () => {
+    const events = new Events();
+    events.failSucceeded = true;
+    const runtime = new PrivacyRuntime({
+      loadPrivacy: () => snapshot(),
+      events,
+      profile,
+      nowSec: () => NOW,
+    });
+    await assert.rejects(
+      () =>
+        executeProtectedActionWithPrivacy({
+          runtime,
+          gate: {
+            authority: auth(),
+            ingress: INGRESS,
+            operation: OPERATION,
+            processing: PROCESSING,
+          },
+          execute: async () => receipt(),
+        }),
+      PrivacyOutcomeUnknownError
+    );
+    // The receipt exists, but finalization failed; the event must not be
+    // rewritten as a terminal failure.
+    assert.equal(events.load("pev-1")?.state, "PREPARED");
   });
 
   it("records a typed pre-effect failure as FAILED_FINAL", async () => {
@@ -240,6 +274,48 @@ describe("privacy-wrapped protected execution", () => {
       /authority denied/
     );
     assert.equal(events.load("pev-1")?.state, "FAILED_FINAL");
+  });
+
+  it("refuses a new effect when the attempt already has terminal evidence", async () => {
+    const events = new Events();
+    const runtime = new PrivacyRuntime({
+      loadPrivacy: () => snapshot(),
+      events,
+      profile,
+      nowSec: () => NOW,
+    });
+    const gate = {
+      authority: auth(),
+      ingress: INGRESS,
+      operation: OPERATION,
+      processing: PROCESSING,
+    };
+    const first = runtime.preflight(gate);
+    assert.equal(first.allow, true);
+    if (!first.allow) return;
+    const live = runtime.recheck(first, gate);
+    const prepared = runtime.prepareEvent(live, gate, "retry-ref");
+    events.transition(prepared.eventId, "SUCCEEDED", {
+      finalizedAt: NOW,
+      evidenceRef: "execution-receipt:receipt-1",
+    });
+    let called = false;
+    await assert.rejects(
+      () =>
+        executeProtectedActionWithPrivacy({
+          runtime,
+          gate,
+          attemptRef: "retry-ref",
+          execute: async () => {
+            called = true;
+            return receipt();
+          },
+        }),
+      (error: unknown) =>
+        error instanceof PrivacyEventConflictError &&
+        error.state === "SUCCEEDED"
+    );
+    assert.equal(called, false);
   });
 
   it("does not invoke the provider when the live privacy recheck fails", async () => {

@@ -74,6 +74,17 @@ describe("seam guard fixture", () => {
     }
   });
 
+  it("fails closed when the root has no scannable source", () => {
+    const root = mkdtempSync(join(tmpdir(), "ptf-seams-empty-"));
+    try {
+      const result = check(root);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /no TypeScript files/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects dynamic imports and absolute paths", () => {
     const root = fixture();
     try {

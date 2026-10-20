@@ -102,10 +102,14 @@ function readAuditEntries(dir: string): unknown[] {
  * anchor checkpoint. This is NOT an independent external witness: anyone
  * allowed to replace anchor.json can replace the manifest too.
  */
-function privacyEventManifest(dir: string): { readonly count: number; readonly digest: string } | null {
+function privacyEventManifest(
+  dir: string
+): { readonly count: number; readonly digest: string } | null {
   const root = join(dir, "privacy-events");
   if (!existsSync(root)) return null;
-  const names = readdirSync(root).filter((name) => name.endsWith(".json")).sort();
+  const names = readdirSync(root)
+    .filter((name) => name.endsWith(".json"))
+    .sort();
   const hash = createHash("sha256");
   for (const name of names) {
     const contents = readFileSync(join(root, name));
@@ -229,7 +233,9 @@ export function backupStore(
     join(destDir, "anchor.json"),
     `${JSON.stringify({
       ...anchor,
-      ...(eventManifest !== null ? { privacyEventsManifest: eventManifest } : {}),
+      ...(eventManifest !== null
+        ? { privacyEventsManifest: eventManifest }
+        : {}),
     })}\n`,
     { mode: 0o600 }
   );
@@ -332,7 +338,9 @@ export function restoreStore(
     if (existsSync(join(destDir, "privacy-events"))) {
       const kid = readPrivacyKid(destDir);
       if (kid === null) {
-        throw new Error("restore: privacy events require privacy-state.json key id");
+        throw new Error(
+          "restore: privacy events require privacy-state.json key id"
+        );
       }
       const privacyDek = resolvePrivacyDek(opts.keys, kid);
       const repo = new FilePrivacyEventRepository({
@@ -344,7 +352,9 @@ export function restoreStore(
         if (!name.endsWith(".json")) continue;
         const eventId = name.slice(0, -".json".length);
         if (repo.load(eventId) === null) {
-          throw new Error(`restore: privacy event missing after copy: ${eventId}`);
+          throw new Error(
+            `restore: privacy event missing after copy: ${eventId}`
+          );
         }
       }
     }
@@ -358,7 +368,9 @@ export function restoreStore(
   let anchorMatch = false;
   const anchorPath = join(backupDir, "anchor.json");
   if (!existsSync(anchorPath) && existsSync(join(destDir, "privacy-events"))) {
-    throw new Error("restore: privacy event manifest missing (backup anchor absent)");
+    throw new Error(
+      "restore: privacy event manifest missing (backup anchor absent)"
+    );
   }
   if (existsSync(anchorPath)) {
     anchorChecked = true;
@@ -374,14 +386,19 @@ export function restoreStore(
       privacyEventsManifest?: { count?: unknown; digest?: unknown };
     };
     const eventManifest = privacyEventManifest(destDir);
-    if (eventManifest !== null && (
-      rec.privacyEventsManifest?.count !== eventManifest.count ||
-      rec.privacyEventsManifest?.digest !== eventManifest.digest
-    )) {
-      throw new Error("restore: privacy event manifest mismatch or missing evidence");
+    if (
+      eventManifest !== null &&
+      (rec.privacyEventsManifest?.count !== eventManifest.count ||
+        rec.privacyEventsManifest?.digest !== eventManifest.digest)
+    ) {
+      throw new Error(
+        "restore: privacy event manifest mismatch or missing evidence"
+      );
     }
     if (eventManifest === null && rec.privacyEventsManifest !== undefined) {
-      throw new Error("restore: privacy event manifest mismatch (event directory missing)");
+      throw new Error(
+        "restore: privacy event manifest mismatch (event directory missing)"
+      );
     }
     const recomputed = checkpoint(readAuditEntries(destDir), now());
     anchorMatch =

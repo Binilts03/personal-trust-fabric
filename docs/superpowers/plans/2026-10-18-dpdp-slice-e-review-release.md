@@ -35,6 +35,7 @@
 - [ ] **Step 1: Pin refs**
 
 Run:
+
 ```sh
 git rev-parse 7b52d61ea207d1d37d11a8c85f3253466b732537
 git rev-parse HEAD
@@ -66,6 +67,7 @@ Especially `authority.ts`, `vault.ts`, `providers.ts`, `cli.ts`, `mcp-server.ts`
 - [ ] **Step 2: Apply code-judo review**
 
 Look for:
+
 - repeated DPDP if/else branches;
 - copied encryption/CAS;
 - duplicate state machines;

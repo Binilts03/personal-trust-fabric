@@ -32,6 +32,7 @@
 ### Task D1: Publish curated privacy library surface
 
 **Files:**
+
 - Create: `src/privacy/api.ts`
 - Modify: `package.json`
 - Modify: `src/api.ts` only if top-level additive exports are explicitly justified; prefer subpath.
@@ -40,16 +41,18 @@
 - Modify: `docs/adr/0011-public-surface.md` or append an ADR-0024 consequence note.
 
 **Interfaces:**
+
 - Package export: `./privacy` -> `dist/src/privacy/api.js`.
 - Optional `./privacy/dpdp` only if the profile exports materially improve host ergonomics without exposing store internals.
 
 Curated `./privacy` exports:
+
 - stable model types, including `PrivacySnapshot` and the `PrivacyEventRepository` port;
 - `PrivacyRuntime`;
 - DPDP profile constant/profile object;
 - privacy-wrapped vault/provider helpers;
 - processing summary/erasure-plan types/functions.
-Do not export `PrivacyStore` or `FilePrivacyEventRepository` through the public package subpath.
+  Do not export `PrivacyStore` or `FilePrivacyEventRepository` through the public package subpath.
 
 - [ ] **Step 1: Write failing package surface tests**
 
@@ -79,11 +82,13 @@ git commit -m "feat: publish curated privacy API"
 ### Task D2: Add dedicated operator privacy CLI module
 
 **Files:**
+
 - Create: `src/cli/privacy.ts`
 - Modify: `src/cli.ts` routing/help only
 - Create: `tests/privacy-cli.test.ts`
 
 **Interfaces:**
+
 - Top-level command: `ptf privacy <subcommand>`.
 - Required subcommands:
   - `init`
@@ -102,6 +107,7 @@ Exact argument parsing lives in `src/cli/privacy.ts`; `src/cli.ts` dispatches af
 - [ ] **Step 1: Write failing CLI tests**
 
 Use temp stores and injected IO:
+
 - add/list prints ids/scope metadata only;
 - consent withdrawal takes effect;
 - summary never prints sentinel values;
@@ -139,6 +145,7 @@ git commit -m "feat: add privacy operator CLI"
 ### Task D3: Add opt-in MCP privacy enforcement without schema authority leakage
 
 **Files:**
+
 - Create: `src/privacy/mcp.ts`
 - Modify: `src/mcp-server.ts` thin hooks/config only
 - Modify: `docs/mcp-contract.md`
@@ -146,7 +153,9 @@ git commit -m "feat: add privacy operator CLI"
 - Modify: existing MCP regression tests as needed only for additive mode.
 
 **Interfaces:**
+
 - Host seam:
+
 ```ts
 export interface PrivacyContextResolver {
   resolve(input: {
@@ -157,6 +166,7 @@ export interface PrivacyContextResolver {
 ```
 
 Reference MCP mode:
+
 - privacy disabled by default;
 - enabling privacy requires valid privacy store/profile plus trusted resolver configuration;
 - Personal Authority Node reference resolver may bind a fixed controller + opaque subject ref from operator-owned environment/config;
@@ -207,6 +217,7 @@ git commit -m "feat: enforce privacy mode at MCP boundary"
 ### Task D4: Update backup/operator documentation, product claims, and limits
 
 **Files:**
+
 - Modify: `README.md` outside protected brand region only if necessary
 - Modify: `docs/audit/README.md`
 - Modify: `docs/audit/limits.md`
@@ -217,6 +228,7 @@ git commit -m "feat: enforce privacy mode at MCP boundary"
 - Test: docs build + brand check
 
 **Interfaces:**
+
 - Documentation claim: “helps enforce/support DPDP controls” / “privacy-enforcement and evidence layer.”
 - Explicitly forbidden claim: “guarantees DPDP compliance”, “compliant=true”, “registered Consent Manager”.
 

@@ -27,11 +27,16 @@ function inWindow(
   value: { readonly nbf?: number; readonly exp?: number },
   nowSec: number
 ): boolean {
-  return (value.nbf === undefined || nowSec >= value.nbf) &&
-    (value.exp === undefined || nowSec <= value.exp);
+  return (
+    (value.nbf === undefined || nowSec >= value.nbf) &&
+    (value.exp === undefined || nowSec <= value.exp)
+  );
 }
 
-function subset(requested: readonly string[], allowed: readonly string[]): boolean {
+function subset(
+  requested: readonly string[],
+  allowed: readonly string[]
+): boolean {
   return requested.every((item) => allowed.includes(item));
 }
 
@@ -50,7 +55,9 @@ function pickActivity(
   profile: PrivacyProfile
 ): ProcessingActivity | null {
   const subjectMatchesList = activities.filter(
-    (a) => a.profileId === profile.id && subjectMatches(a.subjects, context.dataPrincipalRef)
+    (a) =>
+      a.profileId === profile.id &&
+      subjectMatches(a.subjects, context.dataPrincipalRef)
   );
   if (subjectMatchesList.length === 0) return null;
   return (
@@ -59,7 +66,9 @@ function pickActivity(
         a.action === context.action &&
         a.resourceType === context.resource.type &&
         a.purpose === context.purpose
-    ) ?? subjectMatchesList[0] ?? null
+    ) ??
+    subjectMatchesList[0] ??
+    null
   );
 }
 

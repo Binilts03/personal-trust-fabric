@@ -53,7 +53,9 @@ export function readSealedEnvelopeKid(
     Array.isArray(parsed) ||
     (parsed as { version?: unknown }).version !== opts.version
   ) {
-    throw new Error(`${opts.errorPrefix} store corrupt: ${path} (bad envelope)`);
+    throw new Error(
+      `${opts.errorPrefix} store corrupt: ${path} (bad envelope)`
+    );
   }
   const kid = (parsed as Record<string, unknown>)["kidHex"];
   if (
@@ -61,7 +63,9 @@ export function readSealedEnvelopeKid(
     kid.length !== kidBytes * 2 ||
     !/^[0-9a-fA-F]+$/.test(kid)
   ) {
-    throw new Error(`${opts.errorPrefix} store corrupt: ${path} (bad envelope)`);
+    throw new Error(
+      `${opts.errorPrefix} store corrupt: ${path} (bad envelope)`
+    );
   }
   return kid;
 }
@@ -103,7 +107,9 @@ export function openSnapshotEnvelope<T>(
     Array.isArray(parsed) ||
     (parsed as { version?: unknown }).version !== opts.version
   ) {
-    throw new Error(`${opts.errorPrefix} store corrupt: ${path} (bad envelope)`);
+    throw new Error(
+      `${opts.errorPrefix} store corrupt: ${path} (bad envelope)`
+    );
   }
   const env = parsed as Record<string, unknown>;
   const kidHex = env["kidHex"];
@@ -125,7 +131,9 @@ export function openSnapshotEnvelope<T>(
     ctHex.length % 2 !== 0 ||
     !/^[0-9a-fA-F]+$/.test(ctHex)
   ) {
-    throw new Error(`${opts.errorPrefix} store corrupt: ${path} (bad envelope)`);
+    throw new Error(
+      `${opts.errorPrefix} store corrupt: ${path} (bad envelope)`
+    );
   }
   let plain: string;
   try {

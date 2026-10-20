@@ -186,7 +186,11 @@ export class FilePrivacyEventRepository implements PrivacyEventRepository {
         error !== null &&
         (error as { code?: unknown }).code === "EEXIST"
       ) {
-        return cloneEvent(openRecord(path, this.dek));
+        const existing = openRecord(path, this.dek);
+        if (existing.idempotencyKey !== key) {
+          throw new Error("privacy event: idempotency collision");
+        }
+        return cloneEvent(existing);
       }
       throw error;
     }

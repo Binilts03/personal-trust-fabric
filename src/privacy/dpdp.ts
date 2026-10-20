@@ -15,7 +15,10 @@ function nonEmpty(value: string): boolean {
   return value.trim().length > 0;
 }
 
-function subset(requested: readonly string[], allowed: readonly string[]): boolean {
+function subset(
+  requested: readonly string[],
+  allowed: readonly string[]
+): boolean {
   return requested.every((item) => allowed.includes(item));
 }
 
@@ -25,12 +28,15 @@ function transferAllowed(
 ): boolean {
   if (context.transferDestination === undefined) return true;
   if (activity.allowedTransferDestinations === undefined) return true;
-  return activity.allowedTransferDestinations.includes(context.transferDestination);
+  return activity.allowedTransferDestinations.includes(
+    context.transferDestination
+  );
 }
 
 function guardianEvidenceValid(context: TrustedProcessingContext): boolean {
   const assurance = context.subjectAssurance;
-  if (assurance === undefined || assurance.classification === "adult") return true;
+  if (assurance === undefined || assurance.classification === "adult")
+    return true;
   return nonEmpty(assurance.proofRef) && nonEmpty(assurance.assertedBy);
 }
 
@@ -42,7 +48,8 @@ function validateConsent(
   context: TrustedProcessingContext,
   nowSec: number
 ): PrivacyProfileDecision {
-  if (!nonEmpty(basis.assertedBy)) return { ok: false, reason: "basis-invalid" };
+  if (!nonEmpty(basis.assertedBy))
+    return { ok: false, reason: "basis-invalid" };
   const consent = consents.find((c) => c.id === basis.consentId);
   if (consent === undefined) return { ok: false, reason: "basis-invalid" };
   if (consent.withdrawnAt !== undefined && consent.withdrawnAt <= nowSec) {

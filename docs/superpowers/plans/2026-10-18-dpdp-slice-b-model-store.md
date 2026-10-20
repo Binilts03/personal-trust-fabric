@@ -32,19 +32,19 @@
 ### Task B1: Define canonical privacy model and deterministic engine
 
 **Files:**
+
 - Create: `src/privacy/model.ts`
 - Create: `src/privacy/engine.ts`
 - Modify: `src/index.ts`
 - Create: `tests/privacy-engine.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
 ```ts
 export type PrivacyRecipientRole =
-  | "data-processor"
-  | "data-fiduciary"
-  | "third-party"
-  | "other";
+  "data-processor" | "data-fiduciary" | "third-party" | "other";
 
 export type PrivacySubjectSelector =
   | { readonly kind: "exact"; readonly ref: string }
@@ -221,10 +221,7 @@ export interface PrivacySnapshot {
 }
 
 export type ProcessingEventState =
-  | "PREPARED"
-  | "SUCCEEDED"
-  | "FAILED_FINAL"
-  | "OUTCOME_UNKNOWN";
+  "PREPARED" | "SUCCEEDED" | "FAILED_FINAL" | "OUTCOME_UNKNOWN";
 
 export interface ProcessingEventPrepare {
   readonly profileId: string;
@@ -280,7 +277,7 @@ export function evaluateProcessing(input: {
   readonly context: TrustedProcessingContext;
   readonly profile: PrivacyProfile;
   readonly nowSec: number;
-}): PrivacyDecision
+}): PrivacyDecision;
 ```
 
 - [ ] **Step 1: Write failing table/property tests**
@@ -288,9 +285,11 @@ export function evaluateProcessing(input: {
 Cover default deny, exact action/resource-type/purpose, controller and authority-principal mismatch, exact/set/explicit-any subject selectors, data-category subset, recipient id+role subset, inactive/expired activity, missing/inactive basis.
 
 Run:
+
 ```sh
 npm run build && node --test dist/tests/privacy-engine.test.js
 ```
+
 Expected: FAIL because modules do not exist.
 
 - [ ] **Step 2: Implement model validation**
@@ -317,23 +316,26 @@ git commit -m "feat: add privacy narrowing engine"
 ### Task B2: Implement versioned DPDP profile
 
 **Files:**
+
 - Create: `src/privacy/dpdp.ts`
 - Modify: `src/privacy/model.ts`
 - Modify: `src/index.ts`
 - Create: `tests/privacy-dpdp.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
 ```ts
 export const DPDP_PROFILE_ID = "IN-DPDP-2025" as const;
 export const DPDP_PROFILE_REVISION = "2025-r1" as const;
 export const dpdpProfile: PrivacyProfile;
 ```
 
-
 - [ ] **Step 1: Write failing profile tests**
 
 Consent tests:
+
 - notice required and matches controller/subject/purpose/data categories;
 - consent captures affirmative timestamp/method/proof reference;
 - withdrawn consent denies;
@@ -341,6 +343,7 @@ Consent tests:
 - child/guardian-assisted classifications require guardian verification evidence when consent is basis.
 
 Legitimate-use tests:
+
 - non-empty `provisionRef`, `evidenceRef`, `assertedBy` required;
 - no AI-generated/free text is treated as sufficient by itself; only configured record passes shape validation;
 - transfer destination is checked only against configured transfer constraint and never against an invented country list.
@@ -369,13 +372,16 @@ git commit -m "feat: add India DPDP privacy profile"
 ### Task B3: Implement encrypted privacy configuration store and key lifecycle
 
 **Files:**
+
 - Create: `src/store/privacy.ts`
 - Modify: `src/store/keystore.ts` only if a generic internal DEK helper is needed; do not change public custody semantics.
 - Modify: `src/index.ts`
 - Create: `tests/privacy-store.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
 ```ts
 export const PRIVACY_DEK_ALIAS = "ptf/privacy-dek";
 export const PRIVACY_DEK_NEXT_ALIAS = "ptf/privacy-dek-next";
@@ -434,12 +440,15 @@ git commit -m "feat: persist encrypted privacy configuration"
 ### Task B4: Implement encrypted Processing Event repository
 
 **Files:**
+
 - Create: `src/store/privacy-events.ts`
 - Modify: `src/index.ts`
 - Create: `tests/privacy-events.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
 ```ts
 export class FilePrivacyEventRepository implements PrivacyEventRepository {
   constructor(opts: {
@@ -465,6 +474,7 @@ File backend uses deterministic hashed filenames/idempotency keys derived from c
 - [ ] **Step 1: Write failing state-machine/replay tests**
 
 Assertions:
+
 - same prepare key returns same record;
 - same terminal transition is idempotent only when identical;
 - conflicting terminal transition throws;
@@ -497,11 +507,13 @@ git commit -m "feat: add durable privacy processing events"
 ### Task B5: Extend backup/restore coherently
 
 **Files:**
+
 - Modify: `src/store/backup.ts`
 - Modify: `tests/backup.test.ts`
 - Modify: `docs/audit/limits.md`
 
 **Interfaces:**
+
 - Consumes: privacy config store and event repository.
 - Produces: additive `privacyEvents` count in BackupSummary if useful; restore verifies privacy state/event decryptability whenever privacy artifacts exist.
 

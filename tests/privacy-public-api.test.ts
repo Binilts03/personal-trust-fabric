@@ -8,7 +8,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 describe("curated privacy package surface", () => {
   it("publishes ./privacy without persistence implementations", () => {
-    const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
+    const pkg = JSON.parse(
+      readFileSync(join(ROOT, "package.json"), "utf8")
+    ) as {
       exports: Record<string, { types?: string; default?: string }>;
     };
     assert.deepEqual(pkg.exports["./privacy"], {
@@ -23,9 +25,8 @@ describe("curated privacy package surface", () => {
     assert.ok(!api.includes("FilePrivacyEventRepository"));
     assert.ok(!api.includes("PrivacyStore"));
     const index = readFileSync(join(ROOT, "src", "index.ts"), "utf8");
-    assert.ok(!index.includes('./store/privacy.js'));
-    assert.ok(!index.includes('./store/privacy-events.js'));
-    assert.ok(index.includes('./privacy/api.js'));
-
+    assert.ok(!index.includes("./store/privacy.js"));
+    assert.ok(!index.includes("./store/privacy-events.js"));
+    assert.ok(index.includes("./privacy/api.js"));
   });
 });

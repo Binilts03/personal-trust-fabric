@@ -1,6 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+  readdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -20,7 +27,11 @@ import {
   sealKeystore,
   VAULT_DEK_ALIAS,
 } from "../src/index.js";
-import { PrivacyStore, createPrivacyDek, savePrivacyStore } from "../src/store/privacy.js";
+import {
+  PrivacyStore,
+  createPrivacyDek,
+  savePrivacyStore,
+} from "../src/store/privacy.js";
 import { FilePrivacyEventRepository } from "../src/store/privacy-events.js";
 import { run } from "../src/cli.js";
 
@@ -176,15 +187,19 @@ describe("backup/restore privacy state", () => {
     const filenames = readdirSync(join(dest, "privacy-events"));
     assert.equal(filenames.length, 1);
     unlinkSync(join(dest, "privacy-events", filenames[0] as string));
-    const tamperedRestore = join(tmpdir(), `ptf-privacy-event-missing-${Date.now()}`);
+    const tamperedRestore = join(
+      tmpdir(),
+      `ptf-privacy-event-missing-${Date.now()}`
+    );
     assert.throws(
-      () => restoreStore(dest, tamperedRestore, {
-        nowSec: () => NOW,
-        keys: {
-          [VAULT_DEK_ALIAS]: vaultDek,
-          "ptf/privacy-dek": privacyDek,
-        },
-      }),
+      () =>
+        restoreStore(dest, tamperedRestore, {
+          nowSec: () => NOW,
+          keys: {
+            [VAULT_DEK_ALIAS]: vaultDek,
+            "ptf/privacy-dek": privacyDek,
+          },
+        }),
       /privacy event.*(manifest|integrity|missing|mismatch)/
     );
   });

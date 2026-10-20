@@ -5,6 +5,7 @@ import {
   type VerifiedIdentity,
 } from "../core/authority.js";
 import { evaluateProcessing } from "./engine.js";
+import { PrivacyEventConflictError } from "./errors.js";
 import { canonicalize, sha256Hex } from "../core/canonical.js";
 import { randomUUID } from "node:crypto";
 import type {
@@ -85,6 +86,10 @@ export class PrivacyRuntime {
     this.events = deps.events;
     this.profile = deps.profile;
     this.nowSec = deps.nowSec ?? (() => Math.floor(Date.now() / 1000));
+  }
+
+  now(): number {
+    return this.nowSec();
   }
 
   preflight(
@@ -208,11 +213,10 @@ export class PrivacyRuntime {
       preparedAt: this.nowSec(),
     });
     if (event.state !== "PREPARED") {
-      // Never run a new external effect against terminal evidence. A retry
-      // of the same attempt must be resolved from the execution journal.
-      throw new Error(
-        `privacy event: attempt already ${event.state} (${event.eventId})`
-      );
+      // Never run a new external effect against existing evidence. A retry
+      // of the same attempt must be resolved from the journal/operator
+      // reconciliation, not by treating this as a new denial.
+      throw new PrivacyEventConflictError(event.eventId, event.state);
     }
     return event;
   }

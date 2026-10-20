@@ -102,7 +102,16 @@ function isAbsoluteSpecifier(specifier) {
 
 function scan(root, target, allow) {
   const violations = [];
-  for (const file of walkTypeScriptFiles(join(root, target))) {
+  const files = walkTypeScriptFiles(join(root, target));
+  if (files.length === 0) {
+    violations.push({
+      file: target,
+      line: 1,
+      specifier: "",
+      reason: "root is missing or contains no TypeScript files",
+    });
+  }
+  for (const file of files) {
     const filePath = relative(root, file).split(sep).join("/");
     const lines = readFileSync(file, "utf8").split(/\r?\n/);
     lines.forEach((line, index) => {

@@ -32,12 +32,15 @@
 ### Task C1: Implement PrivacyRuntime gate ordering and oracle resistance
 
 **Files:**
+
 - Create: `src/privacy/runtime.ts`
 - Modify: `src/index.ts`
 - Create: `tests/privacy-runtime.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
 ```ts
 export interface PrivacyRuntimeDeps {
   readonly loadPrivacy: () => PrivacySnapshot;
@@ -56,24 +59,41 @@ export interface PrivacyGateRequest {
 export type PrivacyGateResult =
   | {
       readonly allow: true;
-      readonly privacy: Extract<PrivacyDecision,{allow:true}>;
+      readonly privacy: Extract<PrivacyDecision, { allow: true }>;
       readonly termsDigest: string;
       readonly authorityCitationIds: readonly string[];
     }
-  | { readonly allow: false; readonly publicReason: "authority-denied" | "privacy-denied"; readonly operatorReason?: PrivacyDenyReason };
+  | {
+      readonly allow: false;
+      readonly publicReason: "authority-denied" | "privacy-denied";
+      readonly operatorReason?: PrivacyDenyReason;
+    };
 
 export class PrivacyRuntime {
   constructor(deps: PrivacyRuntimeDeps);
-  preflight(req: PrivacyGateRequest, opts?: { operatorDetail?: boolean }): PrivacyGateResult;
-  recheck(allow: Extract<PrivacyGateResult,{allow:true}>, req: PrivacyGateRequest): Extract<PrivacyGateResult,{allow:true}>;
-  prepareEvent(allow: Extract<PrivacyGateResult,{allow:true}>, req: PrivacyGateRequest): ProcessingEventRecord;
-  finalizeEvent(eventId: string, outcome: ProcessingEventFinalize): ProcessingEventRecord;
+  preflight(
+    req: PrivacyGateRequest,
+    opts?: { operatorDetail?: boolean }
+  ): PrivacyGateResult;
+  recheck(
+    allow: Extract<PrivacyGateResult, { allow: true }>,
+    req: PrivacyGateRequest
+  ): Extract<PrivacyGateResult, { allow: true }>;
+  prepareEvent(
+    allow: Extract<PrivacyGateResult, { allow: true }>,
+    req: PrivacyGateRequest
+  ): ProcessingEventRecord;
+  finalizeEvent(
+    eventId: string,
+    outcome: ProcessingEventFinalize
+  ): ProcessingEventRecord;
 }
 ```
 
 - [ ] **Step 1: Write failing oracle tests**
 
 Use an instrumented fake PrivacyStore/profile counter:
+
 - no authority => privacy store/profile not read/called;
 - no authority + different hypothetical privacy states => same public reason;
 - authority yes + privacy no => `privacy-denied`, operatorDetail gets closed reason only;
@@ -103,13 +123,16 @@ git commit -m "feat: add privacy runtime gate"
 ### Task C2: Add privacy-wrapped vault disclosure and protected secret use
 
 **Files:**
+
 - Create: `src/privacy/vault.ts`
 - Modify: `src/index.ts`
 - Modify: `tests/privacy-runtime.test.ts`
 - Create: `tests/privacy-vault.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
 ```ts
 export async function discloseWithPrivacy(opts: {
   readonly runtime: PrivacyRuntime;
@@ -130,6 +153,7 @@ export async function useCredentialWithPrivacy(opts: {
 - [ ] **Step 1: Write failing integration tests**
 
 Disclosure:
+
 - authority only + missing basis denies before vault returns values;
 - privacy only + authority deny denies;
 - valid both discloses only configured claims;
@@ -139,6 +163,7 @@ Disclosure:
 - injected throw between PREPARED and completion => recover as OUTCOME_UNKNOWN.
 
 Secret use:
+
 - same gate behaviors;
 - secret sentinel never appears in event/audit/result.
 
@@ -162,18 +187,23 @@ git commit -m "feat: enforce privacy on vault processing"
 ### Task C3: Add privacy evidence around protected provider execution
 
 **Files:**
+
 - Create: `src/privacy/providers.ts`
 - Modify: `src/index.ts`
 - Create: `tests/privacy-providers.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
 ```ts
 export async function executeProtectedActionWithPrivacy(opts: {
   readonly runtime: PrivacyRuntime;
   readonly gate: PrivacyGateRequest;
   readonly execute: () => Promise<ExecutionReceipt>;
-  readonly executionLookup?: (termsDigest: string) => Promise<ExecutionReceipt | null>;
+  readonly executionLookup?: (
+    termsDigest: string
+  ) => Promise<ExecutionReceipt | null>;
 }): Promise<ExecutionReceipt>;
 ```
 
@@ -208,12 +238,15 @@ git commit -m "feat: bind privacy evidence to protected execution"
 ### Task C4: Implement processing summary, retention checks, and erasure plan
 
 **Files:**
+
 - Create: `src/privacy/rights.ts`
 - Modify: `src/privacy/runtime.ts`
 - Create: `tests/privacy-rights.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
 ```ts
 export interface ProcessingSummary {
   readonly dataPrincipalRef: string;
@@ -234,8 +267,16 @@ export interface ErasurePlanItem {
   readonly holdIds: readonly string[];
 }
 
-export function summarizeProcessing(events: readonly ProcessingEventRecord[], dataPrincipalRef: string): ProcessingSummary;
-export function planErasure(input: { records: readonly VaultRecordMetadata[]; holds: readonly RetentionHold[]; dataPrincipalRef: string; nowSec: number }): readonly ErasurePlanItem[];
+export function summarizeProcessing(
+  events: readonly ProcessingEventRecord[],
+  dataPrincipalRef: string
+): ProcessingSummary;
+export function planErasure(input: {
+  records: readonly VaultRecordMetadata[];
+  holds: readonly RetentionHold[];
+  dataPrincipalRef: string;
+  nowSec: number;
+}): readonly ErasurePlanItem[];
 ```
 
 - [ ] **Step 1: Write failing rights tests**
@@ -271,6 +312,7 @@ git commit -m "feat: add privacy rights evidence and erasure planning"
 ### Task C5: Adversarial/property regression gate
 
 **Files:**
+
 - Modify: `tests/privacy-engine.test.ts`
 - Modify: `tests/privacy-runtime.test.ts`
 - Modify: `tests/privacy-vault.test.ts`

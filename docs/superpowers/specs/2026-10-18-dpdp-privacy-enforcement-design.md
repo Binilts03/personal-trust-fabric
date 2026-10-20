@@ -360,11 +360,11 @@ No DPDP-specific conditional logic may be added directly to:
 - `src/mcp-server.ts`;
 - `src/cli.ts`.
 
-Integration into large host files must be by small calls into focused modules.
+Integration into large host files must be by small calls into focused modules. The reference MCP server keeps gate construction in `src/privacy/mcp.ts` and store/runtime wiring in `src/privacy/mcp-host.ts`; `src/mcp-server.ts` retains only routing hooks and agent-facing response mapping.
 
 If new operator commands are added, implement them in a dedicated CLI module and keep the existing top-level CLI to parsing/routing glue.
 
-If MCP privacy mode is added, agent-facing schemas remain unchanged for existing tools. Basis/controller/privacy-subject fields are host-resolved and cannot be agent supplied.
+If MCP privacy mode is added, existing tools gain no new agent-supplied fields. Basis/controller/privacy-subject fields are host-resolved and cannot be agent supplied. Conservative length/format bounds are an intentional hardening and may reject malformed or pathological values (for example non-hex digests or multi-kilobyte fields); they add no semantic field and do not change the generated terms.
 
 ## 8. Persistence and key custody
 
@@ -890,7 +890,6 @@ Scope:
 6. final no-regression comparison against the frozen base SHA.
 
 A slice may use a dedicated implementation branch/PR, but the final feature is not complete until all slices pass the section-22 acceptance criteria. No slice may compensate for a failed invariant in another layer by adding a special case to the Authority core.
-
 
 ## 25. Decision
 

@@ -36,25 +36,20 @@ import { readFileSync } from "node:fs";
 import { requestData, requestExecution } from "./profiles/data.js";
 import {
   resolveMcpPrivacyConfig,
-  makeMcpPrivacyDisclosureGate,
-  makeMcpPrivacyPaymentGate,
   MCP_PRIVACY_GATED_PATHS,
   MCP_PRIVACY_UNCOVERED_PATHS,
   type McpPrivacyConfig,
 } from "./privacy/mcp.js";
-import { PrivacyRuntime, type PrivacyGateRequest } from "./privacy/runtime.js";
-import { dpdpProfile } from "./privacy/dpdp.js";
+import { privacyForOperation } from "./privacy/mcp-host.js";
 import { discloseWithPrivacy } from "./privacy/vault.js";
 import {
   executeProtectedActionWithPrivacy,
   PrivacyPreEffectError,
 } from "./privacy/providers.js";
-import { FilePrivacyEventRepository } from "./store/privacy-events.js";
 import {
-  loadPrivacyStore,
-  readPrivacyKid,
-  resolvePrivacyDek,
-} from "./store/privacy.js";
+  PrivacyEventConflictError,
+  PrivacyOutcomeUnknownError,
+} from "./privacy/errors.js";
 import {
   createProposal,
   gcChallenges,
@@ -169,6 +164,57 @@ const demandSchema = z
 
 function fail(message: string): never {
   throw new Error(message);
+}
+
+/**
+ * A post-effect failure is not a denial. Return a non-terminal, sanitized
+ * result so the agent reconciles the journal/evidence instead of treating
+ * the operation as failed and proposing new terms.
+ */
+function privacyOutcomeUnknownResult(
+  termsDigest: string,
+  kind: "payment" | "disclosure"
+) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            status: "outcome_unknown",
+            termsDigest,
+            instruction:
+              kind === "payment"
+                ? "The payment may have been effected. Re-run ptf_redeem with the same termsDigest; a journaled success returns the existing receipt. Do not propose new terms."
+                : "The disclosure may have been consumed. Inspect the privacy event and verify with the recipient before retrying. Do not treat this as a denial.",
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+}
+
+function privacyEvidenceConflictResult(termsDigest: string, state: string) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            status: "evidence_conflict",
+            termsDigest,
+            processingState: state,
+            instruction:
+              "Existing processing evidence already covers this attempt; no new effect was started. Reconcile that evidence or the execution journal before retrying.",
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
 }
 
 /**
@@ -356,40 +402,25 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     version: "0.1.0",
   });
 
-  /** Both MCP processing tiers share one private host-owned runtime. */
-  const privacyForOperation = (
+  /** One routing hook; policy construction lives in privacy/mcp-host.ts. */
+  const privacyForConfiguredOperation = (
     keys: Record<string, Uint8Array>,
     auth: Authority,
     ingress: VerifiedIdentity,
     demand: AuthorityRequest
-  ): { runtime: PrivacyRuntime; gate: PrivacyGateRequest } => {
+  ) => {
     if (opts.privacy === undefined) throw new Error("privacy denied");
-    let binding: Omit<PrivacyGateRequest, "authority">;
-    if (demand.action.name === "/pay") {
-      binding = makeMcpPrivacyPaymentGate(opts.privacy, ingress, demand);
-    } else if (demand.action.name === "/disclose") {
-      binding = makeMcpPrivacyDisclosureGate(opts.privacy, ingress, demand);
-    } else {
-      throw new Error("privacy denied");
-    }
-    const kid = readPrivacyKid(opts.dir);
-    if (kid === null) throw new Error("privacy denied");
-    const dek = resolvePrivacyDek(keys, kid);
-    return {
-      gate: { ...binding, authority: auth },
-      runtime: new PrivacyRuntime({
-        loadPrivacy: () =>
-          loadPrivacyStore(opts.dir, { keys, nowSec: now }).snapshot(),
-        events: new FilePrivacyEventRepository({
-          dir: opts.dir,
-          dek,
-          nowSec: now,
-        }),
-        profile: dpdpProfile,
-        nowSec: now,
-      }),
-    };
+    return privacyForOperation({
+      dir: opts.dir,
+      keys,
+      auth,
+      ingress,
+      demand,
+      config: opts.privacy,
+      now,
+    });
   };
+
   const pending = new Map<
     string,
     {
@@ -721,7 +752,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       let privacyAllowed = true;
       if (decision.allow && opts.privacy !== undefined) {
         try {
-          const { runtime, gate } = privacyForOperation(
+          const { runtime, gate } = privacyForConfiguredOperation(
             keys,
             auth,
             ingress,
@@ -922,7 +953,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         }
         if (opts.privacy !== undefined) {
           try {
-            const { runtime, gate } = privacyForOperation(
+            const { runtime, gate } = privacyForConfiguredOperation(
               keys,
               auth,
               ingress,
@@ -1053,16 +1084,28 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         journaled = await consumeAndExecute();
       } else {
         try {
-          const scoped = privacyForOperation(keys, auth, ingress, demand);
+          const scoped = privacyForConfiguredOperation(
+            keys,
+            auth,
+            ingress,
+            demand
+          );
           journaled = await executeProtectedActionWithPrivacy({
             runtime: scoped.runtime,
             gate: scoped.gate,
             execute: consumeAndExecute,
             attemptRef: args.termsDigest,
           });
-        } catch {
+        } catch (error) {
+          if (error instanceof PrivacyOutcomeUnknownError) {
+            return privacyOutcomeUnknownResult(args.termsDigest, "payment");
+          }
+          if (error instanceof PrivacyEventConflictError) {
+            return privacyEvidenceConflictResult(args.termsDigest, error.state);
+          }
           // Never leak store paths, key ids, journal details or configuration
-          // detail to the agent-facing error surface.
+          // detail to the agent-facing error surface. Reaching this branch
+          // means the wrapper proved the failure was pre-effect.
           markDenied(args.termsDigest);
           fail("privacy denied");
         }
@@ -1150,7 +1193,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         let permitted = false;
         try {
           const { keys } = load();
-          const { runtime, gate } = privacyForOperation(
+          const { runtime, gate } = privacyForConfiguredOperation(
             keys,
             auth,
             ingress,
@@ -1310,7 +1353,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       let pres: ReturnType<typeof readForPurpose>;
       try {
         if (opts.privacy !== undefined) {
-          const { runtime, gate } = privacyForOperation(
+          const { runtime, gate } = privacyForConfiguredOperation(
             keys,
             auth,
             ingress,
@@ -1328,8 +1371,17 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           pres = readForPurpose(vault, disclosure);
         }
       } catch (err) {
+        if (opts.privacy !== undefined) {
+          if (err instanceof PrivacyOutcomeUnknownError) {
+            return privacyOutcomeUnknownResult(args.termsDigest, "disclosure");
+          }
+          if (err instanceof PrivacyEventConflictError) {
+            return privacyEvidenceConflictResult(args.termsDigest, err.state);
+          }
+          markDenied(args.termsDigest);
+          fail("privacy denied");
+        }
         markDenied(args.termsDigest);
-        if (opts.privacy !== undefined) fail("privacy denied");
         throw err instanceof Error ? err : new Error(String(err));
       }
       const disclosed = pres.disclosures.map((d) => d.name);

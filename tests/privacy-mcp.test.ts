@@ -54,17 +54,25 @@ describe("MCP privacy host binding", () => {
       context: { recipient: "seller:1", amount: 120, currency: "INR" },
     });
     assert.deepEqual(payment.processing.dataCategories, ["payment"]);
-    assert.deepEqual(payment.processing.recipients, [{ id: "seller:1", role: "third-party" }]);
+    assert.deepEqual(payment.processing.recipients, [
+      { id: "seller:1", role: "third-party" },
+    ]);
     assert.equal(payment.processing.action, "/pay");
     assert.throws(
-      () => makeMcpPrivacyPaymentGate(
-        resolveMcpPrivacyConfig({
-          dataPrincipalRef: "subject:opaque-1", controllerId: "acme",
-          recipientRoles: { "seller:1": "third-party" },
-        }),
-        ingress,
-        { ...demand, action: { name: "/pay" }, context: { recipient: "seller:1", amount: 120, currency: "INR" } }
-      ),
+      () =>
+        makeMcpPrivacyPaymentGate(
+          resolveMcpPrivacyConfig({
+            dataPrincipalRef: "subject:opaque-1",
+            controllerId: "acme",
+            recipientRoles: { "seller:1": "third-party" },
+          }),
+          ingress,
+          {
+            ...demand,
+            action: { name: "/pay" },
+            context: { recipient: "seller:1", amount: 120, currency: "INR" },
+          }
+        ),
       /privacy denied/
     );
   });
@@ -83,28 +91,31 @@ describe("MCP privacy host binding", () => {
 
   it("rejects personal identifiers, arbitrary roles, and agent-authored privacy fields", () => {
     assert.throws(
-      () => resolveMcpPrivacyConfig({
-        dataPrincipalRef: "person@example.com",
-        controllerId: "acme",
-        recipientRoles: { "seller:1": "third-party" },
-      }),
+      () =>
+        resolveMcpPrivacyConfig({
+          dataPrincipalRef: "person@example.com",
+          controllerId: "acme",
+          recipientRoles: { "seller:1": "third-party" },
+        }),
       /opaque/
     );
     assert.throws(
-      () => resolveMcpPrivacyConfig({
-        dataPrincipalRef: "subject:opaque-1",
-        controllerId: "acme",
-        recipientRoles: { "seller:1": "administrator" },
-      }),
+      () =>
+        resolveMcpPrivacyConfig({
+          dataPrincipalRef: "subject:opaque-1",
+          controllerId: "acme",
+          recipientRoles: { "seller:1": "administrator" },
+        }),
       /role/
     );
     assert.throws(
-      () => resolveMcpPrivacyConfig({
-        dataPrincipalRef: "subject:opaque-1",
-        controllerId: "acme",
-        recipientRoles: {},
-        basisId: "made-up-by-agent",
-      }),
+      () =>
+        resolveMcpPrivacyConfig({
+          dataPrincipalRef: "subject:opaque-1",
+          controllerId: "acme",
+          recipientRoles: {},
+          basisId: "made-up-by-agent",
+        }),
       /unexpected/
     );
   });

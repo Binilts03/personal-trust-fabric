@@ -702,7 +702,8 @@ describe("durable Personal State vault (P0 slice 1)", () => {
       after.listMetadata(P).map((r) => r.id),
       ["r-keep"]
     );
-    const evidence = JSON.stringify(receipt) + readFileSync(join(dir, "audit.jsonl"), "utf8");
+    const evidence =
+      JSON.stringify(receipt) + readFileSync(join(dir, "audit.jsonl"), "utf8");
     assert.ok(!evidence.includes("delete-me@example.com"));
     assert.ok(!evidence.includes("+91-keep"));
   });

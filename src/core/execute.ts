@@ -216,12 +216,6 @@ function entryHash(
     .digest("hex");
 }
 
-/**
- * Append-only hash-chained audit. Unkeyed = tamper-detection; keyed (HMAC) =
- * tamper-evidence against readers without the key. The key must live outside
- * logs and code (OS keychain in production) — a host obligation. Genuine
- * third-party verifiability still needs independent anchoring (see ADR-0006).
- */
 function validStateRevisions(value: unknown): boolean {
   if (value === undefined) return true;
   if (
@@ -240,6 +234,13 @@ function validStateRevisions(value: unknown): boolean {
       revision >= 0
   );
 }
+
+/**
+ * Append-only hash-chained audit. Unkeyed = tamper-detection; keyed (HMAC) =
+ * tamper-evidence against readers without the key. The key must live outside
+ * logs and code (OS keychain in production) — a host obligation. Genuine
+ * third-party verifiability still needs independent anchoring (see ADR-0006).
+ */
 
 export class Audit {
   private readonly entries: AuditEntry[] = [];
@@ -280,7 +281,9 @@ export class Audit {
         Array.isArray(event.stateRevisions) ||
         Object.keys(event.stateRevisions).length > 32
       ) {
-        throw new Error("audit: stateRevisions must be an object with <=32 entries");
+        throw new Error(
+          "audit: stateRevisions must be an object with <=32 entries"
+        );
       }
       for (const [name, revision] of Object.entries(event.stateRevisions)) {
         if (

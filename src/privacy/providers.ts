@@ -1,17 +1,13 @@
 import type { ExecutionReceipt } from "../core/execute.js";
+import { PrivacyOutcomeUnknownError } from "./errors.js";
 import {
   PrivacyRuntime,
   type PrivacyGateRequest,
   type PrivacyGateResult,
 } from "./runtime.js";
 
-/** A failure proven to occur before any external effect. */
-export class PrivacyPreEffectError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PrivacyPreEffectError";
-  }
-}
+export { PrivacyPreEffectError } from "./errors.js";
+export { PrivacyOutcomeUnknownError } from "./errors.js";
 
 function deny(result: Exclude<PrivacyGateResult, { allow: true }>): never {
   throw new Error(
@@ -56,10 +52,19 @@ export async function executeProtectedActionWithPrivacy(opts: {
     // A caller that has not crossed the effect boundary has provably not
     // changed external state. After that boundary, preserve ambiguity and
     // let the execution journal remain the reconciliation oracle.
-    const state = effectStarted ? "OUTCOME_UNKNOWN" : "FAILED_FINAL";
+    if (effectStarted) {
+      try {
+        opts.runtime.finalizeEvent(event.eventId, "OUTCOME_UNKNOWN", {
+          finalizedAt: opts.runtime.now(),
+        });
+      } catch {
+        // Never mask the original failure with a finalize error.
+      }
+      throw new PrivacyOutcomeUnknownError(error);
+    }
     try {
-      opts.runtime.finalizeEvent(event.eventId, state, {
-        finalizedAt: Math.floor(Date.now() / 1000),
+      opts.runtime.finalizeEvent(event.eventId, "FAILED_FINAL", {
+        finalizedAt: opts.runtime.now(),
       });
     } catch {
       // Never mask the original failure with a finalize error.
@@ -67,11 +72,17 @@ export async function executeProtectedActionWithPrivacy(opts: {
     throw error;
   }
   // Finalize outside the execute catch: a bookkeeping failure here must not
-  // be reclassified as an ambiguous external effect. Same-state transitions
-  // are idempotent, so a crash/retry can safely repeat this call.
-  opts.runtime.finalizeEvent(event.eventId, "SUCCEEDED", {
-    finalizedAt: receipt.at,
-    evidenceRef: `execution-receipt:${receipt.receiptId}`,
-  });
+  // be reclassified as a provable pre-effect failure. The journal already
+  // holds the receipt, so the caller must reconcile rather than report a
+  // denial. Same-state transitions are idempotent, so a retry can safely
+  // repeat this call.
+  try {
+    opts.runtime.finalizeEvent(event.eventId, "SUCCEEDED", {
+      finalizedAt: receipt.at,
+      evidenceRef: `execution-receipt:${receipt.receiptId}`,
+    });
+  } catch (error) {
+    throw new PrivacyOutcomeUnknownError(error);
+  }
   return receipt;
 }

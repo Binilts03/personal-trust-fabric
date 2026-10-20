@@ -145,12 +145,16 @@ export function readVaultKid(dir: string): string | null {
   if (!existsSync(path)) return null;
   const parsed = parseVaultFile(path);
   if (isLegacyPlaintext(parsed)) throw legacyError(path);
-  return readSealedEnvelopeKid(parsed, {
-    version: VAULT_ENVELOPE_VERSION,
-    aad: VAULT_AAD,
-    kidBytes: KID_BYTES,
-    errorPrefix: "vault",
-  }, path);
+  return readSealedEnvelopeKid(
+    parsed,
+    {
+      version: VAULT_ENVELOPE_VERSION,
+      aad: VAULT_AAD,
+      kidBytes: KID_BYTES,
+      errorPrefix: "vault",
+    },
+    path
+  );
 }
 
 function sealSnapshot(
@@ -442,4 +446,3 @@ export function eraseRecord(
   }
   return receipt;
 }
-

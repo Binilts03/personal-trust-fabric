@@ -33,12 +33,14 @@
 ### Task A1: Freeze baseline, vocabulary, and architecture decision
 
 **Files:**
+
 - Modify: `CONTEXT.md`
 - Create: `docs/adr/0024-privacy-enforcement-narrows-authority.md`
 - Modify: `CHANGELOG.md`
 - Test/verify: existing repository gate
 
 **Interfaces:**
+
 - Consumes: approved DPDP design spec.
 - Produces: canonical domain terms and the architectural rule that later code must obey.
 
@@ -62,6 +64,7 @@ Expected: HEAD is the approved implementation base (design/plan commits carried 
 - [ ] **Step 2: Write the ADR and glossary changes**
 
 ADR must state exactly:
+
 - Personal State ≠ Authority State ≠ Processing Basis Evidence.
 - PTF Principal ≠ Privacy Data Principal Reference.
 - privacy decisions only narrow;
@@ -75,6 +78,7 @@ ADR must state exactly:
 - [ ] **Step 3: Verify docs/brand/build invariants**
 
 Run:
+
 ```sh
 npm run check:brand
 npm run typecheck
@@ -94,6 +98,7 @@ git commit -m "docs: define privacy enforcement boundary"
 ### Task A2: Extract reusable sealed snapshot primitives without behavior change
 
 **Files:**
+
 - Create: `src/store/sealed-snapshot.ts`
 - Create: `src/store/vault-persistence.ts`
 - Modify: `src/store/vault.ts`
@@ -101,6 +106,7 @@ git commit -m "docs: define privacy enforcement boundary"
 - Test: `tests/backup.test.ts`
 
 **Interfaces:**
+
 - Consumes: `atomicWrite`, `checkFreshness`, canonical JSON, existing vault snapshot shape.
 - Produces:
   - `sealSnapshotEnvelope<T>(payload: T, dek: Uint8Array, opts: SealedSnapshotOptions): SealedEnvelope`
@@ -111,6 +117,7 @@ git commit -m "docs: define privacy enforcement boundary"
 - [ ] **Step 1: Add regression tests that pin the old persisted format**
 
 In `tests/vault.test.ts`, add tests that:
+
 - save a vault and assert envelope fields/version/AAD-compatible round-trip;
 - tamper ct/tag and assert load fails;
 - open with wrong DEK and assert failure;
@@ -118,14 +125,17 @@ In `tests/vault.test.ts`, add tests that:
 - confirm `readVaultKid` and `resolveVaultDek` still work during staged rotation.
 
 Run:
+
 ```sh
 npm run build && node --test dist/tests/vault.test.js
 ```
+
 Expected: PASS on frozen behavior before extraction.
 
 - [ ] **Step 2: Implement `sealed-snapshot.ts`**
 
 Exact options:
+
 ```ts
 export interface SealedSnapshotOptions {
   readonly version: number;
@@ -174,6 +184,7 @@ git commit -m "refactor: extract sealed snapshot persistence"
 ### Task A3: Move VaultStore behavior out of the facade
 
 **Files:**
+
 - Create: `src/store/vault-store.ts`
 - Modify: `src/store/vault.ts`
 - Modify: `src/api.ts`
@@ -182,6 +193,7 @@ git commit -m "refactor: extract sealed snapshot persistence"
 - Test: `tests/hygiene.test.ts`
 
 **Interfaces:**
+
 - Consumes: extracted persistence module.
 - Produces: existing `VaultStore`, VaultRecord types, `parseSensitivity`, `readForPurpose`, `useCredential` from the same public import paths.
 
@@ -220,13 +232,16 @@ git commit -m "refactor: decompose vault store"
 ### Task A4: Add exact-record erasure and safe metadata view
 
 **Files:**
+
 - Modify: `src/store/vault-store.ts`
 - Modify: `src/store/vault.ts`
 - Modify: `src/api.ts`
 - Test: `tests/vault.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
 ```ts
 export interface VaultRecordMetadata {
   readonly id: string;
@@ -258,6 +273,7 @@ eraseRecord(dir: string, vault: VaultStore, input: { id: string; owner: string }
 - [ ] **Step 1: Write failing erasure tests**
 
 Assertions:
+
 - unknown id throws;
 - wrong owner throws;
 - erase A leaves B unchanged;

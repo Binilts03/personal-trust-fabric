@@ -11,6 +11,7 @@ import {
   type PrivacyGateRequest,
   type PrivacyGateResult,
 } from "./runtime.js";
+import { PrivacyOutcomeUnknownError } from "./errors.js";
 import { canonicalize, sha256Hex } from "../core/canonical.js";
 
 function deny(result: Exclude<PrivacyGateResult, { allow: true }>): never {
@@ -26,6 +27,7 @@ function requireDisclosureBinding(
   disclosure: VaultReadRequest
 ): PrivacyGateRequest {
   if (
+    gate.authority !== disclosure.authority ||
     gate.operation.action.name !== "/disclose" ||
     gate.operation.resource.type !== disclosure.resource.type ||
     gate.operation.resource.id !== disclosure.resource.id ||
@@ -95,20 +97,34 @@ export async function discloseWithPrivacy(opts: {
     })
   );
   const event = opts.runtime.prepareEvent(live, gate, attemptRef);
+  let presentation: Presentation;
   try {
-    const presentation = readForPurpose(opts.vault, opts.disclosure);
+    presentation = readForPurpose(opts.vault, opts.disclosure);
     await opts.onAuthorityConsumed(opts.disclosure.authority);
+  } catch (error) {
+    // The presentation has not been returned to the caller and authority
+    // persistence failed before delivery, so this is still a provable
+    // pre-effect failure. Never mask the original failure.
+    try {
+      opts.runtime.finalizeEvent(event.eventId, "FAILED_FINAL", {
+        finalizedAt: opts.disclosure.nowSec,
+      });
+    } catch {
+      // Preserve the original failure.
+    }
+    throw error;
+  }
+  try {
     opts.runtime.finalizeEvent(event.eventId, "SUCCEEDED", {
       finalizedAt: opts.disclosure.nowSec,
       evidenceRef: `presentation:${live.termsDigest.slice(0, 16)}`,
     });
-    return presentation;
   } catch (error) {
-    opts.runtime.finalizeEvent(event.eventId, "FAILED_FINAL", {
-      finalizedAt: opts.disclosure.nowSec,
-    });
-    throw error;
+    // The presentation was built and authority was consumed; only the
+    // evidence finalization failed. Do not report this as a denial.
+    throw new PrivacyOutcomeUnknownError(error);
   }
+  return presentation;
 }
 
 function requireSecretBinding(
@@ -121,6 +137,7 @@ function requireSecretBinding(
     .find((item) => item.id === secret.recordId);
   if (meta === undefined) throw new Error("vault: unknown record");
   if (
+    gate.authority !== secret.authority ||
     gate.operation.action.name !== "/use" ||
     gate.operation.resource.type !== "vault-record" ||
     gate.operation.resource.id !== secret.recordId ||
@@ -178,21 +195,33 @@ export async function useCredentialWithPrivacy(opts: {
       return opts.secret.use(instruction);
     },
   };
+  let result: Awaited<ReturnType<typeof useCredential>>;
   try {
-    const result = await useCredential(opts.vault, secret);
+    result = await useCredential(opts.vault, secret);
+  } catch (error) {
+    // Before the callback starts, no secret was released and no external
+    // effect can have happened. Once it starts, preserve ambiguity.
+    try {
+      opts.runtime.finalizeEvent(
+        event.eventId,
+        effectStarted ? "OUTCOME_UNKNOWN" : "FAILED_FINAL",
+        { finalizedAt: opts.secret.nowSec }
+      );
+    } catch {
+      // Preserve the original failure.
+    }
+    if (effectStarted) throw new PrivacyOutcomeUnknownError(error);
+    throw error;
+  }
+  try {
     opts.runtime.finalizeEvent(event.eventId, "SUCCEEDED", {
       finalizedAt: opts.secret.nowSec,
       evidenceRef: `protected-use:${result.receipt}`,
     });
-    return result;
   } catch (error) {
-    // Before the callback starts, no secret was released and no external
-    // effect can have happened. Once it starts, preserve ambiguity.
-    opts.runtime.finalizeEvent(
-      event.eventId,
-      effectStarted ? "OUTCOME_UNKNOWN" : "FAILED_FINAL",
-      { finalizedAt: opts.secret.nowSec }
-    );
-    throw error;
+    // The secret was released to the in-host callback; only evidence
+    // finalization failed. Callers must reconcile, not report a denial.
+    throw new PrivacyOutcomeUnknownError(error);
   }
+  return result;
 }
