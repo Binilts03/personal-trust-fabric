@@ -10,7 +10,8 @@ import type {
   NoticeEvidence,
   ConsentEvidence,
 } from "./model.js";
-import { isOpaquePrivacySubjectRef, isSubset as subset } from "./model.js";
+import { isOpaquePrivacySubjectRef } from "./model.js";
+import { isSubset as subset } from "./internal.js";
 
 function subjectMatches(sel: PrivacySubjectSelector, ref: string): boolean {
   switch (sel.kind) {

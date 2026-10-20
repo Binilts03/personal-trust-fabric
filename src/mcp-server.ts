@@ -626,6 +626,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
   ):
     | { readonly status: "executed"; readonly receipt: Record<string, unknown> }
     | { readonly status: "failed" }
+    | { readonly status: "not_submitted" }
     | { readonly status: "outcome_unknown" }
     | null => {
     const replay = inspectProposalJournal(opts.dir, digest, demand);
@@ -640,7 +641,11 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       case "failed_final":
         return { status: "failed" };
       case "unknown":
-        return { status: "outcome_unknown" };
+        // A prepared-but-never-submitted row is a fact, not an ambiguity:
+        // no money moved and the authority use is spent.
+        return replay.reason === "unsubmitted"
+          ? { status: "not_submitted" }
+          : { status: "outcome_unknown" };
     }
   };
 

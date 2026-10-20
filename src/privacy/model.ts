@@ -100,14 +100,6 @@ export interface ProcessingActivity {
   readonly active: boolean;
 }
 
-/** True when every requested item is present in the allowed set. */
-export function isSubset(
-  requested: readonly string[],
-  allowed: readonly string[]
-): boolean {
-  return requested.every((item) => allowed.includes(item));
-}
-
 export interface SubjectAssurance {
   readonly classification: "adult" | "child" | "guardian-assisted";
   readonly proofRef: string;

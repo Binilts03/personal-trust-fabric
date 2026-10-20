@@ -971,7 +971,11 @@ describe("opt-in privacy disclosure over stdio", () => {
         const checked = resultData(
           await call("ptf_check", { termsDigest: digest })
         );
-        assert.equal(checked.status, "outcome_unknown");
+        assert.equal(checked.status, "not_submitted");
+        const fetched = resultData(
+          await call("ptf_get_receipt", { termsDigest: digest })
+        );
+        assert.equal(fetched.status, "not_submitted");
       }
     );
     const stillPending = JSON.parse(
@@ -984,6 +988,97 @@ describe("opt-in privacy disclosure over stdio", () => {
       }).snapshot().used
     );
     assert.equal(used["grant-payment"], undefined);
+  });
+
+  it("stamps the replay audit line with the store revisions", async () => {
+    const { dir, configPath } = setup(true);
+    let digest = "";
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const proposal = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        digest = proposal.termsDigest;
+        seedPaymentJournal(dir, digest);
+        seedPaymentEvent(dir, digest, "OUTCOME_UNKNOWN");
+        const paid = resultData(
+          await call("ptf_redeem", { termsDigest: digest })
+        );
+        assert.equal(paid.receiptId, "receipt-1");
+      }
+    );
+    const entries = readFileSync(join(dir, "audit.jsonl"), "utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const redeem = entries.find((entry) => entry["action"] === "redeem");
+    assert.ok(redeem, "the replay must append a redeem audit line");
+    // The rollback detector needs the revisions that covered the effect.
+    assert.equal(typeof redeem["authorityRev"], "number");
+    assert.equal(typeof redeem["registryRev"], "number");
+    const revisions = redeem["stateRevisions"] as
+      Record<string, unknown> | undefined;
+    assert.equal(typeof revisions?.["privacy"], "number");
+  });
+
+  it("records an evidence gap for the operator and still returns the receipt", async () => {
+    const { dir, configPath } = setup(true);
+    let digest = "";
+    await withRpc(
+      {
+        PTF_STORE_DIR: dir,
+        PTF_PASSPHRASE: "privacy-test-pass",
+        PTF_MCP_PRINCIPAL: P,
+        PTF_MCP_ACTOR: A,
+        PTF_MCP_PRIVACY_CONFIG: configPath,
+      },
+      async (call) => {
+        const proposal = resultData(
+          await call("ptf_propose", {
+            cmd: "/pay",
+            purpose: "support",
+            resource: "invoice:1",
+            recipient: "seller:1",
+            amount: 100,
+            currency: "INR",
+          })
+        );
+        digest = proposal.termsDigest;
+        seedPaymentJournal(dir, digest);
+        seedPaymentEvent(dir, digest, "OUTCOME_UNKNOWN");
+        // The privacy state becomes unreadable after the proposal: the
+        // payment is proven by the journal, the evidence cannot be
+        // reconciled, and the operator must see the gap.
+        writeFileSync(join(dir, "privacy-state.json"), "{corrupt");
+        const paid = resultData(
+          await call("ptf_redeem", { termsDigest: digest })
+        );
+        assert.equal(paid.receiptId, "receipt-1");
+      }
+    );
+    const entries = readFileSync(join(dir, "audit.jsonl"), "utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.ok(
+      entries.some((entry) => entry["action"] === "privacy-evidence-gap"),
+      "the unreconcilable evidence must be recorded for the operator"
+    );
+    assert.ok(entries.some((entry) => entry["action"] === "redeem"));
   });
 
   it("recovers journal-backed status across a server restart", async () => {

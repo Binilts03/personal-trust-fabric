@@ -3,7 +3,7 @@
 **Date:** 2026-10-20
 **Base:** `7b52d61ea207d1d37d11a8c85f3253466b732537` (frozen pre-feature `main`)
 **Branch:** `feature/dpdp-privacy-enforcement`
-**Repair-batch head:** `4ef30266b4816d06c753ae2e92a5d09f05b9efa2` (journal-first payment recovery; this document lands in the follow-up docs commit)
+**Repair-batch head:** `4ba8fbafa7dc608ee95ed8b0c9e07a5913d96900` (journal-first payment recovery + the fallow repair batch; this document lands in the follow-up docs commit)
 **Design:** [2026-10-18-dpdp-privacy-enforcement-design.md](../specs/2026-10-18-dpdp-privacy-enforcement-design.md)
 **Plan:** [2026-10-18-dpdp-privacy-enforcement-master.md](../plans/2026-10-18-dpdp-privacy-enforcement-master.md)
 **Disposition:** Draft PR; the P2 repair batch (including journal-first payment recovery) passed the full local gate and is awaiting a fresh independent Standards/Spec/Security re-review. No merge, publish or compliance assertion is authorised until that disposition is recorded as clean.
@@ -156,12 +156,20 @@ Findings the session introduced by this PR, and their disposition:
 The remaining fallow complexity findings are pre-existing legacy functions
 (`src/cli.ts` `run`, `src/core/execute.ts`, `src/store/backup.ts`,
 `src/adapters/providers.ts` `executeWithJournal`, `src/store/vault-store.ts`
-`disclose`/`useSecret`) that this PR only touched at the edges; they are
-tracked as P4 refactoring candidates, not as merge blockers. The design's
-§18.3 file-size ceiling is now honoured by the new privacy modules:
-`src/cli/privacy.ts` is 173 lines (evidence 140, rights 425, shared 193) and
-`src/store/vault-store.ts` is 600 lines (protected use and shared types moved
-out), each within the ~500-600 line ceiling.
+`disclose`/`useSecret`) that this PR only touched at the edges, plus a few
+PR-introduced bodies that are long but flat (`src/cli/privacy-rights.ts`
+`privacyCorrection`, `src/privacy/dpdp.ts` `validateConsent`,
+`src/privacy/engine.ts` `evaluateProcessing`,
+`src/privacy/mcp.ts` `resolveMcpPrivacyConfig`). Those are tracked as P4
+refactoring candidates, not as merge blockers; the journal-replay helpers
+this PR added are the smallest functions in the change
+(`readPaymentDemand` is the largest, at cyclomatic 13).
+
+The design's §18.3 file-size ceiling is honoured by the new privacy modules:
+at the repair-batch head `src/cli/privacy.ts` is 176 lines (evidence 136,
+rights 439, shared 193) and `src/store/vault-store.ts` is 590 lines (the
+protected use and the shared types moved out), each within the ~500-600 line
+ceiling. Re-measure before quoting these counts at a later head.
 
 ## Independent review round (2026-10-21) and disposition
 
@@ -191,7 +199,8 @@ Three independent reviews ran against `bb2d13f`:
   authority/registry/privacy revision bindings as a normal redeem (so the
   rollback detector keeps its witness in the crash window), and a
   never-submitted journal row is reported as `not_submitted` instead of a
-  generic "unsettled" answer. The O(n) journal/event scan cost and the
+  generic "unsettled" answer - on the `ptf_redeem` path and in the read-only
+  status tools alike. The O(n) journal/event scan cost and the
   stranded never-submitted attempt are disclosed in `docs/audit/limits.md`.
 
 ## Historical local full-gate receipts (2026-10-20)

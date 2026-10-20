@@ -145,7 +145,7 @@ The following MUST hold:
 15. Erasure is by exact vault record identifier; no unconstrained “delete all” primitive exists in the vault layer.
 16. A retention hold can prevent erasure but does not itself authorise use/disclosure.
 17. Privacy profiles do not infer legal conclusions. An external trusted actor must assert the basis/evidence.
-18. Existing non-privacy deployments remain behaviorally backward-compatible unless privacy mode is explicitly enabled. Two documented exceptions ship with this feature and are listed in the changelog: journal-first payment recovery (a `/pay` retry that finds a conclusive execution-journal record returns the recorded receipt instead of spending another authority use or demanding a fresh recipient proof) and the MCP input bounds (terms digest and key/signature material must be exact-length lowercase hex; long free-text fields are capped). Both change no authority semantics and add no new agent-supplied field.
+18. Existing non-privacy deployments remain behaviorally backward-compatible unless privacy mode is explicitly enabled. Two documented exceptions ship with this feature and are listed in the changelog: journal-first payment recovery (a `/pay` retry that finds a conclusive execution-journal record returns the recorded receipt instead of spending another authority use or demanding a fresh recipient proof; an unsettled journal is answered with a non-terminal status - `outcome_unknown`, or `not_submitted` when the journal proves the provider was never called) and the MCP input bounds (terms digest and key/signature material must be exact-length lowercase hex; long free-text fields are capped). Both change no authority semantics and add no new agent-supplied field.
 19. PTF must never describe the result as `compliant=true`. Decisions use control language such as `allow`, `deny`, `basis-active`, and `processing-recorded`.
 
 ## 6. Architecture
@@ -628,7 +628,8 @@ journal-backed success is reported as `executed` with the stored receipt even
 when the proposal transition was interrupted.
 
 Existing deployments with privacy mode disabled retain current behavior, except
-for the two documented exceptions in §5.18 (journal-first payment recovery and
+for the two documented exceptions in §5.18 (journal-first payment recovery,
+including its non-terminal `outcome_unknown` / `not_submitted` answers, and
 the MCP input bounds).
 
 ## 15. Operator surface
