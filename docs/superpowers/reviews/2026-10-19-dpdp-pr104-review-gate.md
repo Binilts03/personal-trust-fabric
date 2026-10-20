@@ -3,10 +3,10 @@
 **Date:** 2026-10-20
 **Base:** `7b52d61ea207d1d37d11a8c85f3253466b732537` (frozen pre-feature `main`)
 **Branch:** `feature/dpdp-privacy-enforcement`
-**Repair-batch head:** `0d6c6f9781391c4a6e72640878a10c402dec00da`
+**Repair-batch head:** `4ef30266b4816d06c753ae2e92a5d09f05b9efa2` (journal-first payment recovery; this document lands in the follow-up docs commit)
 **Design:** [2026-10-18-dpdp-privacy-enforcement-design.md](../specs/2026-10-18-dpdp-privacy-enforcement-design.md)
 **Plan:** [2026-10-18-dpdp-privacy-enforcement-master.md](../plans/2026-10-18-dpdp-privacy-enforcement-master.md)
-**Disposition:** Draft PR; the P2 repair batch passed the full local gate and is awaiting a fresh independent Standards/Spec/Security re-review. No merge, publish or compliance assertion is authorised until that disposition is recorded as clean.
+**Disposition:** Draft PR; the P2 repair batch (including journal-first payment recovery) passed the full local gate and is awaiting a fresh independent Standards/Spec/Security re-review. No merge, publish or compliance assertion is authorised until that disposition is recorded as clean.
 
 ## Per-slice implementation heads / verification
 
@@ -67,6 +67,57 @@ The fresh Standards/Spec/Security review of `b16358a` produced security CLEAN, p
 
 Additional repair-batch hardening: runtime clock use for evidence finalization, authority-reference binding in disclosure/use wrappers, EEXIST idempotency re-check, and fail-closed seam scanning when a root has no TypeScript source.
 
+## Journal-first payment recovery — full local gate (2026-10-20)
+
+The next independent Standards/Spec re-review of `0d6c6f9` reported one shared
+blocker on each axis: **a post-effect `/pay` retry was a dead end**. After the
+effect the proposal stayed pending, so the retry re-entered the challenge-time
+authority dry-run. A spent single-use grant denied there and misclassified the
+attempt as a denial; a grant with uses left issued a second capability and then
+hit `PrivacyEventConflictError` on the `OUTCOME_UNKNOWN`/`SUCCEEDED` event. The
+`outcome_unknown` guidance already promised journal replay that did not exist.
+
+Repaired in `4ef3026`:
+
+- `src/privacy/payment-replay.ts` (new): read-only journal inspection keyed by
+  `deriveIdempotencyKey(termsDigest, "payment")`. Every stored field (action,
+  recipient, resource, purpose, amount, currency) must match the proposal
+  exactly; drift, a corrupt scan, a live row, or a `RECONCILED` row are
+  ambiguous, never a receipt. A `SUCCEEDED` row projects the same external
+  receipt shape the live path returns.
+- `src/mcp-server.ts`: the journal is consulted **before** the authority
+  preview, the challenge, and any consumption. A conclusive success returns the
+  receipt, finalizes the Processing Event idempotently, and repairs the
+  proposal to `executed` (`recoverExecutedProposal` in
+  `src/store/challenges.ts`, which can also undo an older misclassified
+  denial). An unsettled journal returns `outcome_unknown` **before** a
+  challenge is issued, so no authority use is burned. `ptf_check` and
+  `ptf_get_receipt` are journal-aware.
+- `src/privacy/runtime.ts`: `reconcileAttemptEvent` finalizes an existing
+  `PREPARED`/`OUTCOME_UNKNOWN` event from journal evidence, reconstructs a
+  missing event from the still-valid privacy decision, and reports a terminal
+  event conflict instead of overwriting it. `FilePrivacyEventRepository`
+  gained an optional `findByAttempt` lookup (`src/privacy/model.ts`).
+
+Behaviour change (intentional, documented in the design §9.2.1/§14, ADR-0024,
+the changelog, and `docs/audit/limits.md`): a `/pay` retry that finds a
+journaled success returns the receipt directly, and an unsettled journal is
+answered with `outcome_unknown` before any challenge. The crash matrix
+(`tests/mcp-crash.test.ts`) was updated to assert the new contract - same
+transaction, no second effect, no second authority use.
+
+Local gate executed on Windows/PowerShell and Git Bash against
+`4ef30266b4816d06c753ae2e92a5d09f05b9efa2`, Node 22.23.1:
+
+- `npm run typecheck` — PASS
+- `npm test` — **480 passed / 0 failed**; 86 suites
+- `npm run eval` — **9 passed / 0 failed**
+- `node scripts/check-seams.mjs` — PASS (`seam check: ok`, `zero-dep core: ok`)
+- `bash scripts/harness.sh` via Git Bash — **PASS** (`OK: harness green`)
+- `prettier --check` on every PR-changed file — PASS
+
+The earlier 465-test receipt is historical and must not be applied to this head.
+
 ## Historical local full-gate receipts (2026-10-20)
 
 Executed on Windows/Git Bash against `7de4ea55415421e01a60d7e4ed326e6b14e6552f` after `npm ci`, Node 22.23.1:
@@ -85,29 +136,30 @@ Cause of the earlier harness gap: CI carried two narrow privacy-persistence seam
 
 Scoped verification; "VERIFIED" means only the claim and test boundary shown, not statutory legal sufficiency.
 
-| Claim                                                                   | Status                                 | Evidence / limitation                                                                                                                                                            |
-| ----------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Authority denial prevents privacy-state reads                           | **VERIFIED**                           | `tests/privacy-runtime.test.ts`: zero privacy reads after non-consuming authority denial                                                                                         |
-| Privacy basis cannot grant Authority                                    | **VERIFIED**                           | `tests/privacy-runtime.test.ts`, `tests/privacy-engine.test.ts`: deny cannot become allow                                                                                        |
-| Inactive/withdrawn basis denies future privacy-wrapped processing       | **VERIFIED**                           | DPDP, runtime and MCP stdio tests; a withdrawal concurrent with post-recheck execution is a documented residual                                                                  |
-| Data Principal/controller/basis are not selected by MCP agent arguments | **VERIFIED for reference host**        | `tests/privacy-mcp.test.ts`; trusted operator JSON and encrypted store determine the context                                                                                     |
-| Actual MCP data presentation is privacy-gated                           | **VERIFIED for opt-in stdio host**     | `tests/privacy-mcp-stdio.test.ts`: active allow, inactive deny, legacy disabled case                                                                                             |
-| Actual MCP payment/protected journal path is privacy-gated              | **VERIFIED for opt-in stdio host**     | `tests/privacy-mcp-stdio.test.ts` payment proof, receipt and encrypted Processing Event; missing `actionCategories` denies                                                       |
-| Extra requested data categories / recipient are denied                  | **VERIFIED**                           | `tests/privacy-engine.test.ts`, `tests/privacy-vault.test.ts`                                                                                                                    |
-| Direct subject identifiers are rejected                                 | **VERIFIED for configured inputs**     | `tests/privacy-engine.test.ts`, `tests/privacy-events.test.ts`, `tests/privacy-store.test.ts`; syntax does not prove pseudonymity                                                |
-| Secret record existence is not inspected prior to denied Authority      | **VERIFIED**                           | `tests/privacy-vault.test.ts` traced Vault; zero metadata and privacy reads for unauthorized use                                                                                 |
-| Event precommit/UNKNOWN and terminal reconciliation                     | **VERIFIED for tested state machine**  | `tests/privacy-events.test.ts`, `tests/privacy-cli.test.ts`; physical power-loss survival on all filesystems unproven                                                            |
-| Post-effect/ambiguous failure is not reported as a denial               | **VERIFIED for wrapper/MCP mapping**   | `tests/privacy-providers.test.ts`; MCP returns sanitized `outcome_unknown`/`evidence_conflict`; payment journal remains the oracle, disclosure requires operator/recipient check |
-| Existing terminal/attempt evidence is never reused for a new effect     | **VERIFIED**                           | `tests/privacy-providers.test.ts`; typed conflict before the provider callback                                                                                                   |
-| Correction passes DPDP checks and proves one revision                   | **VERIFIED for tested CLI path**       | `tests/privacy-cli.test.ts`; `/correct` activity, subject/controller/basis, opaque request ref and `previousVersion + 1` proof                                                   |
-| Deleted encrypted event in backup is detected                           | **VERIFIED**                           | `tests/backup.test.ts`: manifest regression. Manifest has no independent external witness                                                                                        |
-| Record erasure and operator holds                                       | **VERIFIED for exact PTF-managed IDs** | `tests/privacy-rights.test.ts` and existing vault erasure tests; subject-to-record mapping belongs to operator                                                                   |
-| Legacy MCP and broad existing suite remain unaffected when disabled     | **VERIFIED by CI tests**               | Existing suites and opt-in-disabled stdio test                                                                                                                                   |
-| Model/Authority boundary preserved                                      | **VERIFIED by code inspection**        | Privacy lives in `src/privacy/` and store modules, not Authority grant creation                                                                                                  |
-| Privacy package does not expose file-backed repositories                | **VERIFIED by source/test**            | `src/privacy/api.ts`, `src/index.ts`, `tests/privacy-public-api.test.ts`; CI permits only two explicitly named internal store imports in repo-owned persistence tests            |
-| Every possible external processing path is privacy enforced             | **NOT VERIFIED**                       | Deliberately out of scope: general actions, custom providers and unrelated operator CLI flows must compose PrivacyRuntime themselves                                             |
-| Consent-withdrawal/effect ordering is globally atomic                   | **NOT VERIFIED**                       | Last recheck → authority CAS → external effect is not one atomic transaction; see audit limits                                                                                   |
-| Statutory DPDP Act compliance / Consent Manager registration            | **NOT VERIFIED / not claimed**         | The code validates operator evidence; it does not decide lawfulness, register as Consent Manager or provide full DSAR/breach handling                                            |
+| Claim                                                                   | Status                                 | Evidence / limitation                                                                                                                                                                                                                   |
+| ----------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authority denial prevents privacy-state reads                           | **VERIFIED**                           | `tests/privacy-runtime.test.ts`: zero privacy reads after non-consuming authority denial                                                                                                                                                |
+| Privacy basis cannot grant Authority                                    | **VERIFIED**                           | `tests/privacy-runtime.test.ts`, `tests/privacy-engine.test.ts`: deny cannot become allow                                                                                                                                               |
+| Inactive/withdrawn basis denies future privacy-wrapped processing       | **VERIFIED**                           | DPDP, runtime and MCP stdio tests; a withdrawal concurrent with post-recheck execution is a documented residual                                                                                                                         |
+| Data Principal/controller/basis are not selected by MCP agent arguments | **VERIFIED for reference host**        | `tests/privacy-mcp.test.ts`; trusted operator JSON and encrypted store determine the context                                                                                                                                            |
+| Actual MCP data presentation is privacy-gated                           | **VERIFIED for opt-in stdio host**     | `tests/privacy-mcp-stdio.test.ts`: active allow, inactive deny, legacy disabled case                                                                                                                                                    |
+| Actual MCP payment/protected journal path is privacy-gated              | **VERIFIED for opt-in stdio host**     | `tests/privacy-mcp-stdio.test.ts` payment proof, receipt and encrypted Processing Event; missing `actionCategories` denies                                                                                                              |
+| Extra requested data categories / recipient are denied                  | **VERIFIED**                           | `tests/privacy-engine.test.ts`, `tests/privacy-vault.test.ts`                                                                                                                                                                           |
+| Direct subject identifiers are rejected                                 | **VERIFIED for configured inputs**     | `tests/privacy-engine.test.ts`, `tests/privacy-events.test.ts`, `tests/privacy-store.test.ts`; syntax does not prove pseudonymity                                                                                                       |
+| Secret record existence is not inspected prior to denied Authority      | **VERIFIED**                           | `tests/privacy-vault.test.ts` traced Vault; zero metadata and privacy reads for unauthorized use                                                                                                                                        |
+| Event precommit/UNKNOWN and terminal reconciliation                     | **VERIFIED for tested state machine**  | `tests/privacy-events.test.ts`, `tests/privacy-cli.test.ts`; physical power-loss survival on all filesystems unproven                                                                                                                   |
+| Post-effect/ambiguous failure is not reported as a denial               | **VERIFIED for wrapper/MCP mapping**   | `tests/privacy-providers.test.ts`; MCP returns sanitized `outcome_unknown`/`evidence_conflict`; payment journal remains the oracle, disclosure requires operator/recipient check                                                        |
+| Journal replay returns the same receipt and fills missing evidence      | **VERIFIED for reference `/pay` host** | `tests/privacy-payment-replay.test.ts`, `tests/privacy-mcp-stdio.test.ts`, `tests/mcp-crash.test.ts`; spent single-use grant is not consumed again, event is finalized or reconstructed, drift/corrupt/live rows stay `outcome_unknown` |
+| Existing terminal/attempt evidence is never reused for a new effect     | **VERIFIED**                           | `tests/privacy-providers.test.ts`; typed conflict before the provider callback                                                                                                                                                          |
+| Correction passes DPDP checks and proves one revision                   | **VERIFIED for tested CLI path**       | `tests/privacy-cli.test.ts`; `/correct` activity, subject/controller/basis, opaque request ref and `previousVersion + 1` proof                                                                                                          |
+| Deleted encrypted event in backup is detected                           | **VERIFIED**                           | `tests/backup.test.ts`: manifest regression. Manifest has no independent external witness                                                                                                                                               |
+| Record erasure and operator holds                                       | **VERIFIED for exact PTF-managed IDs** | `tests/privacy-rights.test.ts` and existing vault erasure tests; subject-to-record mapping belongs to operator                                                                                                                          |
+| Legacy MCP and broad existing suite remain unaffected when disabled     | **VERIFIED by CI tests**               | Existing suites and opt-in-disabled stdio test                                                                                                                                                                                          |
+| Model/Authority boundary preserved                                      | **VERIFIED by code inspection**        | Privacy lives in `src/privacy/` and store modules, not Authority grant creation                                                                                                                                                         |
+| Privacy package does not expose file-backed repositories                | **VERIFIED by source/test**            | `src/privacy/api.ts`, `src/index.ts`, `tests/privacy-public-api.test.ts`; CI permits only two explicitly named internal store imports in repo-owned persistence tests                                                                   |
+| Every possible external processing path is privacy enforced             | **NOT VERIFIED**                       | Deliberately out of scope: general actions, custom providers and unrelated operator CLI flows must compose PrivacyRuntime themselves                                                                                                    |
+| Consent-withdrawal/effect ordering is globally atomic                   | **NOT VERIFIED**                       | Last recheck → authority CAS → external effect is not one atomic transaction; see audit limits                                                                                                                                          |
+| Statutory DPDP Act compliance / Consent Manager registration            | **NOT VERIFIED / not claimed**         | The code validates operator evidence; it does not decide lawfulness, register as Consent Manager or provide full DSAR/breach handling                                                                                                   |
 
 ## Standards axis — structural review
 
@@ -123,8 +175,8 @@ Scoped verification; "VERIFIED" means only the claim and test boundary shown, no
 
 The five planned slices are implemented with explicit non-goals: no compliance certificate, no automatic legal-basis determination, no statutory Consent Manager, no general multi-tenant/remote provider deployment, no enterprise-wide data erasure, no external process attestation.
 
-**Known deferred engineering issues:** configuration validation still uses some TypeScript assertions at the operator JSON edge; privacy holds govern erasure planning but do not directly deny runtime processing; long-lived provider connectors need host-owned fencing against consent-withdrawal races; separate DEK rotation/JSON snapshot helpers merit further consolidation only with behavior-preserving tests; the file event store has no CAS/index and a 5,000-record ceiling; a hard crash can leave a Processing Event `PREPARED` until operator reconciliation. None should be silently presented as solved. These are P4 follow-on candidates, not P2 merge claims.
+**Known deferred engineering issues:** configuration validation still uses some TypeScript assertions at the operator JSON edge; privacy holds govern erasure planning but do not directly deny runtime processing; long-lived provider connectors need host-owned fencing against consent-withdrawal races; separate DEK rotation/JSON snapshot helpers merit further consolidation only with behavior-preserving tests; the file event store has no CAS/index and a 5,000-record ceiling; a hard crash can leave a Processing Event `PREPARED` until a retry or operator reconciliation. Journal-first recovery is implemented for the reference host's `/pay` route only - other hosts must compose the same order themselves. None should be silently presented as solved. These are P4 follow-on candidates, not P2 merge claims.
 
 ## Gate / release decision
 
-**Not yet merge-ready until the fresh independent re-review at this head is recorded clean.** The earlier Standards/Spec blockers were repaired in `0d6c6f9` and the full local gate is green. CI at the final docs head must also be green, and the user-controlled merge decision remains required. No claim here substitutes for the organisation's legal review under Indian DPDP Act/Rules or other jurisdictions.
+**Not yet merge-ready until the fresh independent re-review at this head is recorded clean.** The earlier Standards/Spec blockers were repaired in `0d6c6f9` and the post-effect payment-retry blocker in `4ef3026`; the full local gate is green at that head. CI at the final docs head must also be green, and the user-controlled merge decision remains required. No claim here substitutes for the organisation's legal review under Indian DPDP Act/Rules or other jurisdictions.
