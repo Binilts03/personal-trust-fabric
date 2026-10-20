@@ -69,6 +69,50 @@ export function parseStoreFile(path: string, what: string): unknown {
   }
 }
 
+/**
+ * The revision rule every durable store follows (ADR-0015): a file that
+ * changed under us is never overwritten, a missing file is only re-created
+ * by a pristine instance, and a store that was never loaded is never
+ * written blind. One rule and one vocabulary; the store name is the only
+ * per-store wording.
+ */
+export function nextStoreRevision(opts: {
+  readonly what: string;
+  readonly path: string;
+  /** The revision stored in the file; undefined when the file is absent. */
+  readonly fileRevision: unknown;
+  readonly loadedRevision: number;
+  readonly hasKnownLineage: boolean;
+}): number {
+  const { what, path, fileRevision, loadedRevision, hasKnownLineage } = opts;
+  if (fileRevision === undefined) {
+    if (loadedRevision !== 0 || hasKnownLineage) {
+      throw new Error(
+        `${what} store missing: ${path} (instance at revision ${loadedRevision} - the store was deleted under us; refusing to resurrect stale state - re-init deliberately)`
+      );
+    }
+    return 0;
+  }
+  if (
+    typeof fileRevision !== "number" ||
+    !Number.isInteger(fileRevision) ||
+    fileRevision < 0
+  ) {
+    throw new Error(`${what} store corrupt: ${path} (bad revision)`);
+  }
+  if (fileRevision !== loadedRevision) {
+    throw new Error(
+      `${what} store changed under us (file revision ${fileRevision}, loaded ${loadedRevision}) - reload and retry, never overwrite`
+    );
+  }
+  if (fileRevision === 0 && !hasKnownLineage) {
+    throw new Error(
+      `${what} store exists at ${path} but this instance never loaded it - refusing a fresh overwrite (load first, or init a new dir)`
+    );
+  }
+  return fileRevision + 1;
+}
+
 export function saveAuthority(dir: string, auth: Authority): void {
   atomicWrite(
     join(dir, "authority.json"),
@@ -96,43 +140,20 @@ function withNextRevision(
 ): { readonly revision: number } {
   const path = join(dir, file);
   const what = file === "authority.json" ? "authority" : "registry";
-  if (!existsSync(path)) {
-    // Only a pristine instance (never loaded, never saved) may create a
-    // missing file. Anything else means the store was deleted under us —
-    // resurrecting stale state over the deletion would fork the lineage.
-    if (store.loadedRevision() !== 0 || store.hasKnownLineage()) {
-      throw new Error(
-        `${what} store missing: ${path} (instance at revision ${store.loadedRevision()} — the store was deleted under us; refusing to resurrect stale state — re-init deliberately)`
-      );
-    }
-    const stamped = { ...store.snapshot(), revision: 0 };
-    store.adoptRevision(0);
-    return stamped;
-  }
-  const parsed = parseStoreFile(path, what) as Record<string, unknown>;
-  const current: unknown = parsed["revision"];
-  // Pre-revision files (no field) read as 0 — same default `restore` uses,
+  // Pre-revision files (no field) read as 0 - same default `restore` uses,
   // so old stores upgrade on first write instead of failing.
-  const currentRev =
-    current === undefined
-      ? 0
-      : typeof current === "number" && Number.isInteger(current) && current >= 0
-        ? current
-        : (() => {
-            throw new Error(`${what} store corrupt: ${path} (bad revision)`);
-          })();
-  if (currentRev !== store.loadedRevision()) {
-    throw new Error(
-      `${what} store changed under us (file revision ${currentRev}, loaded ${store.loadedRevision()}) — reload and retry, never overwrite`
-    );
-  }
-  if (currentRev === 0 && !store.hasKnownLineage()) {
-    throw new Error(
-      `${what} store exists at ${path} but this instance never loaded it — refusing a fresh overwrite (load first, or init a new dir)`
-    );
-  }
-  const stamped = { ...store.snapshot(), revision: currentRev + 1 };
-  store.adoptRevision(currentRev + 1);
+  const fileRevision = existsSync(path)
+    ? ((parseStoreFile(path, what) as Record<string, unknown>)["revision"] ?? 0)
+    : undefined;
+  const next = nextStoreRevision({
+    what,
+    path,
+    fileRevision,
+    loadedRevision: store.loadedRevision(),
+    hasKnownLineage: store.hasKnownLineage(),
+  });
+  const stamped = { ...store.snapshot(), revision: next };
+  store.adoptRevision(next);
   return stamped;
 }
 

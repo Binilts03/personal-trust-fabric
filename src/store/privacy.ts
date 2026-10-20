@@ -10,11 +10,17 @@ import type {
   RetentionHold,
 } from "../privacy/model.js";
 import { assertOpaquePrivacySubjectRef } from "../privacy/model.js";
-import { atomicWrite, checkFreshness, parseStoreFile } from "./files.js";
+import {
+  atomicWrite,
+  checkFreshness,
+  nextStoreRevision,
+  parseStoreFile,
+} from "./files.js";
 import {
   assertSealedDek,
   openSnapshotEnvelope,
   readSealedEnvelopeKid,
+  resolveSealedDek,
   sealSnapshotEnvelope,
   sealedDekFingerprint,
 } from "./sealed-snapshot.js";
@@ -435,21 +441,14 @@ export function resolvePrivacyDek(
   keys: Record<string, Uint8Array>,
   kidHex?: string | null
 ): Uint8Array {
-  if (kidHex !== undefined && kidHex !== null) {
-    for (const candidate of Object.values(keys)) {
-      if (
-        candidate instanceof Uint8Array &&
-        candidate.length === DEK_BYTES &&
-        privacyDekFingerprint(candidate) === kidHex
-      )
-        return candidate;
-    }
-    throw new Error(`privacy: no DEK matches envelope kid ${kidHex}`);
-  }
-  const current = keys[PRIVACY_DEK_ALIAS];
-  if (current instanceof Uint8Array && current.length === DEK_BYTES)
-    return current;
-  throw new Error(`privacy: no DEK under ${PRIVACY_DEK_ALIAS}`);
+  return resolveSealedDek(keys, {
+    alias: PRIVACY_DEK_ALIAS,
+    ...(kidHex !== undefined ? { kidHex } : {}),
+    bytes: DEK_BYTES,
+    kidBytes: KID_BYTES,
+    errorPrefix: "privacy",
+    missingHint: "",
+  });
 }
 
 function parsePrivacyFile(path: string): unknown {
@@ -504,33 +503,18 @@ function withNextPrivacyRevision(
   assertSealedDek(dek, "privacy");
   assertSealedDek(sealDek, "privacy");
   const path = join(dir, PRIVACY_FILE);
-  let stamped: PrivacySnapshot;
-  if (!existsSync(path)) {
-    if (store.loadedRevision() !== 0 || store.hasKnownLineage()) {
-      throw new Error(
-        `privacy store missing: ${path} (refusing stale resurrection)`
-      );
-    }
-    stamped = { ...store.snapshot(), revision: 0 };
-    store.adoptRevision(0);
-  } else {
-    const current = openPrivacySnapshot(parsePrivacyFile(path), dek, path);
-    if (!Number.isInteger(current.revision) || current.revision < 0) {
-      throw new Error(`privacy store corrupt: ${path} (bad revision)`);
-    }
-    if (current.revision !== store.loadedRevision()) {
-      throw new Error(
-        `privacy store changed under us (file revision ${current.revision}, loaded ${store.loadedRevision()}) — reload and retry, never overwrite`
-      );
-    }
-    if (current.revision === 0 && !store.hasKnownLineage()) {
-      throw new Error(
-        `privacy store exists at ${path} but this instance never loaded it`
-      );
-    }
-    stamped = { ...store.snapshot(), revision: current.revision + 1 };
-    store.adoptRevision(current.revision + 1);
-  }
+  const fileRevision = existsSync(path)
+    ? openPrivacySnapshot(parsePrivacyFile(path), dek, path).revision
+    : undefined;
+  const next = nextStoreRevision({
+    what: "privacy",
+    path,
+    fileRevision,
+    loadedRevision: store.loadedRevision(),
+    hasKnownLineage: store.hasKnownLineage(),
+  });
+  const stamped: PrivacySnapshot = { ...store.snapshot(), revision: next };
+  store.adoptRevision(next);
   return sealSnapshotEnvelope(stamped, sealDek, {
     version: PRIVACY_ENVELOPE_VERSION,
     aad: PRIVACY_AAD,
