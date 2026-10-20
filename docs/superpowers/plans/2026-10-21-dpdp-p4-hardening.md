@@ -12,9 +12,9 @@ PR #104 shipped the privacy enforcement layer and an independent review
 (Standards / Spec / Security). The reviews left no blocker, but they named
 the residuals that are worth engineering next, in this order:
 
-> **Status:** P4-1 (the withdrawal fence) and P4-4 (the per-host enforcement
-> decision) have shipped. P4-2 (the DEK/CAS consolidation) and P4-3 (the
-> indexed event store) follow as their own pull requests.
+> **Status:** P4-1 (the withdrawal fence), P4-2 (the DEK/CAS consolidation),
+> P4-3 (the indexed event store), and P4-4 (the per-host enforcement
+> decision) have shipped.
 
 1. **Consent-withdrawal race** - the privacy recheck happens before the
    effect, but nothing binds the recheck to the effect. A withdrawal that
@@ -93,6 +93,17 @@ falls back to the full scan (never to "not found").
 
 **Done when.** a lookup costs one decryption, the 5,000-record cap is
 raised or proven unnecessary, and the metadata side channel is documented.
+
+**Shipped (this pull request).** `findByKey` now resolves the event file
+directly from the idempotency key (the event id is derived from it), so it is
+one file read instead of a scan that decrypts every event. `findByAttempt`
+uses a sealed **attempt cache** (`privacy-event-index.json`, beside the store
+so the backup manifest keeps counting events, not cache files) that maps an
+attempt reference to the event files covering it. The cache is a cache and
+nothing else: a missing, stale, tampered, or rotated-away index is a cache
+miss, and the lookup falls back to the full scan, so the index can never hide
+an event. Writing the index is best effort - it must never fail the evidence
+write.
 
 ## P4-4 - Global vs reference-host enforcement (decision)
 
