@@ -41,7 +41,10 @@ import {
   savePrivacyStore,
 } from "../dist/src/store/privacy.js";
 import { FilePrivacyEventRepository } from "../dist/src/store/privacy-events.js";
-import { createEffectBoundary } from "../dist/src/hostkit/boundary.js";
+import {
+  createEffectBoundary,
+  privacyForHostOperation,
+} from "../dist/src/hostkit/index.js";
 
 // A fixed clock keeps this transcript byte-for-byte reproducible.
 const NOW = 1767225600; // 2026-01-01T00:00:00Z
@@ -300,25 +303,8 @@ try {
   // ---------------------------------------------------------------------
   // Step 3 - the disclosure, through the host-kit boundary.
   // ---------------------------------------------------------------------
-  const boundary = createEffectBoundary({
-    dir,
-    authority,
-    ingress,
-    keys,
-    now: () => NOW,
-    audit,
-    privacy: {
-      dataPrincipalRef: SUBJECT,
-      controllerId: CONTROLLER,
-      recipientRoles: { [LAB]: "data-processor" },
-      subjectAssurance: {
-        classification: "adult",
-        proofRef: "id-check:opq-7",
-        assertedBy: "clinic-registration-desk",
-      },
-    },
-  });
-
+  // The exact terms the authority covered. The boundary re-derives them and
+  // refuses anything that does not match.
   const termsDigest = digestForOperation({
     principal: CLINIC,
     actor: LAB_AGENT,
@@ -328,63 +314,96 @@ try {
     purpose: PURPOSE,
   });
 
-  const effect = {
-    action: "/disclose",
+  // The privacy binding for this operation, built the way any host builds
+  // it: the operator configuration, the verified ingress, and the demand.
+  const demand = {
+    principal: CLINIC,
+    actor: LAB_AGENT,
+    action: { name: "/disclose" },
     resource: RESOURCE,
-    purpose: PURPOSE,
     context: { claims: REQUESTED, verifier: LAB },
-    processing: {
-      authorityPrincipal: CLINIC,
-      actor: LAB_AGENT,
+    purpose: PURPOSE,
+    termsDigest,
+  };
+  const { runtime, gate } = privacyForHostOperation({
+    dir,
+    keys,
+    auth: authority,
+    ingress,
+    demand,
+    config: {
       dataPrincipalRef: SUBJECT,
       controllerId: CONTROLLER,
-      action: "/disclose",
-      resource: RESOURCE,
-      purpose: PURPOSE,
-      dataCategories: REQUESTED,
-      recipients: [{ id: LAB, role: "data-processor" }],
+      recipientRoles: { [LAB]: "data-processor" },
       subjectAssurance: {
         classification: "adult",
         proofRef: "id-check:opq-7",
         assertedBy: "clinic-registration-desk",
       },
     },
-    execute: async () => {
-      const presentation = vault.disclose({
-        ingress,
-        purpose: PURPOSE,
-        requested: REQUESTED,
-        verifier: LAB,
-        nonce: `nonce-${NOW}-1`,
-        nowSec: NOW,
-        authority,
-        resource: RESOURCE,
-        holder: { id: CLINIC, privateKey: holder.privateKey },
-        audit,
-      });
-      const disclosed = presentation.disclosures.map((d) => d.name).sort();
-      const withheld = REQUESTED.filter((name) => !disclosed.includes(name));
-      return {
-        externalRef: `presentation:${createHash("sha256")
-          .update(`${termsDigest}|${disclosed.join(",")}`)
-          .digest("hex")
-          .slice(0, 16)}`,
-        detail: { disclosed, withheld },
-      };
-    },
-  };
+    now: () => NOW,
+  });
 
+  // Armed: land the withdrawal at the next authority burn, which is
+  // between the live recheck and the effect boundary.
+  let armed = false;
+  // What the boundary released. It stays out of the receipt: the receipt
+  // carries a reference, never a claim name.
+  let disclosure = null;
   /**
-   * Run one attempt. A stopped attempt is reported in the operator's coarse
-   * wording only - the internal deny reason never reaches this transcript.
+   * One attempt through the host-kit boundary. The boundary owns the
+   * order: authority, privacy preflight, live recheck, evidence precommit,
+   * the authority burn, the privacy fence at the effect boundary, the
+   * effect, the finalisation.
    */
   async function attempt(attemptRef) {
+    const boundary = createEffectBoundary({
+      dir,
+      auth: authority,
+      ingress,
+      runtime,
+      gate,
+      now: () => NOW,
+      authorizedContext: { claims: REQUESTED, verifier: LAB },
+      attemptRef,
+      execute: async () => {
+        const presentation = vault.disclose({
+          ingress,
+          purpose: PURPOSE,
+          requested: REQUESTED,
+          verifier: LAB,
+          nonce: `nonce-${NOW}-${attemptRef}`,
+          nowSec: NOW,
+          authority,
+          resource: RESOURCE,
+          holder: { id: CLINIC, privateKey: holder.privateKey },
+          audit,
+        });
+        const disclosed = presentation.disclosures.map((d) => d.name).sort();
+        const withheld = REQUESTED.filter((name) => !disclosed.includes(name));
+        disclosure = { disclosed, withheld };
+        const reference = `presentation:${createHash("sha256")
+          .update(`${termsDigest}|${disclosed.join(",")}`)
+          .digest("hex")
+          .slice(0, 16)}`;
+        return {
+          receiptId: reference,
+          capabilityId: "",
+          recipient: LAB,
+          resource: RESOURCE.id,
+          purpose: PURPOSE,
+          transaction: reference,
+          at: NOW,
+          termsDigest,
+        };
+      },
+    });
     try {
-      const receipt = await boundary.run({ ...effect, attemptRef });
-      if (receipt.state === "SUCCEEDED") {
-        return { kind: "ok", receipt };
-      }
-      return { kind: "stopped", state: receipt.state, receipt };
+      // run() returns only when the effect happened and the evidence was
+      // finalized. Every failure throws, and the throw says whether the
+      // effect was prevented or left unknown.
+      const receipt = await boundary.run();
+      return { kind: "ok", receipt, disclosure };
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       const safe =
@@ -403,15 +422,17 @@ try {
   );
   const first = await attempt("attempt-1");
   if (first.kind !== "ok") {
-    throw new Error("the first disclosure must succeed");
+    throw new Error(
+      `the first disclosure must succeed: ${first.message ?? first.state}`
+    );
   }
-  const disclosed = first.receipt.detail.disclosed;
-  const withheld = first.receipt.detail.withheld;
+  const disclosed = first.disclosure.disclosed;
+  const withheld = first.disclosure.withheld;
   say(`  disclosed: ${disclosed.join(", ")}`);
   say(
     `  withheld: ${withheld.join(", ")} (the record is not bound to this agent)`
   );
-  say(`  external ref: ${first.receipt.externalRef}`);
+  say(`  receipt id: ${first.receipt.receiptId}`);
   say(`  terms digest: ${first.receipt.termsDigest.slice(0, 16)}...`);
   say(`  evidence id: ${first.receipt.eventId}`);
   say();

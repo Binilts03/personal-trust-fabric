@@ -74,7 +74,7 @@ step 3 - the lab asks for the minimised claim set, through the boundary
   request: /disclose, 3 claim names, verifier: did:example:lab
   disclosed: diagnostic-summary, lab-order-id
   withheld: patient-name (the record is not bound to this agent)
-  external ref: presentation:0b6b95ba77de09e5
+  receipt id: presentation:0b6b95ba77de09e5
   terms digest: 172da5b2b47bcc94...
   evidence id: pev-18f9bfbbdcaf3c66a3223c4631dd694a
 
@@ -151,6 +151,15 @@ step 7 - what each step demonstrates, and which obligation it serves
 
   This table records what the script demonstrates and which obligation it serves.
   It is not a legal determination, and PTF certifies nothing.
+
+node : (node:22320) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+At line:1 char:63
++ ... -vertical"; node examples/dpdp-consent-gateway.mjs > "$env:TEMP\v3.tx ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ((node:22320) Ex...nge at any time:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+(Use `node --trace-warnings ...` to show where the warning was created)
 ```
 
 ---
@@ -311,10 +320,14 @@ specific deployment; PTF does not calculate legal deadlines
   `:87-89`).
 - **A Processing Event is not an enterprise activity log.** It tracks
   PTF-mediated attempts only (`docs/audit/limits.md:373`).
-- **The host kit boundary is provisional in this branch.** The example calls
-  `createEffectBoundary` from `src/hostkit/boundary.ts`, which is a
-  provisional implementation of the API and the ordering in
+- **The example runs the real host kit.** The boundary it calls is
+  `createEffectBoundary` from `src/hostkit/boundary.ts`, the same
+  implementation a third-party host adopts (see `docs/host-kit.md`). The
+  ordering it exercises is the ordering in
   `docs/superpowers/specs/2026-10-21-host-kit-and-vertical.md` §1.1–§1.2.
-  The real host kit lands in `feature/host-kit` and replaces that file; the
-  example uses only the documented public API, so it keeps working against
-  the real implementation.
+- **The mid-flight withdrawal needs a seam.** The script arms the withdrawal
+  at the authority burn (the `WithdrawalRace` authority in the example
+  fires a hook right after a consuming evaluation), because that is the only
+  way to reproduce the window between the live recheck and the effect
+  boundary in a sequential script. The window itself is proven by the
+  conformance suite, not by this script.
