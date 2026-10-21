@@ -76,7 +76,8 @@ What landed this week:
    which is what the new x402 Foundation under the Linux Foundation is
    standardising, with Visa, Mastercard, Stripe and Google among its Premier
    members. Both are tested against a real local HTTP server, including the
-   case where the server asks for more than the user authorised.
+   cases where the server asks for more than the user authorised, or names
+   another asset or another payee.
 3. A vertical that runs with one command and needs no credentials. A clinic
    shares a patient's diagnostic summary with a lab under the DPDP rules. You
    see the disclosure, the evidence, the consent withdrawal that stops the
