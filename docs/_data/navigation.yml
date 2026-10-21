@@ -17,6 +17,8 @@ main:
     url: /privacy/dpdp/
   - title: Host Kit
     url: /host-kit/
+  - title: Vertical
+    url: /verticals/dpdp-consent-gateway/
   - title: ADRs
     url: /adr/
   - title: Launch
