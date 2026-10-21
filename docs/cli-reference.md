@@ -53,6 +53,18 @@ All commands require `--dir <store-path>` (default `./ptf-store`).
 | `disclose --principal <alias> --agent <alias> --request <json>`            | Request disclosure (returns minimal approved claim) |
 | `present --principal <alias> --agent <alias> --claim <json> --nonce <hex>` | Present holder-signed claim (consumes one use)      |
 
+## Privacy & Host Kit
+
+| Command                                    | Description                                                                      |
+| ------------------------------------------ | -------------------------------------------------------------------------------- |
+| `privacy <subcommand>`                     | DPDP evidence, runtime checks, summaries, erasure, recovery (`ptf privacy help`) |
+| `host-conformance --privacy-config <file>` | Run the host kit's nine conformance checks against the store (no network)        |
+
+`host-conformance` prints one line per check — id, `PASS`/`FAIL`, the rule
+the check proves, and the failure detail. The exit code is `0` only when
+every check passes. The checks run in a scratch directory: the store is read,
+never written.
+
 ## Common Flags
 
 | Flag           | Description                             |
