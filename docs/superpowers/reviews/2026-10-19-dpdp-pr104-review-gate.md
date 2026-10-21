@@ -297,16 +297,26 @@ Scoped verification; "VERIFIED" means only the claim and test boundary shown, no
 
 The five planned slices are implemented with explicit non-goals: no compliance certificate, no automatic legal-basis determination, no statutory Consent Manager, no general multi-tenant/remote provider deployment, no enterprise-wide data erasure, no external process attestation.
 
-**Known deferred engineering issues:** configuration validation still uses some TypeScript assertions at the operator JSON edge; privacy holds govern erasure planning but do not directly deny runtime processing; long-lived provider connectors need host-owned fencing against consent-withdrawal races; separate DEK rotation/JSON snapshot helpers merit further consolidation only with behavior-preserving tests; the file event store has no CAS/index and a 5,000-record ceiling; a hard crash can leave a Processing Event `PREPARED` until a retry or operator reconciliation. Journal-first recovery is implemented for the reference host's `/pay` route only - other hosts must compose the same order themselves. None should be silently presented as solved. These are P4 follow-on candidates, not P2 merge claims.
+**Known deferred engineering issues:** configuration validation still uses some TypeScript assertions at the operator JSON edge; privacy holds govern erasure planning but do not directly deny runtime processing; the file event store has no CAS and keeps a 5,000-record ceiling (its lookups are now indexed - see the P4 batch below); a hard crash can leave a Processing Event `PREPARED` until a retry or operator reconciliation. Journal-first recovery is implemented for the reference host's `/pay` route only - other hosts must compose the same order themselves. None should be silently presented as solved.
+
+**Since this gate was written, the P4 hardening batch landed** (each item as
+its own pull request, all with a green gate and CI):
+
+| PR   | Item | What it changed                                                                                             |
+| ---- | ---- | ----------------------------------------------------------------------------------------------------------- |
+| #105 | P4-1 | The withdrawal fence: privacy state re-evaluated at the effect boundary, after the burn, before the effect. |
+| #106 | P4-4 | ADR-0025 - the per-host enforcement boundary (a library, not an interceptor).                               |
+| #107 | P4-2 | One DEK resolution rule and one revision rule for every store.                                              |
+| #108 | P4-3 | The indexed event store (`findByKey` direct, `findByAttempt` via a sealed attempt cache).                   |
 
 ## Gate / release decision
 
-**Merge-ready.** The independent Standards / Spec / Security reviews are all
+**Merged.** The independent Standards / Spec / Security reviews are all
 clean at this head: Standards REQUEST CHANGES (one MAJOR) after the first
 repair batch, then APPROVE after the fallow repair batch; Spec APPROVE; and
 Security APPROVE. The Standards MAJOR and every minor finding from all three
 axes are repaired, and the last re-review (of `4ba8fba`) returned APPROVE
 with six minor findings, all closed in `67d5501`. The full local gate is
-green at that head and CI is green. The user-controlled merge decision
-remains required. No claim here substitutes for the organisation's legal
+green at that head and CI is green. PR #104 was merged as `9c94ae3` on
+2026-10-21. No claim here substitutes for the organisation's legal
 review under Indian DPDP Act/Rules or other jurisdictions.

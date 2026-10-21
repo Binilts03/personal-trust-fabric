@@ -226,6 +226,9 @@ additions, and each one is listed there with its trigger.
 - The operator CLI now rejects `--path` for `ptf privacy ...`: the privacy subcommand is positional and validated up front, so a flag can no longer re-target a different operator action.
 - The agent-facing payment vocabulary gains `not_submitted`: the execution journal shows a prepared but never submitted attempt, so no money moved, and the authority use for that attempt was already spent. The instruction asks for a new grant and new terms instead of silently retrying the same terms.
 - Privacy processing is now fenced at the effect boundary: the disclosure, the protected use, and the payment re-read the privacy state immediately before the effect (after the authority use is burned), so a consent withdrawal that lands after the recheck stops the attempt instead of processing anyway. The attempt is a provable pre-effect failure - the evidence is `FAILED_FINAL`, no claim is released, and no provider is called.
+- The encrypted Processing Event store is indexed: `findByKey` resolves the event file directly from the idempotency key, and `findByAttempt` uses a sealed attempt cache. A missing, stale, tampered, or rotated-away cache is a cache miss and the lookup falls back to the full scan, so the index can never hide an event. The 5,000-record ceiling and the per-record encryption are unchanged.
+- The store layer now has one DEK resolution rule and one revision rule (`resolveSealedDek`, `nextStoreRevision`) instead of one copy per store. Behaviour, error vocabulary, and the file/SQLite parity suites are unchanged.
+- ADR-0025 records the enforcement boundary: privacy enforcement is per-host, explicit, and composed at the effect boundary. PTF is a library, not an interceptor - a host that composes `PrivacyRuntime` is enforced for its own effects, a host that does not is uncovered (never compliant), and coverage is reported, never attested.
 
 ### Fixed
 
