@@ -7,6 +7,8 @@ main:
     url: /architecture/
   - title: Security Model
     url: /security-model/
+  - title: Adapters
+    url: /adapters/http-and-x402/
   - title: MCP Contract
     url: /mcp-contract/
   - title: CLI Reference

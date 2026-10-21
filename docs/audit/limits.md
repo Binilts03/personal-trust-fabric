@@ -239,6 +239,30 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   decode retained where verification uses decoded bytes (fail-closed).
   Production: implemented — strict helper for new paths, lenient retained
   only where verified bytes are compared (proof: `tests/jws.test.ts`).
+- HTTP provider transports (`src/adapters/http-provider.ts`,
+  `src/adapters/x402-provider.ts`): the request body carries the authorized
+  terms plus the capability id and the terms digest and nothing else — no
+  secret, no extra effect-bearing key — and the bytes on the wire are the
+  canonical form the host signed, so the server can recompute and verify
+  them. The credential stays in the host's `sign` callback; the adapter
+  only forwards the headers it returned. A non-2xx, an unparsable body, a
+  missing external reference, a refused attestation, a network error, a
+  timeout, and a refused redirect are all failed effects — the adapter never
+  invents a success. The response body is never logged and never copied
+  into an error message; `onDiagnostic` reports phase and status only. The
+  host's `interpret` owns the response mapping, so a host that reads a
+  credential out of the response and puts it in an error message would leak
+  it — host duty. x402 speaks Protocol Version 2 (`PAYMENT-REQUIRED` /
+  `PAYMENT-SIGNATURE` / `PAYMENT-RESPONSE`; `X-PAYMENT` is v1 and is not
+  sent, `WWW-Authenticate` is not part of x402): the host states the exact
+  authorised amount in the asset's atomic units and the adapter never
+  converts, scales, or infers units, so a challenge for more, another
+  amount, another scheme, or another network is refused before `settle` is
+  called and nothing is paid. One challenge, one settlement attempt, one
+  retry — a payment is never retried by the adapter. Rail results stay
+  evidence: hosts run the independent settlement checks before trusting a
+  reference (proof: `tests/http-provider.test.ts`,
+  `tests/x402-provider.test.ts`).
 
 ## Vault / agent contract / providers (P0 slices 1–3)
 
