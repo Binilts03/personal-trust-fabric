@@ -286,13 +286,18 @@ describe("operations pack — install hygiene contract (ticket 12)", () => {
     };
     const prepare: string | undefined = pkg.scripts["prepare"];
     assert.ok(
-      typeof prepare === "string" && prepare.includes("husky"),
-      "prepare must still install hooks for contributors"
+      typeof prepare === "string" && prepare.includes("build"),
+      "prepare must build the package: a git install ships no dist otherwise"
     );
     assert.ok(
-      typeof prepare === "string" &&
-        (prepare.includes("|| true") || prepare.includes("|| exit 0")),
-      "prepare must tolerate a missing husky binary (consumer git installs)"
+      typeof prepare === "string" && prepare.includes("hooks"),
+      "prepare must still install hooks for contributors"
+    );
+    const hooks: string | undefined = pkg.scripts["hooks"];
+    assert.ok(
+      typeof hooks === "string" &&
+        (hooks.includes("|| true") || hooks.includes("|| exit 0")),
+      "the hooks step must tolerate a missing husky binary (consumer git installs)"
     );
     for (const f of pkg.files) {
       assert.ok(!f.includes("husky"), `files must not ship hooks: ${f}`);

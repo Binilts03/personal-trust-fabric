@@ -59,6 +59,17 @@ describe("packaged export surface (npm-consumer view)", () => {
     );
     callable(providers, "makeFakeProviders", "personal-trust-fabric/providers");
 
+    const http = packaged("personal-trust-fabric/adapters/http");
+    callable(http, "createHttpProvider", "personal-trust-fabric/adapters/http");
+    callable(
+      http,
+      "canonicalRequestBody",
+      "personal-trust-fabric/adapters/http"
+    );
+
+    const x402 = packaged("personal-trust-fabric/adapters/x402");
+    callable(x402, "createX402Provider", "personal-trust-fabric/adapters/x402");
+
     const data = packaged("personal-trust-fabric/profiles/data");
     callable(data, "requestData", "personal-trust-fabric/profiles/data");
 

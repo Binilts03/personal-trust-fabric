@@ -47,6 +47,11 @@ packaging (`src/api.ts` + the `exports` map), not by comments.
   `./privacy` surface. The privacy subpath deliberately exports the runtime,
   models and gates but not the file-backed stores, which remain host internals.
   Adding a symbol still needs an explicit public-surface decision.
+- The two HTTP provider transports (`createHttpProvider`,
+  `createX402Provider`) ship on their own subpaths, `./adapters/http` and
+  `./adapters/x402`: `./providers` stays the provider seam itself, and the
+  curated root barrel stays the authority engine, the vault, the approval
+  presenter, and that seam.
 - `src/index.ts` keeps every export (tests import `../src/index.js`); no
   test file changes in this ticket. `tests/hygiene.test.ts` still pins
   `main`/`types` at `index` — the main session updates it to `api`.
