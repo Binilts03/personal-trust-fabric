@@ -96,7 +96,14 @@ export interface ProtectedProvider {
   ): { readonly ok: true } | { readonly ok: false; readonly reason: string };
 }
 
-function checkRequest(req: ProviderRequest): void {
+/**
+ * The request every provider path must satisfy: the capability id and the
+ * terms digest have floors, the action is a `/-path`, and the recipient,
+ * resource, and purpose are present. Exported so the HTTP transports can
+ * apply the same rule on the direct-call path (ADR-0018: the effect-bearing
+ * terms are exactly the authorized operation).
+ */
+export function checkRequest(req: ProviderRequest): void {
   if (typeof req !== "object" || req === null || Array.isArray(req)) {
     throw new Error("provider: request must be an object");
   }

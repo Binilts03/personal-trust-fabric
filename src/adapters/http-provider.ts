@@ -4,12 +4,17 @@ import type {
   ProviderRequest,
   ProviderSubmission,
 } from "./providers.js";
+import { checkRequest } from "./providers.js";
 import {
+  DEFAULT_TIMEOUT_MS,
   HttpWireError,
+  assertEndpointUrl,
   assertSafeHeaders,
   buildTermsBody,
   httpCall,
+  mergeHeaders,
   parseJsonObject,
+  safeText,
   type TermsBody,
 } from "./http-wire.js";
 
@@ -48,6 +53,10 @@ export interface HttpProviderDiagnostic {
 
 export interface HttpProviderOptions {
   readonly kind: ProviderKind;
+  /**
+   * The endpoint. A host constant, never a request term, and `https:`
+   * unless the host opts into `allowInsecureHttp`.
+   */
   readonly url: string;
   /**
    * Sign the request body; returns the auth headers. The second argument is
@@ -77,8 +86,19 @@ export interface HttpProviderOptions {
   ) => { readonly ok: true } | { readonly ok: false; readonly reason: string };
   /** Static headers (a secret never rides in the body — headers are the host's own). */
   readonly headers?: Readonly<Record<string, string>>;
+  /**
+   * The idempotency key sent as a header. Defaults to the terms digest.
+   * A header, not a body key: the body stays exactly the terms plus the
+   * binding fields.
+   */
+  readonly idempotencyKey?: string;
+  /**
+   * Allow an `http:` endpoint (a local test server). Off by default.
+   */
+  readonly allowInsecureHttp?: boolean;
   readonly method?: "POST" | "PUT";
   readonly fetchImpl?: typeof fetch;
+  /** The whole submit gets this deadline. Defaults to 30s. */
   readonly timeoutMs?: number;
   readonly nowSec?: () => number;
   /** Rail scope for journal keying. Defaults to the kind. */
@@ -129,6 +149,14 @@ export function createHttpProvider(
   const method = opts.method ?? "POST";
   const kind = opts.kind;
   const namespace = opts.namespace;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  try {
+    assertEndpointUrl(opts.url, opts.allowInsecureHttp === true);
+  } catch (err) {
+    throw new HttpProviderError(
+      err instanceof HttpWireError ? err.reason : "invalid endpoint url"
+    );
+  }
 
   function diagnose(event: HttpProviderDiagnostic): void {
     try {
@@ -139,13 +167,17 @@ export function createHttpProvider(
   }
 
   async function submit(req: ProviderRequest): Promise<HttpProviderSubmission> {
+    // The seam's own request rule applies on the direct-call path too.
+    checkRequest(req);
     const built = buildOrThrow(req);
 
     let signed: Record<string, string>;
     try {
       signed = await opts.sign(built.body, built.canonical);
     } catch (err) {
-      throw new HttpProviderError(`signing failed: ${hostMessage(err)}`);
+      throw new HttpProviderError(
+        `signing failed: ${safeText(hostMessage(err))}`
+      );
     }
     if (
       typeof signed !== "object" ||
@@ -154,13 +186,27 @@ export function createHttpProvider(
     ) {
       throw new HttpProviderError("sign must return a header record");
     }
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      ...(opts.headers ?? {}),
-      ...signed,
-    };
+
+    const staticHeaders = opts.headers ?? {};
+    let headers: Record<string, string>;
     try {
-      assertSafeHeaders(headers, "request");
+      // Both host-supplied sets are checked: the framing headers and the
+      // content type belong to the adapter, not to the host. The host's
+      // static headers go in before the signed ones, so the signed ones
+      // win.
+      assertSafeHeaders(staticHeaders, "request headers");
+      assertSafeHeaders(signed, "signed headers");
+      headers = mergeHeaders(
+        {
+          "content-type": "application/json",
+          "idempotency-key": opts.idempotencyKey ?? req.termsDigest,
+        },
+        staticHeaders,
+        signed
+      );
+      assertSafeHeaders(headers, "request headers", {
+        allowContentType: true,
+      });
     } catch (err) {
       throw new HttpProviderError(
         err instanceof HttpWireError ? err.reason : "invalid headers"
@@ -175,7 +221,7 @@ export function createHttpProvider(
         method,
         headers,
         body: built.canonical,
-        ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+        timeoutMs,
         ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
       });
     } catch (err) {
@@ -208,12 +254,12 @@ export function createHttpProvider(
         });
       } catch (err) {
         throw new HttpProviderError(
-          `attestation check failed: ${hostMessage(err)}`
+          `attestation check failed: ${safeText(hostMessage(err))}`
         );
       }
       if (attested.ok !== true) {
         throw new HttpProviderError(
-          `attestation failed: ${attested.reason ?? "unknown reason"}`
+          `attestation failed: ${safeText(attested.reason ?? "unknown reason")}`
         );
       }
     }
@@ -225,7 +271,9 @@ export function createHttpProvider(
     try {
       interpreted = opts.interpret(response, result.status);
     } catch (err) {
-      throw new HttpProviderError(`response rejected: ${hostMessage(err)}`);
+      throw new HttpProviderError(
+        `response rejected: ${safeText(hostMessage(err))}`
+      );
     }
     const externalRef = requireExternalRef(interpreted.externalRef);
     const now = opts.nowSec?.() ?? Math.floor(Date.now() / 1000);

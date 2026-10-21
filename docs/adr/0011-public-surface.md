@@ -55,3 +55,9 @@ packaging (`src/api.ts` + the `exports` map), not by comments.
 - `src/index.ts` keeps every export (tests import `../src/index.js`); no
   test file changes in this ticket. `tests/hygiene.test.ts` still pins
   `main`/`types` at `index` — the main session updates it to `api`.
+
+## Amendment: the host kit subpath (2026-10-21)
+
+The host kit ships as the `./hostkit` subpath and is deliberately **not**
+re-exported from the curated root barrel: the kit binds host stores, so the
+subpath is the whole surface, exactly like `./privacy` (ADR-0025).

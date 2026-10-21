@@ -13,7 +13,9 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- The host kit: `createEffectBoundary` is the one call that puts the authority and privacy gates around an effect in the right order (authority first and non-consuming, then the privacy preflight and the live recheck, then the evidence precommit, then the authority consumption and its durable CAS, then the privacy fence at the effect boundary, then the effect, then the finalisation as `SUCCEEDED`, `FAILED_FINAL`, or `OUTCOME_UNKNOWN`). `runHostConformance` is nine checks, each one a rule, each one observed against a real encrypted store, so a host can prove in CI that its own agent paths enforce the controls. `ptf host-conformance` runs the same suite from the operator surface and exits non-zero when a check fails. The kit ships on the `./hostkit` subpath.
 - Two HTTP provider transports that speak real protocols: `createHttpProvider` signs a canonical JSON body and posts it to any REST endpoint (the credential stays in the host's `sign` callback), and `createX402Provider` speaks the x402 HTTP 402 flow at Protocol Version 2 (`PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE`). The x402 amount is in the asset's atomic units and the core spec does not define the decimals, so the host supplies the exact authorised amount and the adapter compares it for equality and never converts units. It refuses before settling anything when the challenge asks for more than the user authorised, or when the network, scheme, or signed value differs from the approved terms. Both ship on the `./adapters/http` and `./adapters/x402` subpaths and are tested against a real local HTTP server.
+
 - P3P wire-shape alignment (SDK 1.3.0): `normalizeP3pReceipt` maps real
   `decodeReceipt` output (`status`/`reference`/`settlement`/`challengeId`/
   `timestamp`/`paymentMethod`) to PTF terms, dropping `paymentGateway`
@@ -233,6 +235,27 @@ additions, and each one is listed there with its trigger.
 
 ### Fixed
 
+- The two HTTP provider transports, after an independent security review:
+  the x402 transport now binds the challenged **asset** and **payee** to
+  the authorised terms (`authorizedAsset`, `authorizedPayTo`, and the
+  challenged `resource` are required options, a challenge naming another
+  asset, payee, or resource is refused before anything is signed, and the
+  wire payload always carries the authorised asset and payee rather than
+  the server's), and the settlement is accepted fail-closed — `success`
+  must be true, the transaction must be there, the network must be the
+  authorised one, and the payer and amount must match when the server sent
+  them — and is handed to the host through `onSettlement` for the
+  independent `checkSettlement`. Both transports now apply the seam's own
+  `checkRequest` on the direct-call path, refuse host headers that carry
+  CR/LF, a colon in a name, an over-long name or value, `host`,
+  `content-length`, `transfer-encoding`, `connection`, or a
+  `content-type`, send `Idempotency-Key` (the terms digest by default),
+  default to a 30s deadline with a 1 MiB response cap, require an `https:`
+  endpoint unless the host sets `allowInsecureHttp`, strip control
+  characters from server strings before they reach an error message, and
+  accept a v1 challenge body (`paymentRequirements`, `maxAmountRequired`)
+  without rewriting the version marker. `settle` signs and returns the
+  authorization only — it never broadcasts and never moves value.
 - Authority hardening (independent review batch B): `/pay*` standing grants
   now require one exact `.context.currency == "<ISO>"` bound alongside the
   amount ceiling (add-time throw; wrong-currency demands denied at

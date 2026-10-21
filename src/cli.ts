@@ -62,6 +62,7 @@ import type {
 } from "./index.js";
 import type { KeyObject } from "node:crypto";
 import { runPrivacyCommand } from "./cli/privacy.js";
+import { runHostConformanceCommand } from "./cli/host-conformance.js";
 
 /**
  * Minimal operator CLI (prod-03). Manual argv, stdin/stdout only, no framework.
@@ -125,6 +126,7 @@ const COMMANDS = [
   "backup",
   "restore",
   "privacy",
+  "host-conformance",
   "help",
   "version",
 ] as const;
@@ -196,6 +198,7 @@ export function helpText(): string {
     "  backup --to DIR                        copy the store as one unit + anchor.json (refuses non-empty dest; stop writers first)",
     "  restore --from DIR                     copy a backup over fresh --dir, never merges; verifies chain + freshness + anchor",
     "  privacy <subcommand>                    DPDP/privacy evidence, runtime checks, summaries, exact erasure and rekey",
+    "  host-conformance --privacy-config FILE  run the host kit conformance checks against this store (no network, no writes to the store)",
     "  privacy basis withdraw-consent --id CONSENT_ID",
     "                                         withdraw a CONSENT record (the id is a consent id, not a basis id)",
     "  privacy consent withdraw --id CONSENT_ID   withdraw a consent record directly",
@@ -255,7 +258,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = tokens;
   if (command === undefined) {
     throw new Error(
-      "usage: ptf [--dir D] <init|keygen|rekey|recipient|agent|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|privacy|revoke|review|approve|deny|help|version> ..."
+      "usage: ptf [--dir D] <init|keygen|rekey|recipient|agent|grant|pay|disclose|vault-put|vault-read|vault-migrate|vault-rekey|audit|backup|restore|privacy|host-conformance|revoke|review|approve|deny|help|version> ..."
     );
   }
   if (!(COMMANDS as readonly string[]).includes(command)) {
@@ -397,6 +400,7 @@ const ALLOWED_FLAGS: Record<string, Set<string>> = {
     "mcp-config",
     "yes",
   ]),
+  "host-conformance": new Set(["privacy-config"]),
   revoke: new Set(["grant", "recipient"]),
   review: new Set(["digest"]),
   approve: new Set(["digest", "ttl-s"]),
@@ -689,7 +693,8 @@ export async function run(
       (command === "audit" &&
         (existsSync(join(dir, "personal-state.json")) ||
           existsSync(join(dir, "privacy-state.json")))) ||
-      (command === "privacy" && (keystoreExists || flags["path"] !== "init")),
+      (command === "privacy" && (keystoreExists || flags["path"] !== "init")) ||
+      command === "host-conformance",
     prompt
   );
 
@@ -713,6 +718,15 @@ export async function run(
       keys: ctx.keys,
       io,
       persistKeys: () => persistKeys(dir, env, ctx.keys, prompt),
+    });
+  }
+
+  if (command === "host-conformance") {
+    return runHostConformanceCommand({
+      dir,
+      flags,
+      keys: ctx.keys,
+      io,
     });
   }
 
