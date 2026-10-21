@@ -226,11 +226,79 @@ response is never logged with its body by default (a host may opt in).
 
 ### 2.2 `src/adapters/x402-provider.ts` - the HTTP 402 agent-payment flow
 
+**Protocol version 2** (the x402 Foundation spec, `x402-specification-v2.md`
+and `transports-v2/http.md`, retrieved 2026-10-21). The v1 header names are
+superseded and must not be used.
+
+The three headers, none of them `X-` prefixed, none of them
+`WWW-Authenticate`:
+
+| Header              | Direction        | Carries                     |
+| ------------------- | ---------------- | --------------------------- |
+| `PAYMENT-REQUIRED`  | server to client | base64 `PaymentRequired`    |
+| `PAYMENT-SIGNATURE` | client to server | base64 `PaymentPayload`     |
+| `PAYMENT-RESPONSE`  | server to client | base64 `SettlementResponse` |
+
+Shapes:
+
+```jsonc
+// PaymentRequired
+{
+  "x402Version": 2,
+  "error": "PAYMENT-SIGNATURE header is required",
+  "resource": { "url": "...", "description": "...", "mimeType": "application/json" },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "eip155:84532",   // CAIP-2
+      "amount": "10000",           // atomic units, as a string
+      "asset": "0x036CbD...",
+      "payTo": "0x209693...",
+      "maxTimeoutSeconds": 60,
+      "extra": { "name": "USDC", "version": "2" }
+    }
+  ]
+}
+
+// PaymentPayload (v2 moved scheme/network into "accepted")
+{
+  "x402Version": 2,
+  "resource": { "url": "..." },
+  "accepted": { "scheme": "exact", "network": "eip155:84532", "amount": "10000", "asset": "...", "payTo": "...", "maxTimeoutSeconds": 60 },
+  "payload": {
+    "signature": "0x2d6a75...",
+    "authorization": {
+      "from": "0x857b...", "to": "0x209693...", "value": "10000",
+      "validAfter": "1740672089", "validBefore": "1740672154",
+      "nonce": "0xf374..."
+    }
+  }
+}
+
+// SettlementResponse
+{ "success": true, "transaction": "0x1234...", "network": "eip155:84532", "payer": "0x857b..." }
+```
+
+The amount is in **atomic units of the asset** and the core spec does not
+define the decimals. The host therefore supplies the exact atomic amount it
+authorised; the adapter never guesses a unit conversion and refuses a
+challenge it cannot compare exactly.
+
 ```ts
 export interface X402ProviderOptions {
   readonly url: string;
   /** Pay a 402 challenge. Called only after the server asks for payment. */
   readonly settle: (challenge: X402Challenge) => Promise<X402Payment>;
+  /**
+   * The exact amount this host authorised, in the asset's atomic units, as a
+   * decimal string. The adapter compares the challenge against it and never
+   * converts units on its own.
+   */
+  readonly authorizedAmount: string;
+  /** The CAIP-2 network the host authorised, e.g. "eip155:84532". */
+  readonly authorizedNetwork: string;
+  /** The scheme the host authorised, e.g. "exact". */
+  readonly authorizedScheme?: string;
   readonly resource?: string;
   readonly description?: string;
   readonly fetchImpl?: typeof fetch;
@@ -243,16 +311,24 @@ export function createX402Provider(
 ): ProtectedProvider;
 ```
 
-Flow: POST → `402 Payment Required` with the `X402` challenge (accepts
-header listing scheme/network/max amount) → `settle(challenge)` → retry once
-with the `X-PAYMENT` header → the response must echo the payment reference
-and the expected terms.
+Flow: POST the request. On `402 Payment Required`, read the challenge from
+the `PAYMENT-REQUIRED` header (base64) and fall back to the JSON body (the
+v1 shape); prefer the header. Select the entry from `accepts` that matches
+the authorised scheme and network. Call `opts.settle(challenge)` to obtain
+the payment payload, then retry ONCE with the `PAYMENT-SIGNATURE` header.
+
+Refuse (throw, no effect, nothing paid) when: the challenge asks for more
+than the authorised atomic amount, the network or scheme does not match the
+authorised one, no `accepts` entry matches, the response after payment is not
+2xx, the response carries no payment reference, or the server never
+challenged. The `PAYMENT-RESPONSE` header, when present, is decoded and its
+`transaction` and `network` are checked against the challenge.
 
 Both adapters must be covered by tests against a **real local HTTP server**
 (`node:http`), including: the request carries the exact terms, a 500 is a
 failed effect, a 402 without a challenge header is a failed effect, a
-challenge for a larger amount than authorized is refused, and no secret ever
-appears in the request body.
+challenge for a larger amount than authorized is refused, a challenge on a
+different network is refused, and no secret ever appears in the request body.
 
 ---
 
@@ -274,9 +350,41 @@ and print a legible narrative:
 4. A **withdrawal** after the fact, then a second disclosure attempt - the
    fence stops it, and the evidence says so.
 5. The rights surface: the erasure plan and the exact, subject-bound erasure.
-6. A closing table mapping each step to the DPDP Act 2025 / DPDP Rules 2025
-   section it exercises (notice, consent, purpose limitation, processing
-   evidence, withdrawal, erasure).
+6. A closing table mapping each step to the DPDP Act 2023 / DPDP Rules 2025
+   provision it exercises.
+
+**Map only to obligations that actually exist.** Verified against the
+primary sources (the Act, and the Rules PDF G.S.R. 846(E) of 13 November
+2025):
+
+- Act s.5 notice; s.6 consent, its withdrawal (s.6(4) to s.6(6)), and the
+  **burden of proof on consent (s.6(10))**: the Data Fiduciary must be able
+  to prove that a notice was given and that consent was given.
+- Act s.7 "certain legitimate uses" (voluntary provision, state functions,
+  legal obligation, medical emergency, and the rest).
+- Act s.8(4) to s.8(7): technical and organisational measures, security
+  safeguards, and erasure when the purpose is no longer served.
+- Act s.11 access, s.12 correction and erasure, s.13 grievance.
+- Rules 3 (notice content), 6 (access logs, and the one-year retention of
+  logs and traffic data), 7 (breach intimation), 8 (retention, and the
+  48-hour erasure warning), 14 (rights requests, and the 90-day response).
+- Rule 4 with the First Schedule Part B: the Consent Manager record
+  (consents given, denied and withdrawn, the notices, and the sharing) kept
+  for at least seven years and exportable **in machine-readable form**.
+
+Do **not** claim that DPDP imposes a general record-of-processing-activities
+obligation. It does not: the string does not appear in the Act, and a record
+of processing activities is a GDPR Art. 30 idea. The evidence this vertical
+produces is a machine-readable processing record in the shape the Consent
+Manager schedule asks for, which is the closest thing in Indian law to the
+artifact, and it becomes enforceable on 13 November 2026.
+
+Dates worth stating once, not everywhere: the Rules phase in from
+13 November 2025 (the Board), 13 November 2026 (Consent Managers) and
+13 May 2027 (the substantive Data Fiduciary obligations).
+
+Never write "compliant", "DPDP compliant", or any claim of compliance: the
+script demonstrates controls, it does not certify anything.
 
 The walkthrough lives in `docs/verticals/dpdp-consent-gateway.md` with the
 _real_ transcript, and the README links it.
