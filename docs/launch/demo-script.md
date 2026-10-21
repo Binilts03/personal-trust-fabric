@@ -1,3 +1,10 @@
+---
+layout: default
+title: The five-minute demo
+nav_order: 3
+permalink: /launch/demo/
+---
+
 # The five-minute demo
 
 The demo is one terminal and one idea: the authority belongs to the person,

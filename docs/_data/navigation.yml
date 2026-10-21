@@ -13,8 +13,20 @@ main:
     url: /mcp-contract/
   - title: CLI Reference
     url: /cli-reference/
+  - title: Privacy
+    url: /privacy/dpdp/
+  - title: Host Kit
+    url: /host-kit/
   - title: ADRs
     url: /adr/
+  - title: Launch
+    children:
+      - title: Demo
+        url: /launch/demo/
+      - title: Post
+        url: /launch/post/
+      - title: Facts
+        url: /launch/facts/
   - title: Audit
     children:
       - title: Overview

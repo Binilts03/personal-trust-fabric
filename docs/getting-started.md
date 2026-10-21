@@ -11,6 +11,26 @@ Requires Node 22+.
 
 ## Install
 
+To use PTF as a dependency in your own project:
+
+```sh
+npm install personal-trust-fabric
+```
+
+The first release is not on npm yet. Until it is, install it from the
+repository (npm builds the package during the install, so you get a working
+`dist`):
+
+```sh
+npm install github:Binilts03/personal-trust-fabric
+```
+
+That gives you the `ptf`, `ptf-mcp-server` and `ptf-pdp-server` binaries,
+the curated entry point, and the `./privacy`, `./providers` and `./vault`
+subpaths.
+
+To work on PTF itself:
+
 ```sh
 git clone https://github.com/Binilts03/personal-trust-fabric.git
 cd personal-trust-fabric
@@ -23,7 +43,16 @@ npm install
 npm run typecheck && npm test && npm run eval
 ```
 
-All three must pass. The gate runs: strict TypeScript, 297+ unit tests, 9 eval/property tests, brand check, zero-dependency core check, public-seam test check.
+All three must pass. The gate runs: strict TypeScript, 490+ unit tests, 9
+eval/property tests, brand check, zero-dependency core check, public-seam
+test check, and the package check that installs the tarball into a clean
+directory.
+
+To check only what a consumer receives:
+
+```sh
+npm run verify:package
+```
 
 ## Quick Decision (3 steps)
 
