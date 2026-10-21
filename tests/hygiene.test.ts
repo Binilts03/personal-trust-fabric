@@ -84,6 +84,7 @@ describe("peer-review hygiene gate (ptf-v01/05)", () => {
     assert.ok(exports?.["./oauth"]);
     assert.ok(exports?.["./profiles/payment"]);
     assert.ok(exports?.["./privacy"]);
+    assert.ok(exports?.["./hostkit"]);
     assert.ok(
       ((pkg["files"] as string[]) ?? []).includes("dist"),
       "files must ship dist"

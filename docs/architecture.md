@@ -80,6 +80,7 @@ PTF separates **who may do what** from **who possesses the secret needed to do i
 | `src/profiles/payment.ts`     | Payment-specific bounds, recipients                                                                             |
 | `src/profiles/data.ts`        | Data disclosure profiles                                                                                        |
 | `src/privacy/`                | DPDP narrowing plane: model, engine, runtime, rights, host wiring (`mcp.ts` policy, `mcp-host.ts` store wiring) |
+| `src/hostkit/`                | Reusable host effect boundary and its conformance suite (see `docs/host-kit.md`)                                |
 | `src/store/privacy.ts`        | Encrypted privacy configuration (DEK-sealed)                                                                    |
 | `src/store/privacy-events.ts` | Encrypted Processing Event repository                                                                           |
 | `src/cli/privacy*.ts`         | Privacy operator CLI (router, evidence, rights)                                                                 |

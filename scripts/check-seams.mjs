@@ -23,6 +23,7 @@ const PUBLIC_TEST_IMPORTS = new Set([
   "../src/cli.js",
   "../src/mcp-server.js",
   "../src/pdp-server.js",
+  "../src/hostkit/index.js",
 ]);
 
 // Exact, reviewed exceptions: test file -> specifiers it may import.

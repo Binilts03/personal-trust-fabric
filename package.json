@@ -39,6 +39,10 @@
     "./privacy": {
       "types": "./dist/src/privacy/api.d.ts",
       "default": "./dist/src/privacy/api.js"
+    },
+    "./hostkit": {
+      "types": "./dist/src/hostkit/index.d.ts",
+      "default": "./dist/src/hostkit/index.js"
     }
   },
   "bin": {

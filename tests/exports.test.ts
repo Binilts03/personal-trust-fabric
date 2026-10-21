@@ -74,5 +74,14 @@ describe("packaged export surface (npm-consumer view)", () => {
       "recipientBounds",
       "personal-trust-fabric/profiles/payment"
     );
+
+    const hostkit = packaged("personal-trust-fabric/hostkit");
+    callable(hostkit, "createEffectBoundary", "personal-trust-fabric/hostkit");
+    callable(hostkit, "runHostConformance", "personal-trust-fabric/hostkit");
+    callable(
+      hostkit,
+      "privacyForHostOperation",
+      "personal-trust-fabric/hostkit"
+    );
   });
 });
