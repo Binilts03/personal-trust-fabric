@@ -86,6 +86,8 @@ npm install
 npm run typecheck && npm test && npm run eval
 ```
 
+The DPDP consent-gateway vertical — a clinic sharing a Data Principal's summary with a lab, a consent withdrawal that stops the next attempt, and an erasure of that Data Principal's records — runs with one command and no credentials: `npm run build && node examples/dpdp-consent-gateway.mjs`. Walkthrough: [docs/verticals/dpdp-consent-gateway.md](docs/verticals/dpdp-consent-gateway.md).
+
 Decide locally in three steps — grant authority, build the operation, evaluate:
 
 ```ts
