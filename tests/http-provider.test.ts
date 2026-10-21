@@ -13,7 +13,7 @@ import { createHttpProvider, canonicalize } from "../src/index.js";
  * The HTTP provider transport against a REAL local server (node:http,
  * ephemeral port). The point of these tests is the wire: what the adapter
  * puts on it, what it refuses, and what it never does (invent a success,
- * print a body, carry a secret).
+ * print a body, carry a secret, follow a redirect).
  */
 
 const CAPABILITY_ID = "cid-http-0001";
@@ -105,6 +105,7 @@ describe("http provider transport (signed JSON over HTTP)", () => {
       const provider = createHttpProvider({
         kind: "payment",
         url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
         sign: (body, canonical) => {
           seen.body = body;
           seen.canonical = canonical;
@@ -138,6 +139,7 @@ describe("http provider transport (signed JSON over HTTP)", () => {
         sent.headers["x-ptf-signature"],
         createHmac("sha256", key).update(sent.body).digest("hex")
       );
+      assert.equal(sent.headers["content-type"], "application/json");
 
       // The body carries the authorized terms and the two binding fields.
       // Nothing else: no secret, no extra effect-bearing key.
@@ -169,6 +171,44 @@ describe("http provider transport (signed JSON over HTTP)", () => {
     }
   });
 
+  it("sends the terms digest as the idempotency key, and the host may override it", async () => {
+    const server = await startServer((_req, res) => {
+      json(res, 200, { id: "pi_123" });
+    });
+    try {
+      const provider = createHttpProvider({
+        kind: "payment",
+        url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
+        sign: () => ({ authorization: "Bearer t" }),
+        interpret: (response) => ({ externalRef: response["id"] as string }),
+        timeoutMs: 2000,
+      });
+      await provider.submit(terms());
+      assert.equal(
+        (server.requests[0] as Captured).headers["idempotency-key"],
+        TERMS_DIGEST
+      );
+
+      const overridden = createHttpProvider({
+        kind: "payment",
+        url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
+        sign: () => ({ authorization: "Bearer t" }),
+        interpret: (response) => ({ externalRef: response["id"] as string }),
+        idempotencyKey: "host-key-1",
+        timeoutMs: 2000,
+      });
+      await overridden.submit(terms());
+      assert.equal(
+        (server.requests[1] as Captured).headers["idempotency-key"],
+        "host-key-1"
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
   it("a 500 response is a failed effect", async () => {
     const server = await startServer((_req, res) => {
       json(res, 500, { error: "boom" });
@@ -177,9 +217,10 @@ describe("http provider transport (signed JSON over HTTP)", () => {
       const provider = createHttpProvider({
         kind: "payment",
         url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
         sign: () => ({ authorization: "Bearer t" }),
-        timeoutMs: 2000,
         interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 2000,
       });
       await assert.rejects(
         () => provider.submit(terms()),
@@ -199,9 +240,10 @@ describe("http provider transport (signed JSON over HTTP)", () => {
       const provider = createHttpProvider({
         kind: "payment",
         url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
         sign: () => ({ authorization: "Bearer t" }),
-        timeoutMs: 2000,
         interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 2000,
       });
       await assert.rejects(() => provider.submit(terms()), /not JSON/);
     } finally {
@@ -217,9 +259,10 @@ describe("http provider transport (signed JSON over HTTP)", () => {
       const provider = createHttpProvider({
         kind: "payment",
         url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
         sign: () => ({ authorization: "Bearer t" }),
-        timeoutMs: 2000,
         interpret: () => ({ externalRef: "" }),
+        timeoutMs: 2000,
       });
       await assert.rejects(
         () => provider.submit(terms()),
@@ -238,11 +281,12 @@ describe("http provider transport (signed JSON over HTTP)", () => {
       const provider = createHttpProvider({
         kind: "payment",
         url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
         sign: () => ({ authorization: "Bearer t" }),
-        timeoutMs: 2000,
         interpret: () => {
           throw new Error("terms do not match the receipt");
         },
+        timeoutMs: 2000,
       });
       await assert.rejects(
         () => provider.submit(terms()),
@@ -261,13 +305,14 @@ describe("http provider transport (signed JSON over HTTP)", () => {
       const provider = createHttpProvider({
         kind: "payment",
         url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
         sign: () => ({ authorization: "Bearer t" }),
-        timeoutMs: 2000,
         interpret: () => ({ externalRef: "pi_123" }),
         verifyAttestation: (response, expected) =>
           response["capabilityId"] === expected.capabilityId
             ? { ok: true }
             : { ok: false, reason: "capability id mismatch" },
+        timeoutMs: 2000,
       });
       await assert.rejects(
         () =>
@@ -289,6 +334,7 @@ describe("http provider transport (signed JSON over HTTP)", () => {
     const provider = createHttpProvider({
       kind: "payment",
       url: `${dead}/v1/payments`,
+      allowInsecureHttp: true,
       sign: () => ({ authorization: "Bearer t" }),
       interpret: () => ({ externalRef: "should-never-happen" }),
       timeoutMs: 2000,
@@ -304,11 +350,41 @@ describe("http provider transport (signed JSON over HTTP)", () => {
       const provider = createHttpProvider({
         kind: "payment",
         url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
         sign: () => ({ authorization: "Bearer t" }),
-        timeoutMs: 60,
         interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 60,
       });
       await assert.rejects(() => provider.submit(terms()), /timed out/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a redirect is refused, not followed", async () => {
+    const server = await startServer((req, res) => {
+      if (req.url === "/v1/payments") {
+        res.writeHead(302, { location: "/v1/elsewhere" });
+        res.end();
+        return;
+      }
+      json(res, 200, { id: "pi_123" });
+    });
+    try {
+      const provider = createHttpProvider({
+        kind: "payment",
+        url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
+        sign: () => ({ authorization: "Bearer t" }),
+        interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 2000,
+      });
+      await assert.rejects(() => provider.submit(terms()), /request failed/);
+      assert.equal(
+        server.requests.length,
+        1,
+        "the redirect target must never be requested"
+      );
     } finally {
       await server.close();
     }
@@ -322,9 +398,10 @@ describe("http provider transport (signed JSON over HTTP)", () => {
       const provider = createHttpProvider({
         kind: "payment",
         url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
         sign: () => ({ authorization: "Bearer t" }),
-        timeoutMs: 2000,
         interpret: (response) => ({ externalRef: response["id"] as string }),
+        timeoutMs: 2000,
       });
       const sub = await provider.submit(terms());
       assert.equal(
@@ -376,9 +453,10 @@ describe("http provider transport (signed JSON over HTTP)", () => {
       const provider = createHttpProvider({
         kind: "payment",
         url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
         sign: () => ({ authorization: "Bearer t" }),
-        timeoutMs: 2000,
         interpret: (response) => ({ externalRef: response["id"] as string }),
+        timeoutMs: 2000,
       });
       await provider.submit(terms());
     } finally {
@@ -398,11 +476,12 @@ describe("http provider transport (signed JSON over HTTP)", () => {
       const provider = createHttpProvider({
         kind: "travel",
         url: `${server.url}/v1/bookings`,
+        allowInsecureHttp: true,
         method: "PUT",
         headers: { "x-api-version": "2026-10-01" },
         sign: () => ({ authorization: "Bearer t" }),
-        timeoutMs: 2000,
         interpret: (response) => ({ externalRef: response["id"] as string }),
+        timeoutMs: 2000,
       });
       const sub = await provider.submit({
         ...terms(),
@@ -416,5 +495,206 @@ describe("http provider transport (signed JSON over HTTP)", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("refuses a header value with a CR or LF", async () => {
+    const server = await startServer((_req, res) => {
+      json(res, 200, { id: "pi_123" });
+    });
+    try {
+      const provider = createHttpProvider({
+        kind: "payment",
+        url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
+        sign: () => ({ authorization: "Bearer ok\r\nX-Injected: 1" }),
+        interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 2000,
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /invalid header value/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses a header name with a colon", async () => {
+    const server = await startServer((_req, res) => {
+      json(res, 200, { id: "pi_123" });
+    });
+    try {
+      const provider = createHttpProvider({
+        kind: "payment",
+        url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
+        sign: () => ({ "x-bad:name": "value" }),
+        interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 2000,
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /invalid header name/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses an oversized header value", async () => {
+    const server = await startServer((_req, res) => {
+      json(res, 200, { id: "pi_123" });
+    });
+    try {
+      const provider = createHttpProvider({
+        kind: "payment",
+        url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
+        sign: () => ({ "x-long": "v".repeat(5000) }),
+        interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 2000,
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /header value too long/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses a host-supplied content type", async () => {
+    const server = await startServer((_req, res) => {
+      json(res, 200, { id: "pi_123" });
+    });
+    try {
+      const provider = createHttpProvider({
+        kind: "payment",
+        url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
+        headers: { "Content-Type": "text/plain" },
+        sign: () => ({ authorization: "Bearer t" }),
+        interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 2000,
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /the adapter sets the content type/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses a context that carries a binding field", async () => {
+    const server = await startServer((_req, res) => {
+      json(res, 200, { id: "pi_123" });
+    });
+    try {
+      const provider = createHttpProvider({
+        kind: "payment",
+        url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
+        sign: () => ({ authorization: "Bearer t" }),
+        interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 2000,
+      });
+      await assert.rejects(
+        () =>
+          provider.submit({
+            ...terms(),
+            context: { amount: 500, capabilityId: "spoofed" },
+          }),
+        /must not carry capabilityId/
+      );
+      await assert.rejects(
+        () =>
+          provider.submit({
+            ...terms(),
+            context: { amount: 500, termsDigest: "spoofed" },
+          }),
+        /must not carry termsDigest/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("checkRequest rejects a short capability id on the direct-call path", async () => {
+    const server = await startServer((_req, res) => {
+      json(res, 200, { id: "pi_123" });
+    });
+    try {
+      const provider = createHttpProvider({
+        kind: "payment",
+        url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
+        sign: () => ({ authorization: "Bearer t" }),
+        interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 2000,
+      });
+      await assert.rejects(
+        () => provider.submit({ ...terms(), capabilityId: "short" }),
+        /capabilityId required/
+      );
+      await assert.rejects(
+        () => provider.submit({ ...terms(), termsDigest: "ab" }),
+        /termsDigest required/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses an oversized response body", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "pi_123", pad: "x".repeat(1_500_000) }));
+    });
+    try {
+      const provider = createHttpProvider({
+        kind: "payment",
+        url: `${server.url}/v1/payments`,
+        allowInsecureHttp: true,
+        sign: () => ({ authorization: "Bearer t" }),
+        interpret: () => ({ externalRef: "should-never-happen" }),
+        timeoutMs: 5000,
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /response body exceeds/
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses an http endpoint unless the host opts in", () => {
+    assert.throws(
+      () =>
+        createHttpProvider({
+          kind: "payment",
+          url: "http://example.invalid/v1/payments",
+          sign: () => ({ authorization: "Bearer t" }),
+          interpret: () => ({ externalRef: "x" }),
+        }),
+      /must be https/
+    );
+    assert.throws(
+      () =>
+        createHttpProvider({
+          kind: "payment",
+          url: "ftp://example.invalid/v1/payments",
+          sign: () => ({ authorization: "Bearer t" }),
+          interpret: () => ({ externalRef: "x" }),
+        }),
+      /must be https/
+    );
   });
 });

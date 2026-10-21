@@ -247,22 +247,37 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   them. The credential stays in the host's `sign` callback; the adapter
   only forwards the headers it returned. A non-2xx, an unparsable body, a
   missing external reference, a refused attestation, a network error, a
-  timeout, and a refused redirect are all failed effects — the adapter never
-  invents a success. The response body is never logged and never copied
-  into an error message; `onDiagnostic` reports phase and status only. The
+  timeout, a refused redirect, and an oversized body (over 1 MiB) are all
+  failed effects — the adapter never invents a success. The response body
+  is never logged and never copied into an error message; `onDiagnostic`
+  reports phase and status only; a server string that reaches an error
+  message is stripped of control characters and truncated to 80. The
   host's `interpret` owns the response mapping, so a host that reads a
   credential out of the response and puts it in an error message would leak
-  it — host duty. x402 speaks Protocol Version 2 (`PAYMENT-REQUIRED` /
-  `PAYMENT-SIGNATURE` / `PAYMENT-RESPONSE`; `X-PAYMENT` is v1 and is not
-  sent, `WWW-Authenticate` is not part of x402): the host states the exact
+  it — host duty. Host-supplied headers are checked before the socket
+  (CR/LF, a colon in a name, a name over 64 characters, a value over 4096,
+  `host`, `content-length`, `transfer-encoding`, `connection`, and any
+  `content-type` are refused); the endpoint url must be `https:` unless the
+  host sets `allowInsecureHttp`, and it is a host constant, never a request
+  term. The whole submit has one deadline (30s by default) and the
+  `Idempotency-Key` header defaults to the terms digest. x402 speaks
+  Protocol Version 2 (`PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE` /
+  `PAYMENT-RESPONSE`; `X-PAYMENT` is v1 and is not sent,
+  `WWW-Authenticate` is not part of x402): the host states the exact
   authorised amount in the asset's atomic units and the adapter never
   converts, scales, or infers units, so a challenge for more, another
-  amount, another scheme, or another network is refused before `settle` is
-  called and nothing is paid. One challenge, one settlement attempt, one
-  retry — a payment is never retried by the adapter. Rail results stay
-  evidence: hosts run the independent settlement checks before trusting a
-  reference (proof: `tests/http-provider.test.ts`,
-  `tests/x402-provider.test.ts`).
+  amount, another scheme, another network, another asset, another payee,
+  or another resource is refused before `settle` is called and nothing is
+  paid; the wire payload always carries the authorised asset and payee,
+  never the server's. The settlement is checked fail-closed (`success` must
+  be true, the transaction must be there, the network must be the
+  authorised one, the payer and the amount must match when sent) and is
+  handed to the host through `onSettlement` for the independent
+  `checkSettlement`; a settlement that fails is a failed effect and the
+  host reconciles out of band. One challenge, one signature, one retry — a
+  payment is never retried by the adapter, and `settle` only signs: it
+  never broadcasts and never moves value. Rail results stay evidence
+  (proof: `tests/http-provider.test.ts`, `tests/x402-provider.test.ts`).
 
 ## Vault / agent contract / providers (P0 slices 1–3)
 
