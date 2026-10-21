@@ -16,15 +16,23 @@ import { createX402Provider, type X402Challenge } from "../src/index.js";
  * no `WWW-Authenticate`.
  *
  * The refusals matter most here: a challenge for another amount, another
- * network, another scheme, a failed settlement, a missing transaction —
- * none of them may reach a payment.
+ * network, another scheme, another asset, another payee, another resource,
+ * a failed settlement, a missing transaction — none of them may reach a
+ * payment.
  */
 
 const CAPABILITY_ID = "cid-x402-0001";
 const TERMS_DIGEST = "cd".repeat(32);
 const AUTHORIZED_AMOUNT = "10000";
 const AUTHORIZED_NETWORK = "eip155:84532";
+const AUTHORIZED_ASSET = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const PAYEE = "0x209693Bc6afc0C5328bA36FaF03C514EF312287C";
+const PAYER = "0x857b06519E91e3A54538791bDbb0E22373e36b66";
+const OTHER_ASSET = "0x0000000000000000000000000000000000000dead";
+const OTHER_PAYEE = "0x0000000000000000000000000000000000000beef";
+/** The resource the host expects to be challenged for. */
+const RESOURCE = "https://example.invalid/v1/data";
+const OTHER_RESOURCE = "https://example.invalid/v1/other";
 
 interface Captured {
   readonly method: string;
@@ -83,7 +91,7 @@ function accept(
     scheme: "exact",
     network: AUTHORIZED_NETWORK,
     amount: AUTHORIZED_AMOUNT,
-    asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    asset: AUTHORIZED_ASSET,
     payTo: PAYEE,
     maxTimeoutSeconds: 60,
     extra: { name: "USDC", version: "2" },
@@ -116,7 +124,7 @@ function paymentResponse(overrides: Record<string, unknown> = {}): string {
       success: true,
       transaction: "0x1234567890abcdef",
       network: AUTHORIZED_NETWORK,
-      payer: "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+      payer: PAYER,
       ...overrides,
     }),
     "utf8"
@@ -134,28 +142,32 @@ function terms() {
     context: {
       amount: 10000,
       currency: "USDC",
-      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      asset: AUTHORIZED_ASSET,
       network: AUTHORIZED_NETWORK,
       scheme: "exact",
     },
   };
 }
 
-function providerOptions(
-  serverUrl: string,
-  settle: (challenge: X402Challenge) => Promise<{
-    payload: Record<string, unknown>;
-    amount?: string;
-    network?: string;
-    reference?: string;
-  }>
-) {
+type Settle = (challenge: X402Challenge) => Promise<{
+  payload: Record<string, unknown>;
+  amount?: string;
+  network?: string;
+  asset?: string;
+  reference?: string;
+}>;
+
+function providerOptions(serverUrl: string, settle: Settle) {
   return {
     url: `${serverUrl}/v1/data`,
     authorizedAmount: AUTHORIZED_AMOUNT,
     authorizedNetwork: AUTHORIZED_NETWORK,
+    authorizedAsset: AUTHORIZED_ASSET,
+    authorizedPayTo: PAYEE,
+    resource: RESOURCE,
     settle,
     timeoutMs: 2000,
+    allowInsecureHttp: true,
   };
 }
 
@@ -166,12 +178,11 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 
 describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => {
   it("settles once, retries once with PAYMENT-SIGNATURE, and returns the transaction", async () => {
-    let baseUrl = "";
     const server = await startServer((req, res) => {
       if (req.headers["payment-signature"] === undefined) {
         res.writeHead(402, {
           "content-type": "application/json",
-          "payment-required": paymentRequired([accept()], `${baseUrl}/v1/data`),
+          "payment-required": paymentRequired([accept()], RESOURCE),
         });
         res.end(JSON.stringify({ error: "payment required" }));
         return;
@@ -182,7 +193,6 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
       });
       res.end("{}");
     });
-    baseUrl = server.url;
     try {
       const challenges: X402Challenge[] = [];
       const provider = createX402Provider(
@@ -192,7 +202,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
             payload: {
               signature: "0x2d6a75",
               authorization: {
-                from: "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+                from: PAYER,
                 to: PAYEE,
                 value: AUTHORIZED_AMOUNT,
                 validAfter: "1740672089",
@@ -216,19 +226,21 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
         "string",
         "the retry must carry PAYMENT-SIGNATURE"
       );
+      assert.equal(second.headers["idempotency-key"], TERMS_DIGEST);
       // The retry carries the same authorized terms.
       assert.deepEqual(JSON.parse(first.body), JSON.parse(second.body));
       assert.deepEqual(JSON.parse(first.body), {
         amount: 10000,
         currency: "USDC",
-        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        asset: AUTHORIZED_ASSET,
         network: AUTHORIZED_NETWORK,
         scheme: "exact",
         capabilityId: CAPABILITY_ID,
         termsDigest: TERMS_DIGEST,
       });
 
-      // The wire payload is the v2 PaymentPayload shape.
+      // The wire payload is the v2 PaymentPayload shape, and it carries the
+      // AUTHORISED asset and payee.
       const wire = JSON.parse(
         Buffer.from(
           second.headers["payment-signature"] as string,
@@ -240,7 +252,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
         scheme: "exact",
         network: AUTHORIZED_NETWORK,
         amount: AUTHORIZED_AMOUNT,
-        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        asset: AUTHORIZED_ASSET,
         payTo: PAYEE,
         maxTimeoutSeconds: 60,
         extra: { name: "USDC", version: "2" },
@@ -252,6 +264,8 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
       assert.equal(challenge.accepted.amount, AUTHORIZED_AMOUNT);
       assert.equal(challenge.accepted.network, AUTHORIZED_NETWORK);
       assert.equal(challenge.accepted.scheme, "exact");
+      assert.equal(challenge.accepted.asset, AUTHORIZED_ASSET);
+      assert.equal(challenge.accepted.payTo, PAYEE);
       assert.equal(challenge.accepts.length, 1);
 
       assert.equal(sub.kind, "payment");
@@ -293,7 +307,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
         "content-type": "application/json",
         "payment-required": paymentRequired(
           [accept({ amount: "50000" })],
-          "http://x/v1/data"
+          RESOURCE
         ),
       });
       res.end("{}");
@@ -323,7 +337,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
         "content-type": "application/json",
         "payment-required": paymentRequired(
           [accept({ network: "eip155:1" })],
-          "http://x/v1/data"
+          RESOURCE
         ),
       });
       res.end("{}");
@@ -347,13 +361,100 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
     }
   });
 
+  it("a challenge naming a DIFFERENT asset is refused and settles nothing", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired(
+          [accept({ asset: OTHER_ASSET })],
+          RESOURCE
+        ),
+      });
+      res.end("{}");
+    });
+    try {
+      let settled = 0;
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => {
+          settled += 1;
+          return { payload: { signature: "0x1" } };
+        })
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /names another asset/
+      );
+      assert.equal(settled, 0, "nothing may be settled");
+      assert.equal(server.requests.length, 1, "no payment may be sent");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a challenge naming a DIFFERENT payee is refused and settles nothing", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired(
+          [accept({ payTo: OTHER_PAYEE })],
+          RESOURCE
+        ),
+      });
+      res.end("{}");
+    });
+    try {
+      let settled = 0;
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => {
+          settled += 1;
+          return { payload: { signature: "0x1" } };
+        })
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /names another payee/
+      );
+      assert.equal(settled, 0, "nothing may be settled");
+      assert.equal(server.requests.length, 1, "no payment may be sent");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a challenge for a different resource url is refused and settles nothing", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired([accept()], OTHER_RESOURCE),
+      });
+      res.end("{}");
+    });
+    try {
+      let settled = 0;
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => {
+          settled += 1;
+          return { payload: { signature: "0x1" } };
+        })
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /different resource/
+      );
+      assert.equal(settled, 0, "nothing may be settled");
+      assert.equal(server.requests.length, 1, "no payment may be sent");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("a challenge for a different amount is refused", async () => {
     const server = await startServer((_req, res) => {
       res.writeHead(402, {
         "content-type": "application/json",
         "payment-required": paymentRequired(
           [accept({ amount: "9999" })],
-          "http://x/v1/data"
+          RESOURCE
         ),
       });
       res.end("{}");
@@ -383,7 +484,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
         "content-type": "application/json",
         "payment-required": paymentRequired(
           [accept({ scheme: "upto" })],
-          "http://x/v1/data"
+          RESOURCE
         ),
       });
       res.end("{}");
@@ -412,7 +513,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
       if (req.headers["payment-signature"] === undefined) {
         res.writeHead(402, {
           "content-type": "application/json",
-          "payment-required": paymentRequired([accept()], "http://x/v1/data"),
+          "payment-required": paymentRequired([accept()], RESOURCE),
         });
         res.end("{}");
         return;
@@ -440,7 +541,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
       if (req.headers["payment-signature"] === undefined) {
         res.writeHead(402, {
           "content-type": "application/json",
-          "payment-required": paymentRequired([accept()], "http://x/v1/data"),
+          "payment-required": paymentRequired([accept()], RESOURCE),
         });
         res.end("{}");
         return;
@@ -471,7 +572,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
       if (req.headers["payment-signature"] === undefined) {
         res.writeHead(402, {
           "content-type": "application/json",
-          "payment-required": paymentRequired([accept()], "http://x/v1/data"),
+          "payment-required": paymentRequired([accept()], RESOURCE),
         });
         res.end("{}");
         return;
@@ -494,8 +595,67 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
       );
       await assert.rejects(
         () => provider.submit(terms()),
-        /settlement failed: insufficient_funds/
+        /the settlement failed: insufficient_funds/
       );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a settlement with NO success flag is a failed effect", async () => {
+    const server = await startServer((req, res) => {
+      if (req.headers["payment-signature"] === undefined) {
+        res.writeHead(402, {
+          "content-type": "application/json",
+          "payment-required": paymentRequired([accept()], RESOURCE),
+        });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "payment-response": paymentResponse({ success: undefined }),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        }))
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /does not report success/
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a settlement with no network is a failed effect", async () => {
+    const server = await startServer((req, res) => {
+      if (req.headers["payment-signature"] === undefined) {
+        res.writeHead(402, {
+          "content-type": "application/json",
+          "payment-required": paymentRequired([accept()], RESOURCE),
+        });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "payment-response": paymentResponse({ network: undefined }),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        }))
+      );
+      await assert.rejects(() => provider.submit(terms()), /names no network/);
     } finally {
       await server.close();
     }
@@ -506,7 +666,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
       if (req.headers["payment-signature"] === undefined) {
         res.writeHead(402, {
           "content-type": "application/json",
-          "payment-required": paymentRequired([accept()], "http://x/v1/data"),
+          "payment-required": paymentRequired([accept()], RESOURCE),
         });
         res.end("{}");
         return;
@@ -526,6 +686,180 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
       await assert.rejects(
         () => provider.submit(terms()),
         /different network than the authorised one/
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a settlement with a different payer is a failed effect when the host declared one", async () => {
+    const server = await startServer((req, res) => {
+      if (req.headers["payment-signature"] === undefined) {
+        res.writeHead(402, {
+          "content-type": "application/json",
+          "payment-required": paymentRequired([accept()], RESOURCE),
+        });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "payment-response": paymentResponse({ payer: OTHER_PAYEE }),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider({
+        ...providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        })),
+        authorizedPayer: PAYER,
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /different payer than the authorised one/
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a settlement with a different amount is a failed effect", async () => {
+    const server = await startServer((req, res) => {
+      if (req.headers["payment-signature"] === undefined) {
+        res.writeHead(402, {
+          "content-type": "application/json",
+          "payment-required": paymentRequired([accept()], RESOURCE),
+        });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "payment-response": paymentResponse({ amount: "50000" }),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        }))
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /different amount than the authorised one/
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a settlement error reason cannot smuggle a newline into the message", async () => {
+    const server = await startServer((req, res) => {
+      if (req.headers["payment-signature"] === undefined) {
+        res.writeHead(402, {
+          "content-type": "application/json",
+          "payment-required": paymentRequired([accept()], RESOURCE),
+        });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "payment-response": paymentResponse({
+          success: false,
+          errorReason: "insufficient\nfunds forged",
+          transaction: "",
+        }),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        }))
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        (err: Error) => {
+          assert.equal(err.message.includes("\n"), false);
+          assert.equal(err.message.includes("\r"), false);
+          assert.ok(err.message.length < 200);
+          return true;
+        }
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("the host receives the checked settlement through onSettlement", async () => {
+    const server = await startServer((req, res) => {
+      if (req.headers["payment-signature"] === undefined) {
+        res.writeHead(402, {
+          "content-type": "application/json",
+          "payment-required": paymentRequired([accept()], RESOURCE),
+        });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "payment-response": paymentResponse(),
+      });
+      res.end("{}");
+    });
+    try {
+      const seen: Record<string, unknown>[] = [];
+      const provider = createX402Provider({
+        ...providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        })),
+        onSettlement: (settlement) => {
+          seen.push(settlement);
+        },
+      });
+      const sub = await provider.submit(terms());
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0]?.["success"], true);
+      assert.equal(seen[0]?.["transaction"], "0x1234567890abcdef");
+      assert.equal(seen[0]?.["network"], AUTHORIZED_NETWORK);
+      assert.equal(sub.externalRef, "0x1234567890abcdef");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a host that rejects the settlement fails the effect", async () => {
+    const server = await startServer((req, res) => {
+      if (req.headers["payment-signature"] === undefined) {
+        res.writeHead(402, {
+          "content-type": "application/json",
+          "payment-required": paymentRequired([accept()], RESOURCE),
+        });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "payment-response": paymentResponse(),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider({
+        ...providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        })),
+        onSettlement: () => {
+          throw new Error("payer mismatch");
+        },
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /rejected by the host: payer mismatch/
       );
     } finally {
       await server.close();
@@ -560,7 +894,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
     const server = await startServer((_req, res) => {
       res.writeHead(402, {
         "content-type": "application/json",
-        "payment-required": paymentRequired([accept()], "http://x/v1/data"),
+        "payment-required": paymentRequired([accept()], RESOURCE),
       });
       res.end("{}");
     });
@@ -581,11 +915,120 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
     }
   });
 
+  it("a payment that declares another asset is refused before it is sent", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired([accept()], RESOURCE),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+          asset: OTHER_ASSET,
+        }))
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /payment asset differs from the authorised asset/
+      );
+      assert.equal(server.requests.length, 1, "no payment may be sent");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a payment that declares another network is refused before it is sent", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired([accept()], RESOURCE),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+          network: "eip155:1",
+        }))
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /payment network differs from the authorised network/
+      );
+      assert.equal(server.requests.length, 1, "no payment may be sent");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a response echoing another transaction is a failed effect", async () => {
+    const server = await startServer((req, res) => {
+      if (req.headers["payment-signature"] === undefined) {
+        res.writeHead(402, {
+          "content-type": "application/json",
+          "payment-required": paymentRequired([accept()], RESOURCE),
+        });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "payment-response": paymentResponse({ transaction: "0xother" }),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+          reference: "0x1234567890abcdef",
+        }))
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /echoes a different transaction/
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a signed authorization for another payee is refused before it is sent", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired([accept()], RESOURCE),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: {
+            signature: "0x1",
+            authorization: { to: OTHER_PAYEE, value: AUTHORIZED_AMOUNT },
+          },
+        }))
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /payment payee differs from the authorised payee/
+      );
+      assert.equal(server.requests.length, 1, "no payment may be sent");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("a signed authorization for another amount is refused before it is sent", async () => {
     const server = await startServer((_req, res) => {
       res.writeHead(402, {
         "content-type": "application/json",
-        "payment-required": paymentRequired([accept()], "http://x/v1/data"),
+        "payment-required": paymentRequired([accept()], RESOURCE),
       });
       res.end("{}");
     });
@@ -608,18 +1051,22 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
     }
   });
 
-  it("falls back to the challenge in the JSON body when the header is absent", async () => {
+  it("falls back to a v2 challenge in the JSON body when the header is absent", async () => {
     const server = await startServer((req, res) => {
       if (req.headers["payment-signature"] === undefined) {
         json(res, 402, {
-          x402Version: 1,
-          error: "X-PAYMENT header is required",
-          resource: { url: "http://x/v1/data" },
+          x402Version: 2,
+          resource: { url: RESOURCE },
           accepts: [accept()],
         });
         return;
       }
-      json(res, 200, { transaction: "0xbody" });
+      json(res, 200, {
+        success: true,
+        transaction: "0xbody",
+        network: AUTHORIZED_NETWORK,
+        payer: PAYER,
+      });
     });
     try {
       const provider = createX402Provider(
@@ -634,28 +1081,64 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
     }
   });
 
-  it("refuses a challenge for a resource the host did not name", async () => {
-    const server = await startServer((_req, res) => {
-      res.writeHead(402, {
-        "content-type": "application/json",
-        "payment-required": paymentRequired([accept()], "http://x/other"),
+  it("accepts a v1 challenge body (paymentRequirements, maxAmountRequired)", async () => {
+    const server = await startServer((req, res) => {
+      if (req.headers["payment-signature"] === undefined) {
+        json(res, 402, {
+          x402Version: 1,
+          error: "X-PAYMENT header is required",
+          resource: { url: RESOURCE },
+          paymentRequirements: [
+            {
+              scheme: "exact",
+              network: AUTHORIZED_NETWORK,
+              maxAmountRequired: AUTHORIZED_AMOUNT,
+              asset: AUTHORIZED_ASSET,
+              payTo: PAYEE,
+              maxTimeoutSeconds: 60,
+            },
+          ],
+        });
+        return;
+      }
+      json(res, 200, {
+        success: true,
+        transaction: "0xv1",
+        network: AUTHORIZED_NETWORK,
+        payer: PAYER,
       });
-      res.end("{}");
     });
     try {
-      let settled = 0;
-      const provider = createX402Provider({
-        ...providerOptions(server.url, async () => {
-          settled += 1;
-          return { payload: { signature: "0x1" } };
-        }),
-        resource: "http://x/v1/data",
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        }))
+      );
+      const sub = await provider.submit(terms());
+      assert.equal(sub.externalRef, "0xv1");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses a challenge body with an unsupported x402 version", async () => {
+    const server = await startServer((_req, res) => {
+      json(res, 402, {
+        x402Version: 3,
+        resource: { url: RESOURCE },
+        accepts: [accept()],
       });
+    });
+    try {
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        }))
+      );
       await assert.rejects(
         () => provider.submit(terms()),
-        /different resource/
+        /unsupported x402 version/
       );
-      assert.equal(settled, 0);
     } finally {
       await server.close();
     }
@@ -665,7 +1148,7 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
     const server = await startServer((_req, res) => {
       res.writeHead(402, {
         "content-type": "application/json",
-        "payment-required": paymentRequired([accept()], "http://x/v1/data"),
+        "payment-required": paymentRequired([accept()], RESOURCE),
       });
       res.end("{}");
     });
@@ -691,12 +1174,152 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
     }
   });
 
+  it("checkRequest rejects a short capability id on the direct-call path", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired([accept()], RESOURCE),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        }))
+      );
+      await assert.rejects(
+        () => provider.submit({ ...terms(), capabilityId: "short" }),
+        /capabilityId required/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses a header value with a CR or LF", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired([accept()], RESOURCE),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider({
+        ...providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        })),
+        headers: { "x-bad": "ok\r\nX-Injected: 1" },
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /invalid header value/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses a header name with a colon", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired([accept()], RESOURCE),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider({
+        ...providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        })),
+        headers: { "x-bad:name": "value" },
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /invalid header name/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses an oversized header value", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired([accept()], RESOURCE),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider({
+        ...providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        })),
+        headers: { "x-long": "v".repeat(5000) },
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /header value too long/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses a host-supplied content type", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired([accept()], RESOURCE),
+      });
+      res.end("{}");
+    });
+    try {
+      const provider = createX402Provider({
+        ...providerOptions(server.url, async () => ({
+          payload: { signature: "0x1" },
+        })),
+        headers: { "Content-Type": "text/plain" },
+      });
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /the adapter sets the content type/
+      );
+      assert.equal(server.requests.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses an http endpoint unless the host opts in", () => {
+    assert.throws(
+      () =>
+        createX402Provider({
+          url: "http://example.invalid/v1/data",
+          authorizedAmount: AUTHORIZED_AMOUNT,
+          authorizedNetwork: AUTHORIZED_NETWORK,
+          authorizedAsset: AUTHORIZED_ASSET,
+          authorizedPayTo: PAYEE,
+          resource: "http://example.invalid/v1/data",
+          settle: async () => ({ payload: { signature: "0x1" } }),
+        }),
+      /must be https/
+    );
+  });
+
   it("verify rejects a submission whose capability id or terms digest do not match", async () => {
     const server = await startServer((req, res) => {
       if (req.headers["payment-signature"] === undefined) {
         res.writeHead(402, {
           "content-type": "application/json",
-          "payment-required": paymentRequired([accept()], "http://x/v1/data"),
+          "payment-required": paymentRequired([accept()], RESOURCE),
         });
         res.end("{}");
         return;
