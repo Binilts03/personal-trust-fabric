@@ -31,6 +31,14 @@
       "types": "./dist/src/adapters/providers.d.ts",
       "default": "./dist/src/adapters/providers.js"
     },
+    "./adapters/http": {
+      "types": "./dist/src/adapters/http-provider.d.ts",
+      "default": "./dist/src/adapters/http-provider.js"
+    },
+    "./adapters/x402": {
+      "types": "./dist/src/adapters/x402-provider.d.ts",
+      "default": "./dist/src/adapters/x402-provider.js"
+    },
     "./vault": {
       "types": "./dist/src/store/vault.d.ts",
       "default": "./dist/src/store/vault.js"

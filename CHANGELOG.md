@@ -13,6 +13,7 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
+- Two HTTP provider transports that speak real protocols: `createHttpProvider` signs a canonical JSON body and posts it to any REST endpoint (the credential stays in the host's `sign` callback), and `createX402Provider` speaks the x402 HTTP 402 flow at Protocol Version 2 (`PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE`). The x402 amount is in the asset's atomic units and the core spec does not define the decimals, so the host supplies the exact authorised amount and the adapter compares it for equality and never converts units. It refuses before settling anything when the challenge asks for more than the user authorised, or when the network, scheme, or signed value differs from the approved terms. Both ship on the `./adapters/http` and `./adapters/x402` subpaths and are tested against a real local HTTP server.
 - P3P wire-shape alignment (SDK 1.3.0): `normalizeP3pReceipt` maps real
   `decodeReceipt` output (`status`/`reference`/`settlement`/`challengeId`/
   `timestamp`/`paymentMethod`) to PTF terms, dropping `paymentGateway`
