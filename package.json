@@ -31,6 +31,14 @@
       "types": "./dist/src/adapters/providers.d.ts",
       "default": "./dist/src/adapters/providers.js"
     },
+    "./adapters/http": {
+      "types": "./dist/src/adapters/http-provider.d.ts",
+      "default": "./dist/src/adapters/http-provider.js"
+    },
+    "./adapters/x402": {
+      "types": "./dist/src/adapters/x402-provider.d.ts",
+      "default": "./dist/src/adapters/x402-provider.js"
+    },
     "./vault": {
       "types": "./dist/src/store/vault.d.ts",
       "default": "./dist/src/store/vault.js"
@@ -43,6 +51,7 @@
   },
   "bin": {
     "ptf": "./dist/src/cli.js",
+    "personal-trust-fabric": "./dist/src/cli.js",
     "ptf-mcp-server": "./dist/src/mcp-server.js",
     "ptf-pdp-server": "./dist/src/pdp-server.js"
   },
@@ -89,7 +98,9 @@
     "bench": "node scripts/bench.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run eval",
     "dev-local": "bash scripts/dev-local.sh up",
-    "prepare": "husky || true"
+    "verify:package": "node scripts/verify-package.mjs",
+    "prepare": "npm run build && npm run hooks",
+    "hooks": "husky || true"
   },
   "devDependencies": {
     "@types/node": "^26.5.0",

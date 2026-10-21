@@ -59,13 +59,29 @@ This is a working, tested reference implementation on the road to peer review �
 
 **What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
 
-**What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in `docs/audit/limits.md` — the file lists what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
+**What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), or an HSM-backed custodian (file keystore reference). Every ceiling is documented in `docs/audit/limits.md` — the file lists what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
 
 ## Try it in 60 seconds
 
 Requires Node 22+.
 
 ```sh
+npm install personal-trust-fabric
+```
+
+The first release is not on npm yet, so today you install from the repository:
+
+```sh
+npm install github:Binilts03/personal-trust-fabric
+```
+
+Either way you get a working package: the `ptf`, `ptf-mcp-server` and
+`ptf-pdp-server` binaries, the curated entry points, and the `./privacy`,
+`./providers` and `./vault` subpaths. To work on the library itself:
+
+```sh
+git clone https://github.com/Binilts03/personal-trust-fabric.git
+cd personal-trust-fabric
 npm install
 npm run typecheck && npm test && npm run eval
 ```

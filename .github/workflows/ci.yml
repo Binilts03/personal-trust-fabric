@@ -25,6 +25,10 @@ jobs:
       # One implementation shared with scripts/harness.sh: seam rules cannot drift.
       - name: seam + zero-dep checks (tests via public barrel; bins exempt)
         run: node scripts/check-seams.mjs
+      # What a consumer actually receives: the export map, the bins, and an
+      # install of the tarball into a clean directory.
+      - name: package surface (install the tarball, import the entry point)
+        run: npm run verify:package -- --install
   docs:
     runs-on: ubuntu-latest
     permissions:
