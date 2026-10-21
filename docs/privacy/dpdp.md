@@ -1,3 +1,10 @@
+---
+layout: default
+title: DPDP privacy enforcement profile
+nav_order: 6
+permalink: /privacy/dpdp/
+---
+
 # DPDP privacy enforcement profile (experimental)
 
 PTF can help an AI host enforce **configured technical privacy controls** at runtime. It does not determine whether a controller/Data Fiduciary has a lawful processing basis or make any organisation compliant with the Digital Personal Data Protection Act, 2023.

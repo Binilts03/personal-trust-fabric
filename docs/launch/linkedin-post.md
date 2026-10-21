@@ -1,3 +1,10 @@
+---
+layout: default
+title: Launch post
+nav_order: 1
+permalink: /launch/post/
+---
+
 # Launch post (LinkedIn)
 
 Drafted for the first public release. Two lengths: the short one for the

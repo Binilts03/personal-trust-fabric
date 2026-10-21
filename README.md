@@ -59,6 +59,8 @@ This is a working, tested reference implementation on the road to peer review �
 
 **What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
 
+On top of that there is now a **privacy plane** for India's DPDP Act and Rules: a narrowing gate beside Authority (never a source of it), per-attempt Processing Events as evidence, an operator CLI, and a **host kit** so a host adopts the whole ordering with one call and proves it with a conformance suite. Two HTTP transports (signed JSON over any REST endpoint, and the x402 HTTP 402 flow at protocol version 2) make the effect real. One worked vertical runs the whole thing in a single command: `node examples/dpdp-consent-gateway.mjs`.
+
 **What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), or an HSM-backed custodian (file keystore reference). Every ceiling is documented in `docs/audit/limits.md` — the file lists what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
 
 ## Try it in 60 seconds
@@ -141,6 +143,20 @@ node dist/src/cli.js --help
 ```
 
 One CLI/MCP writer per store (optimistic revision control fails closed instead of last-write-wins). Vault records persist AES-256-GCM-encrypted under a keystore DEK with freshness binding; proposals persist per termsDigest file (restart-safe, idempotent); backups are one unit plus an anchor checkpoint and refuse to merge vintages. See `docs/audit/operations.md` for the container image, health signals, rotation, and restore drills.
+
+## Two commands to see the privacy plane work
+
+```sh
+node examples/dpdp-consent-gateway.mjs
+```
+
+The DPDP vertical: a clinic shares a patient's diagnostic summary with a lab, a consent withdrawal stops the next attempt at the effect boundary, and the erasure is exact and subject-bound. No credentials, no network, no state outside a temporary directory. The walkthrough with the full transcript is in `docs/verticals/dpdp-consent-gateway.md`.
+
+```sh
+node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./privacy-config.json
+```
+
+The conformance suite: nine checks, each one a rule, each one observed against a real encrypted store. It exits non-zero when a check fails, so a host can put it in CI and say, with evidence, that its own agent paths enforce the controls.
 
 ## Architecture (four planes)
 

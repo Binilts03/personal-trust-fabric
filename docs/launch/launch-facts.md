@@ -1,3 +1,10 @@
+---
+layout: default
+title: Launch facts
+nav_order: 2
+permalink: /launch/facts/
+---
+
 # Launch facts
 
 Every factual claim in the launch post, with its source. Retrieved
