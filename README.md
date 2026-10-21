@@ -158,6 +158,16 @@ node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./priva
 
 The conformance suite: nine checks, each one a rule, each one observed against a real encrypted store. It exits non-zero when a check fails, so a host can put it in CI and say, with evidence, that its own agent paths enforce the controls.
 
+```sh
+export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase"
+node dist/src/cli.js --dir ./ptf-store init
+node dist/src/cli.js --dir ./ptf-store keygen --alias you
+node dist/src/cli.js --dir ./ptf-store privacy init
+node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./privacy-config.json
+```
+
+It needs an initialised store (for the keystore and the encrypted privacy state) and the operator's privacy configuration, because that is what the checks are run against.
+
 ## Architecture (four planes)
 
 | Plane               | Location                                           | Responsibility                                                              |

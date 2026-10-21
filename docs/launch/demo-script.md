@@ -56,7 +56,11 @@ The walkthrough with the full transcript is in
 ## Beat 3: prove the host enforces (1 minute)
 
 ```sh
-ptf host-conformance --dir ./ptf-store
+export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase"
+node dist/src/cli.js --dir ./ptf-store init
+node dist/src/cli.js --dir ./ptf-store keygen --alias you
+node dist/src/cli.js --dir ./ptf-store privacy init
+node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./privacy-config.json
 ```
 
 Nine checks, each one a rule, each one printed with the rule it proves. The
