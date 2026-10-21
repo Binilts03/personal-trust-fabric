@@ -1,3 +1,10 @@
+---
+layout: default
+title: The DPDP consent gateway (vertical)
+nav_order: 7
+permalink: /verticals/dpdp-consent-gateway/
+---
+
 # The DPDP consent gateway (vertical)
 
 A worked example for the builder who must **share personal data with a
