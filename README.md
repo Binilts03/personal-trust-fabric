@@ -63,32 +63,26 @@ This is a working, tested reference implementation on the road to peer review �
 
 **What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), or an HSM-backed custodian (file keystore reference). Every ceiling is documented in `docs/audit/limits.md` — the file lists what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
 
-## Try it in 60 seconds
+## Try it locally
 
-Requires Node 22+.
-
-```sh
-npm install personal-trust-fabric
-```
-
-The first release is not on npm yet, so today you install from the repository:
-
-```sh
-npm install github:Binilts03/personal-trust-fabric
-```
-
-Either way you get a working package: the `ptf`, `ptf-mcp-server` and
-`ptf-pdp-server` binaries, the curated entry points, and the `./privacy`,
-`./providers` and `./vault` subpaths. To work on the library itself:
+Requires Node 22+, npm 10+ and Git. **PTF is not published to npm yet.**
+Use a fresh source checkout for the first run rather than attempting
+`npm install personal-trust-fabric` from the registry:
 
 ```sh
 git clone https://github.com/Binilts03/personal-trust-fabric.git
 cd personal-trust-fabric
-npm install
-npm run typecheck && npm test && npm run eval
+npm ci
+npm run build
+node examples/payment-disclosure.mjs
+node dist/src/cli.js --help
 ```
 
-See [use cases](docs/use-cases.md) for implemented reference flows, the optional DPDP-informed example, and their limits.
+The script performs a fake bounded payment and a minimal disclosure: no
+funds move and no external credential is required. The CLI is a real
+operator interface, not only an SDK. For a complete first-run CLI setup
+(including passphrase creation, key registration, an agent grant, and a
+synthetic receipt), follow [Getting Started](docs/getting-started.md).
 
 Decide locally in three steps — grant authority, build the operation, evaluate:
 
@@ -126,23 +120,23 @@ if (!decision.allow) throw new Error("denied");
 // Every allow cites its grant: decision.citations[0].authorityId === "groceries"
 ```
 
-## Operator quickstart
+## Operator CLI
+
+The `ptf` command is backed by `dist/src/cli.js` in a built checkout. Its
+current commands include `init`, `keygen`, `recipient`, `grant`,
+`pay`, `review`, `approve`, `deny`, `revoke`, `audit`,
+`backup`, `restore`, `privacy`, and `host-conformance`.
 
 ```sh
-export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase" && chmod 600 "$HOME/.ptf/passphrase"
-node dist/src/cli.js --dir ./ptf-store init
-node dist/src/cli.js --dir ./ptf-store keygen --alias you
-node dist/src/cli.js --dir ./ptf-store keygen --alias shop
-node dist/src/cli.js --dir ./ptf-store recipient --alias shop --key <hex-from-keygen>
-node dist/src/cli.js --dir ./ptf-store grant --id g1 --principal you --cmd /pay --agent shopper --amount-max 2000 --currency INR --recipient shop
-node dist/src/cli.js --dir ./ptf-store pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes
-node dist/src/cli.js --dir ./ptf-store audit --verify
-node dist/src/cli.js --dir ./ptf-store backup --to ./backups/ptf-store
-node dist/src/cli.js --dir ./ptf-restored restore --from ./backups/ptf-store
 node dist/src/cli.js --help
 ```
 
-One CLI/MCP writer per store (optimistic revision control fails closed instead of last-write-wins). Vault records persist AES-256-GCM-encrypted under a keystore DEK with freshness binding; proposals persist per termsDigest file (restart-safe, idempotent); backups are one unit plus an anchor checkpoint and refuse to merge vintages. See `docs/audit/operations.md` for the container image, health signals, rotation, and restore drills.
+**Begin with the [Getting Started guide](docs/getting-started.md).** It
+creates the missing passphrase file and shows a working local grant and
+fake-payment receipt using supported flags. Do not run the CLI's `pay`
+command expecting real money movement: its default executor is a fake
+reference provider. [CLI reference](docs/cli-reference.md) lists current
+commands and limitations.
 
 ## Use cases and examples
 
