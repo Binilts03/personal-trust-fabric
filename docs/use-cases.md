@@ -18,7 +18,7 @@ optional privacy controls. No industry or jurisdiction defines the product.
 | --- | --- | --- | --- |
 | Bounded payment and minimal disclosure | [payment-disclosure.mjs](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/payment-disclosure.mjs) | Exact-terms grant, recipient proof, fake payment executor, claim subset disclosure | Real payment or production payment-provider adoption |
 | Vault-scoped disclosure and protected credential use | [vault-protected-action.mjs](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/vault-protected-action.mjs) | Purpose/agent-scoped reads, in-host secret use, dry-run proposals, fake provider receipt | Real external credential processing, production custody |
-| **DPDP-informed personal-data processing (optional)** | [Synthetic clinic-to-lab walkthrough](verticals/dpdp-consent-gateway.md) | Configured privacy basis and activity, Authority plus privacy checks, Processing Events, withdrawal checked before subsequent disclosure, subject-scoped PTF vault erasure | Actual clinic/lab systems, legally valid consent, statutory compliance, full privacy-program automation, or coverage of unintegrated host paths |
+| **DPDP-informed personal-data processing (optional)** | [Synthetic clinic-to-lab walkthrough]({{ '/verticals/dpdp-consent-gateway/' | relative_url }}) | Configured privacy basis and activity, Authority plus privacy checks, Processing Events, withdrawal checked before subsequent disclosure, subject-scoped PTF vault erasure | Actual clinic/lab systems, legally valid consent, statutory compliance, full privacy-program automation, or coverage of unintegrated host paths |
 
 Build and run the local flows from a checkout:
 
@@ -50,8 +50,8 @@ PTF does **not** provide a complete consent experience, enterprise-wide
 data discovery and rights-request orchestration, registered Consent Manager
 service, or statutory compliance determination. External processors,
 backups, and independently operating host paths are not automatically
-controlled. Read the [DPDP profile](privacy/dpdp.md), [host kit](host-kit.md),
-and [audit limits](audit/limits.md).
+controlled. Read the [DPDP profile]({{ '/privacy/dpdp/' | relative_url }}), [host kit]({{ '/host-kit/' | relative_url }}),
+and [audit limits]({{ '/audit/limits/' | relative_url }}).
 
 The `ptf host-conformance` CLI checks the library's **reference effect
 boundary**. Integrators need their own host-specific conformance and
