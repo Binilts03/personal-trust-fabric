@@ -1,15 +1,16 @@
 ---
 layout: default
-title: Launch facts
+title: Archived research references
 nav_order: 2
 permalink: /launch/facts/
 ---
 
-# Launch facts
+# Archived research references
 
-Every factual claim in the launch post, with its source. Retrieved
-2026-10-21 unless stated. Anything marked UNVERIFIED must not appear in a
-post.
+These notes were prepared for a public announcement draft that was removed.
+They are **not** a current marketing statement, production deployment
+attestation, or proof of DPDP compliance. Sources were retrieved 2026-10-21
+unless stated; verify all time-sensitive legal and market facts before reuse.
 
 ## India: DPDP Act 2023 and DPDP Rules 2025
 
