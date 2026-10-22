@@ -2,6 +2,8 @@
 
 User-owned authority and protected-use control plane that lets interchangeable agents use precisely bounded pieces of a person's authority, data, and credentials without possessing the underlying secrets. Domains include disclosure, execution (travel, APIs, purchases, payment as one profile), and signing. PTF owns authority, policy, protected state, approval, secret mediation, execution authorization, and audit evidence — never rails, settlement, or PSP functionality.
 
+**Product boundary:** PTF is domain-neutral infrastructure. DPDP-informed personal-data processing is **one optional use case**, using a host-composed privacy extension and a jurisdiction profile. This does not change Authority semantics, turn PTF into a compliance/consent-management product, or make unintegrated effects privacy-enforced. The clinic-to-lab script is a synthetic offline example, not independent production evidence. See `docs/use-cases.md`.
+
 ## Language
 
 ### Authority
