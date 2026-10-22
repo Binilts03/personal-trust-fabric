@@ -65,9 +65,7 @@ the package is installed in the project. The package also ships a
 - Tag the release: `git tag -a v0.1.0 -m "..." && git push origin v0.1.0`.
 - Add the install line to the README status section (it currently says
   "npm pending" for the first release only).
-- Post the announcement. The draft is in
-  [linkedin-post.md](linkedin-post.md); the demo behind it is in
-  [demo-script.md](demo-script.md).
+- Publish announcements only after independently verifying the factual claims and any demonstrations they reference.
 
 ## Version policy
 
