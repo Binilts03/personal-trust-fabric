@@ -9,7 +9,7 @@ permalink: /launch/demo/
 
 **Not a deployed-product demonstration.** These are controlled local examples
 using synthetic actors and fake/reference providers. DPDP is one optional
-[use case](../use-cases.md), not PTF's product identity or an actual clinic
+[use case]({{ '/use-cases/' | relative_url }}), not PTF's product identity or an actual clinic
 integration. Do not advertise this walkthrough as proof of customer adoption.
 
 The common principle is that delegated authority belongs to the person,
