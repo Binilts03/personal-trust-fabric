@@ -7,7 +7,7 @@ permalink: /privacy/dpdp/
 
 # DPDP privacy enforcement profile (experimental)
 
-**This is an optional PTF use case, not the product definition.** PTF remains a domain-neutral authority and protected-use foundation. A host handling personal data may additionally configure privacy controls, and `IN-DPDP-2025` is the first jurisdiction-specific profile. See [all use cases](../use-cases.md) and the [synthetic offline example](../verticals/dpdp-consent-gateway.md).
+**This is an optional PTF use case, not the product definition.** PTF remains a domain-neutral authority and protected-use foundation. A host handling personal data may additionally configure privacy controls, and `IN-DPDP-2025` is the first jurisdiction-specific profile. See [all use cases]({{ '/use-cases/' | relative_url }}) and the [synthetic offline example]({{ '/verticals/dpdp-consent-gateway/' | relative_url }}).
 
 PTF can help an AI host enforce **configured technical privacy controls** at runtime. It does not determine whether a controller/Data Fiduciary has a lawful processing basis or make any organisation compliant with the Digital Personal Data Protection Act, 2023.
 
