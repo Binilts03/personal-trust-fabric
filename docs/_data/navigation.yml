@@ -13,22 +13,14 @@ main:
     url: /mcp-contract/
   - title: CLI Reference
     url: /cli-reference/
-  - title: Privacy
+  - title: Use cases
+    url: /use-cases/
+  - title: Privacy profile (optional)
     url: /privacy/dpdp/
   - title: Host Kit
     url: /host-kit/
-  - title: Vertical
-    url: /verticals/dpdp-consent-gateway/
   - title: ADRs
     url: /adr/
-  - title: Launch
-    children:
-      - title: Demo
-        url: /launch/demo/
-      - title: Post
-        url: /launch/post/
-      - title: Facts
-        url: /launch/facts/
   - title: Audit
     children:
       - title: Overview

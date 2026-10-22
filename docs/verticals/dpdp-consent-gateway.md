@@ -1,11 +1,19 @@
 ---
 layout: default
-title: The DPDP consent gateway (vertical)
+title: DPDP-informed data sharing (synthetic use case)
 nav_order: 7
 permalink: /verticals/dpdp-consent-gateway/
 ---
 
-# The DPDP consent gateway (vertical)
+# DPDP-informed data sharing: a synthetic use case
+
+[Back to all use cases]({{ '/use-cases/' | relative_url }})
+
+**Evidence level: offline, scripted reference scenario.** The clinic, patient,
+and lab are fictional. The script uses no live patient data, external
+clinic/lab connection or deployed independent AI host. It does not validate
+an organisation's consent UX, legal compliance or production coverage. It
+exercises selected PTF code paths under controlled inputs.
 
 A worked example for the builder who must **share personal data with a
 processor and be able to show the basis**: a clinic (Data Fiduciary) sends a
@@ -20,7 +28,7 @@ creates and removes.
 The question this answers is "what do I have to compose, in what order, and
 what evidence do I end up holding?" — not "am I legal?".
 
-**What it demonstrates.** Seven steps:
+**What the local script illustrates.** Seven steps:
 
 1. the operator's privacy state (notice, consent, two bases, one activity);
 2. the Data Principal's records in the encrypted vault, bound to an opaque
@@ -56,7 +64,7 @@ identifier and no internal deny reason reaches the transcript.
 
 ## The transcript
 
-Captured verbatim from `node examples/dpdp-consent-gateway.mjs`:
+Checked-in transcript from the offline reference script (not a production processing log):
 
 ```text
 PTF - DPDP consent gateway (vertical)
@@ -159,14 +167,6 @@ step 7 - what each step demonstrates, and which obligation it serves
   This table records what the script demonstrates and which obligation it serves.
   It is not a legal determination, and PTF certifies nothing.
 
-node : (node:22320) ExperimentalWarning: SQLite is an experimental feature and might change at any time
-At line:1 char:63
-+ ... -vertical"; node examples/dpdp-consent-gateway.mjs > "$env:TEMP\v3.tx ...
-+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: ((node:22320) Ex...nge at any time:String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
-
-(Use `node --trace-warnings ...` to show where the warning was created)
 ```
 
 ---

@@ -8,7 +8,7 @@ PTF is a user-owned authority and protected-use layer. Agents may reason about a
 - `src/adapters/` — standards/evidence translators and provider seams. External protocol messages are evidence, never authority.
 - `src/store/` — durable local state, keystore, vault, backup, proposals, and audit support.
 - `src/profiles/` — domain conventions over the generic authority model.
-- `src/privacy/` - DPDP privacy plane: a narrowing gate beside Authority, never a source of it. `mcp.ts` builds policy, `host.ts` wires the encrypted host stores for any host, `mcp-host.ts` is the MCP shape of that wiring, `runtime.ts` owns preflight/recheck/fence/prepare/finalize.
+- `src/privacy/` - optional privacy enforcement and evidence extension, with an initial DPDP-informed jurisdiction profile. It can only narrow Authority on host-integrated routes; it is not the core product or a compliance platform. `mcp.ts` builds policy, `host.ts` wires encrypted stores, `mcp-host.ts` provides reference MCP wiring, and `runtime.ts` owns preflight/recheck/fence/prepare/finalize.
 - `src/hostkit/` - the adoption surface: one call that puts the gates around an effect in the required order, plus the conformance suite a host runs in CI.
 - `tests/` — public-seam, abuse, and regression tests.
 - `docs/adr/` — architecture decisions.

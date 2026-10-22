@@ -6,6 +6,10 @@ release day. This project adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+### Documentation
+
+- Clarified that DPDP-informed processing is an optional PTF use case, not the product's identity. Added cross-domain use-case navigation; labelled reference scripts as synthetic and host CLI conformance as reference-only; removed stale launch-post navigation. No runtime or API change.
+
 > Release state (honest): the `v0.1.0` tag (2026-09-12) predates
 > `v0.1.0-rc.1` (2026-09-14); `main` is ahead of both and unpublished
 > (npm returns 404). Everything below ships on `main` only. The next
