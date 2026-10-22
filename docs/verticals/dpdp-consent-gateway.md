@@ -7,7 +7,7 @@ permalink: /verticals/dpdp-consent-gateway/
 
 # DPDP-informed data sharing: a synthetic use case
 
-[Back to all use cases](../use-cases.md)
+[Back to all use cases]({{ '/use-cases/' | relative_url }})
 
 **Evidence level: offline, scripted reference scenario.** The clinic, patient,
 and lab are fictional. The script uses no live patient data, external
