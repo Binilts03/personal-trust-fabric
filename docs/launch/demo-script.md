@@ -1,14 +1,19 @@
 ---
 layout: default
-title: The five-minute demo
+title: Offline reference walkthrough
 nav_order: 3
 permalink: /launch/demo/
 ---
 
-# The five-minute demo
+# Offline reference walkthrough
 
-The demo is one terminal and one idea: the authority belongs to the person,
-not to the platform, and every effect leaves evidence.
+**Not a deployed-product demonstration.** These are controlled local examples
+using synthetic actors and fake/reference providers. DPDP is one optional
+[use case](../use-cases.md), not PTF's product identity or an actual clinic
+integration. Do not advertise this walkthrough as proof of customer adoption.
+
+The common principle is that delegated authority belongs to the person,
+not the agent platform; mediated operations can produce bounded evidence.
 
 Everything below runs from a clean clone with no credentials and no network
 beyond `npm install`.
@@ -31,13 +36,13 @@ operation, an exact recipient, an exact amount and a verified actor. Change
 the amount by one rupee and the grant no longer covers it. There is no model
 in the loop and no "the agent decided".
 
-## Beat 2: the DPDP vertical (2 minutes)
+## Example 2: optional DPDP-informed processing (offline)
 
 ```sh
 node examples/dpdp-consent-gateway.mjs
 ```
 
-A clinic shares a patient's diagnostic summary with a lab. Watch for four
+A fictional clinic shares a synthetic patient's diagnostic summary with a fictional lab within the local script. Watch for four
 things in the transcript:
 
 1. The disclosure reveals claim **names**, not values, and only the ones the
@@ -53,7 +58,7 @@ things in the transcript:
 The walkthrough with the full transcript is in
 [../verticals/dpdp-consent-gateway.md](../verticals/dpdp-consent-gateway.md).
 
-## Beat 3: prove the host enforces (1 minute)
+## Example 3: reference-boundary checks (not host attestation)
 
 ```sh
 export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase"
@@ -63,11 +68,9 @@ node dist/src/cli.js --dir ./ptf-store privacy init
 node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./privacy-config.json
 ```
 
-Nine checks, each one a rule, each one printed with the rule it proves. The
-exit code is 0 only when all of them pass, so a host can put it in CI and
-say, with evidence, that its own agent paths enforce the controls.
+Nine checks exercise a shipped reference boundary with local state. A passing CLI check **does not attest** that a separately deployed host routes all its real processing paths through this boundary. Host owners need integration and end-to-end tests; see [host kit](../host-kit.md).
 
-## Beat 4: the crash window (1 minute)
+## Example 4: crash-recovery test
 
 This is the part most "agent spending" systems get wrong. When a payment
 succeeds at the provider but the host dies before it records that, a retry
@@ -78,9 +81,7 @@ capability.
 node --test dist/tests/mcp-crash.test.js
 ```
 
-The journal is the proof. A retry of the same exact terms replays the
-journal and returns the original receipt. An unsettled journal is answered
-with `outcome_unknown`, never with a denial and never with a second effect.
+The test checks journal replay and conservative unknown-outcome handling under scripted conditions; it is not independent evidence from a live external payment provider.
 
 ## Beat 5: the honest limits (30 seconds)
 
