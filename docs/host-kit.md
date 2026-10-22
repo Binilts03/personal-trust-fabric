@@ -8,8 +8,7 @@ permalink: /host-kit/
 # Host kit
 
 The host kit is a reusable effect boundary. A host composes it once, at the
-place where it performs external effects, and every operation it performs
-is then decided by Authority, narrowed by the privacy plane, and evidenced.
+place where it performs external effects. Each **operation routed through this boundary** is checked by Authority, narrowed by configured privacy controls, and evidenced. Other host paths are not automatically covered.
 
 It is a library boundary, not an interceptor. A host that does not route its
 effects through it is uncovered, not compliant — see
@@ -35,6 +34,7 @@ re-exported from the curated root barrel.
 ```ts
 import {
   createEffectBoundary,
+  privacyForHostOperation,
   type HostPrivacyConfig,
 } from "personal-trust-fabric/hostkit";
 
@@ -139,9 +139,7 @@ authority-first  PASS  ADR-0024 §4: an unauthorised caller is denied by the aut
 dry-run-has-no-effect  PASS  ADR-0018: CHECK != REDEEM != EXECUTE - a dry-run result ...
 ```
 
-The exit code is `0` only when every check passes. The checks run in a
-scratch directory: the operator's store is read, never written, and nothing
-reaches the network.
+The exit code is `0` only when every check passes. The **CLI tests a shipped reference boundary**, not an adopter's separately running host. The checks use a scratch directory: the operator's store is read, never written, and nothing reaches the network.
 
 A host with its own boundary composition passes its own factory:
 
