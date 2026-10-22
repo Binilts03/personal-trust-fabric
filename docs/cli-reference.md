@@ -5,98 +5,110 @@ nav_order: 5
 permalink: /cli-reference/
 ---
 
-# CLI Reference
+# CLI reference
+
+Run the CLI from a **built repository checkout**:
 
 ```sh
 node dist/src/cli.js --help
 ```
 
-All commands require `--dir <store-path>` (default `./ptf-store`).
+The installed package declares a `ptf` binary, but the npm release is not
+yet available. The walkthrough below therefore uses the executable in the
+checkout rather than a global or unpublished package.
 
-## Store Management
+The store path is optional: `--dir <path>` defaults to `./ptf-store`.
+Supply it before or after a command (for example `--dir ./ptf-store init`).
+Start with the [Getting Started guide]({{ '/getting-started/' | relative_url }})
+for the passphrase file, key generation, recipient registration and a
+self-contained **fake-payment** example.
 
-| Command                 | Description                                              |
-| ----------------------- | -------------------------------------------------------- |
-| `init`                  | Initialize new store (keystore, vault, audit, proposals) |
-| `audit --verify`        | Verify hash-chained audit integrity                      |
-| `backup --to <path>`    | Full backup + anchor checkpoint                          |
-| `restore --from <path>` | Restore from backup (refuses vintage merge)              |
+## Store and keys
 
-## Keys & Recipients
+| Command | What it does |
+| --- | --- |
+| `init` | Initialize a new store; refuses to overwrite an existing store |
+| `keygen --alias NAME` | Generate an Ed25519 keypair in the encrypted local keystore; prints its public key |
+| `recipient --alias NAME --key HEX` | Register a recipient's 32-byte public key (64 hexadecimal characters) |
+| `rekey` | Rotate the encrypted keystore passphrase |
+| `audit [--verify]` | Inspect or verify the audit chain |
+| `backup --to DIR` | Back up the store and a consistency checkpoint; stop writers first |
+| `restore --from DIR` | Restore a backup into a fresh store directory |
+| `agent --register ID [--key HEX]` | Register an agent identity |
+| `agent --remove ID` | Retire an agent identity |
+| `agent --rotate ID --key HEX` | Rotate an agent key |
+| `agent --list` | List registered agents |
 
-| Command                                | Description                                             |
-| -------------------------------------- | ------------------------------------------------------- |
-| `keygen --alias <name>`                | Generate ED25519 keypair, store in keystore             |
-| `recipient --alias <name> --key <hex>` | Register recipient public key for capability redemption |
+## Grants and human decisions
 
-## Grants & Authority
+| Command | What it does |
+| --- | --- |
+| `grant --id ID --principal P --cmd /pay --agent A [--amount-max N] [--currency CCY] [--recipient R] [--exp-in SECONDS] [--max-uses N]` | Create an actor-bound standing grant |
+| `review [--digest HEX]` | List or inspect pending proposals |
+| `approve --digest HEX [--ttl-s SECONDS]` | Issue an exact-terms, one-use approval for a pending proposal |
+| `deny --digest HEX` | Deny a pending proposal |
+| `revoke --grant ID` | Revoke a standing grant |
+| `revoke --recipient ALIAS` | Revoke a recipient mapping |
 
-| Command                                                                                                                                                      | Description                                                               |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| `grant --id <id> --principal <alias> --cmd <name> --agent <alias> [--amount-max <n>] [--currency <CCY>] [--recipient <alias>] [--expiry <iso>] [--uses <n>]` | Add standing grant                                                        |
-| `review [--digest <hex>]`                                                                                                                                    | List pending proposals (sanitized) or show one in full                    |
-| `approve --digest <hex> [--ttl-s <n>]`                                                                                                                       | Mint one one-time approval for a pending proposal (default 300s, one use) |
-| `deny --digest <hex>`                                                                                                                                        | Veto a pending proposal (mints nothing)                                   |
-| `revoke --grant <id> --principal <alias>`                                                                                                                    | Revoke grant (request-only via MCP)                                       |
+For `grant`, exactly **one** of `--agent A`, `--actor-set A,B`, or
+`--any-agent` is required; `--any-agent` is a deliberate broad wildcard.
+Other optional grant flags include `--purpose`, `--resource`,
+`--resource-type` and `--allowed-claims`. The accepted expiry and
+use-limit flags are `--exp-in` and `--max-uses` (**not**
+`--expiry` and `--uses`).
 
-## Payments & Execution
+## Protected operations and vault
 
-| Command                                                                                                                  | Description                               |
-| ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- |
-| `pay --principal <alias> --agent <alias> --recipient <alias> --amount <n> --currency <CCY> --resource <type:id> [--yes]` | Execute payment (requires grant/approval) |
-| `execute --principal <alias> --agent <alias> --action <name> --resource <type:id> --context <json> --purpose <id>`       | Execute any authorized action             |
+| Command | What it does |
+| --- | --- |
+| `pay --principal P --agent A --recipient R --amount N --currency CCY --resource R [--purpose T] [--yes]` | Execute the built-in **fake** payment path and return a synthetic receipt |
+| `disclose --holder H --verifier V --claims a,b --credential JSON [--allowed a,b] [--yes]` | Run the CLI disclosure flow |
+| `vault-put` | Store a scoped, encrypted record; obtain value from `--value-file`, never argv |
+| `vault-read` | Request a scope-constrained disclosure from the vault |
+| `vault-migrate` | Migrate a legacy plaintext vault |
+| `vault-rekey` | Rotate the vault encryption key |
 
-## Disclosure
+Run `node dist/src/cli.js --help` for the full `vault-put` and
+`vault-read` option lists. The operator CLI **does not implement**
+`execute` or `present` commands; use the supported `pay`, `disclose`
+and vault operations, or the host integration APIs instead.
 
-| Command                                                                    | Description                                         |
-| -------------------------------------------------------------------------- | --------------------------------------------------- |
-| `disclose --principal <alias> --agent <alias> --request <json>`            | Request disclosure (returns minimal approved claim) |
-| `present --principal <alias> --agent <alias> --claim <json> --nonce <hex>` | Present holder-signed claim (consumes one use)      |
+`--yes` is supported only on commands that explicitly allow it. It
+bypasses the CLI prompt; it is not an independent authorisation decision.
+The built-in `pay` command uses a `FakePaymentExecutor`; it never
+transfers funds.
 
-## Privacy & Host Kit
+## Privacy and host integration (optional)
 
-| Command                                    | Description                                                                      |
-| ------------------------------------------ | -------------------------------------------------------------------------------- |
-| `privacy <subcommand>`                     | DPDP evidence, runtime checks, summaries, erasure, recovery (`ptf privacy help`) |
-| `host-conformance --privacy-config <file>` | Run the host kit's nine conformance checks against the store (no network)        |
+| Command | What it does |
+| --- | --- |
+| `privacy <subcommand>` | Configure or examine consent/notice/basis/activity evidence, summaries, exact vault erasure and recovery |
+| `host-conformance --privacy-config FILE` | Run nine reference-boundary checks using scratch data, with no network effect |
 
-`host-conformance` prints one line per check — id, `PASS`/`FAIL`, the rule
-the check proves, and the failure detail. The exit code is `0` only when
-every check passes. The checks run in a scratch directory: the store is read,
-never written.
+`privacy` uses positional subcommands such as `privacy init`,
+`privacy consent withdraw --id ID`, `privacy verify`, and
+`privacy events reconcile --yes`. Consult `ptf help` and
+[DPDP privacy profile]({{ '/privacy/dpdp/' | relative_url }}) before
+mutating privacy state.
 
-## Common Flags
+The `host-conformance` command requires an initialized store, a keystore,
+initialized privacy state and a valid host privacy-config JSON file. Its
+results cover the **reference boundary**, not a separately running MCP
+host or custom adopter implementation. See [Host Kit]({{ '/host-kit/' | relative_url }}).
 
-| Flag           | Description                             |
-| -------------- | --------------------------------------- |
-| `--dir <path>` | Store directory (default `./ptf-store`) |
-| `--json`       | Output JSON instead of human-readable   |
-| `--yes`        | Skip confirmation prompts               |
-| `--help`       | Show help for command                   |
+## Environment and common options
 
-## Exit Codes
+- `PTF_PASSPHRASE_FILE`: private file containing the keystore passphrase;
+  created by the [Getting Started guide]({{ '/getting-started/' | relative_url }}).
+- `PTF_PASSPHRASE`: legacy direct-secret environment variable, which **takes
+  precedence** over `PTF_PASSPHRASE_FILE` when set. Avoid it for normal
+  operator use.
+- `--dir PATH`: select a store; defaults to `./ptf-store`.
+- `--help`/`-h`: display supported commands; `--version`/`-V`: version.
+- There is **no general-purpose `--json` CLI flag**. Some commands
+  already print JSON as their normal output.
 
-- `0` — Success
-- `1` — User error (bad args, missing grant, denied)
-- `2` — System error (store corruption, IO, crypto)
-- `3` — Verification failed (audit, backup anchor)
-
-## Examples
-
-```sh
-# Initialize and set up keys
-export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase"
-node dist/src/cli.js --dir ./ptf-store init
-node dist/src/cli.js --dir ./ptf-store keygen --alias you
-node dist/src/cli.js --dir ./ptf-store keygen --alias shop
-node dist/src/cli.js --dir ./ptf-store recipient --alias shop --key <hex>
-
-# Grant authority
-node dist/src/cli.js --dir ./ptf-store grant --id g1 --principal you --cmd /pay --agent shopper --amount-max 2000 --currency INR --recipient shop
-
-# Execute
-node dist/src/cli.js --dir ./ptf-store pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes
-
-# Verify
-node dist/src/cli.js --dir ./ptf-store audit --verify
-```
+Run your experiments against a disposable development store, keep the
+passphrase outside the store and repository, and follow the
+[known-limits register]({{ '/audit/limits/' | relative_url }}) before
+integrating a real provider.
