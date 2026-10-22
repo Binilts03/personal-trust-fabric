@@ -438,3 +438,50 @@ describe("human approval surface (PR-C)", () => {
     );
   });
 });
+
+describe("host conformance operator command", () => {
+  it("exits 0 for the reference composition and 1 when checks fail", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ptf-cli-"));
+    const { io, out } = testIo();
+    const env = { PTF_PASSPHRASE: "test-pass-123" };
+    const config = {
+      dataPrincipalRef: "subject:opaque-cli",
+      controllerId: "example-india",
+      recipientRoles: { "approved-merchant": "third-party" },
+      actionCategories: { "/pay": ["payment"] },
+    };
+
+    assert.equal(await run(["--dir", dir, "init"], io, env), 0);
+    assert.equal(
+      await run(["--dir", dir, "keygen", "--alias", "you"], io, env),
+      0
+    );
+    assert.equal(await run(["--dir", dir, "privacy", "init"], io, env), 0);
+
+    const good = join(dir, "privacy-good.json");
+    writeFileSync(good, JSON.stringify(config));
+    assert.equal(
+      await run(
+        ["--dir", dir, "host-conformance", "--privacy-config", good],
+        io,
+        env
+      ),
+      0
+    );
+    assert.match(out.join("\n"), /boundary: reference composition/);
+    assert.match(out.join("\n"), /10\/10 checks passed/);
+
+    const bad = join(dir, "privacy-bad.json");
+    writeFileSync(bad, JSON.stringify({ ...config, recipientRoles: {} }));
+    out.length = 0;
+    assert.equal(
+      await run(
+        ["--dir", dir, "host-conformance", "--privacy-config", bad],
+        io,
+        env
+      ),
+      1
+    );
+    assert.match(out.join("\n"), /0\/10 checks passed \(10 failed\)/);
+  });
+});

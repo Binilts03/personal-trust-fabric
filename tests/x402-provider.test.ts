@@ -331,6 +331,36 @@ describe("x402 provider transport (HTTP 402 agent payment, protocol v2)", () => 
     }
   });
 
+  it("a challenge for a LOWER amount is refused and settles nothing", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": paymentRequired(
+          [accept({ amount: "9999" })],
+          RESOURCE
+        ),
+      });
+      res.end("{}");
+    });
+    try {
+      let settled = 0;
+      const provider = createX402Provider(
+        providerOptions(server.url, async () => {
+          settled += 1;
+          return { payload: { signature: "0x1" } };
+        })
+      );
+      await assert.rejects(
+        () => provider.submit(terms()),
+        /challenge amount differs from the authorised amount/
+      );
+      assert.equal(settled, 0, "nothing may be settled");
+      assert.equal(server.requests.length, 1, "no payment may be sent");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("a challenge for a DIFFERENT network is refused and settles nothing", async () => {
     const server = await startServer((_req, res) => {
       res.writeHead(402, {

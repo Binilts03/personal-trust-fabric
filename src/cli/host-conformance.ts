@@ -46,6 +46,9 @@ export async function runHostConformanceCommand(
   ctx.io.print(
     `operator configuration: valid (recipient roles: ${Object.keys(config.recipientRoles).length}, /pay categories: ${(config.actionCategories?.["/pay"] ?? []).length})`
   );
+  ctx.io.print(
+    "boundary: reference composition (a host with its own composition calls runHostConformance with its factory)"
+  );
 
   const scratch = mkdtempSync(join(tmpdir(), "ptf-host-conformance-"));
   try {

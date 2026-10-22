@@ -18,7 +18,7 @@ import { createHttpProvider, canonicalize } from "../src/index.js";
 
 const CAPABILITY_ID = "cid-http-0001";
 const TERMS_DIGEST = "ab".repeat(32);
-const HOST_SECRET = "sk_live_host_side_only_never_in_the_body";
+const HOST_SECRET = "test-host-secret-never-in-the-body";
 
 interface Captured {
   readonly method: string;

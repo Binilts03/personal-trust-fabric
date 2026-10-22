@@ -61,3 +61,38 @@ packaging (`src/api.ts` + the `exports` map), not by comments.
 The host kit ships as the `./hostkit` subpath and is deliberately **not**
 re-exported from the curated root barrel: the kit binds host stores, so the
 subpath is the whole surface, exactly like `./privacy` (ADR-0025).
+
+## Amendment: `checkRequest` on the provider seam (2026-10-22)
+
+`checkRequest(req)` is exported from `./providers`. The two shipped HTTP
+transports use it to reject a malformed `ProviderRequest` before any network
+call; a host-authored `ProtectedProvider` needs the same guard, and asking
+every host to duplicate it is a footgun. The public-surface decision:
+
+- **Public:** `checkRequest` on `./providers` only. It validates shape and
+  digest presence; it does not authorize, consume authority, or substitute
+  for `executeProtectedAction`.
+- **Not public:** the internal selectors and journal helpers beside it. The
+  adapters remain the supported way to reach a rail.
+
+The guard is a function, not a class: it throws on a malformed request and
+returns `void`, so a caller cannot mistake a pass for a capability.
+
+## Amendment: the host kit exports (2026-10-22)
+
+`./hostkit` is the whole host-kit surface; the curated root barrel stays
+closed. Each export is a deliberate decision:
+
+| Export                                                                                                                                                                          | Kind           | Why it is public                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createEffectBoundary`, `hostTermsDigest`                                                                                                                                       | functions      | The adoption API. A host cannot compose the nine-step order without them, and the root barrel deliberately does not bind stores or execute effects.        |
+| `HostEffectBoundary`, `HostEffectBoundaryOptions`, `HostEffectContext`, `HostEffectDecision`, `HostEffectDenialReason`, `HostEffectReceipt`                                     | types          | The host must type the boundary it constructs and the context it receives. These describe host-owned objects; they do not expose store internals.          |
+| `PrivacyEventConflictError`, `PrivacyOutcomeUnknownError`, `PrivacyPreEffectError`                                                                                              | classes        | Hosts must catch and classify these as values (`instanceof`), not just as types. The conflict error is how a terminal attempt is refused.                  |
+| `makeHostPrivacyGate`, `privacyForHostOperation`, `HostPrivacyConfig`                                                                                                           | functions/type | The store-wiring helper is the point of the kit. The exception is scoped to `./hostkit`; `./privacy` stays persistence-free (ADR-0025 amendment).          |
+| `buildHostConformanceScenario`, `referenceHostBoundary`, `runHostConformance`                                                                                                   | functions      | A host with a custom composition runs the same ten checks in process. The scenario factory is the supported test seam; there is no dynamic module loading. |
+| `HostConformanceBoundaryFactory`, `HostConformanceObservations`, `HostConformanceOptions`, `HostConformanceResult`, `HostConformanceScenario`, `HostConformanceScenarioOptions` | types          | The factory and observation shapes are part of the test contract. They do not expose the file-backed store classes.                                        |
+
+**Not exported from `./hostkit`:** `PrivacyStore`, `FilePrivacyEventRepository`,
+`saveAuthority` and the other file stores. A host may construct them itself,
+but the kit does not make a particular persistence implementation the public
+API. That is the same line ADR-0025 draws for `./privacy`.

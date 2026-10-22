@@ -158,7 +158,9 @@ export function safeText(raw: unknown, max = 80): string {
     .replace(/[\u0000-\u001f\u007f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return cleaned.length > max ? `${cleaned.slice(0, max)}...` : cleaned;
+  return cleaned.length > max
+    ? `${cleaned.slice(0, Math.max(0, max - 3))}...`
+    : cleaned;
 }
 
 /**

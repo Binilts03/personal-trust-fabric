@@ -96,6 +96,8 @@ const redeemed = caps.authorize(
     cmd: "/pay",
     args: { amount: 1790, currency: "INR" },
     recipient: ids.m,
+    resource: "invoice:inv-1",
+    purpose: "groceries",
     termsDigest: digest,
   },
   {
@@ -116,6 +118,7 @@ const receipt = await executeAndReceipt(
     currency: "INR",
     resource: "invoice:inv-1",
     purpose: "groceries",
+    termsDigest: digest,
   },
   redeemed,
   NOW

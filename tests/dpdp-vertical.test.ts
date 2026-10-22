@@ -131,7 +131,12 @@ describe("DPDP consent-gateway vertical", () => {
     const { stdout } = runExample();
     assert.match(stdout, /Act s\.5 \(notice\); Act s\.6\(1\) \(consent\)/);
     assert.match(stdout, /Act s\.6\(4\)-s\.6\(6\) \(withdrawal\)/);
-    assert.match(stdout, /Act s\.6\(10\) \(burden of proof\)/);
+    assert.match(stdout, /Act s\.6\(10\) \(burden of proof, in a proceeding\)/);
+    assert.match(
+      stdout,
+      /Act s\.6\(4\)-s\.6\(6\) \(withdrawal\); Act s\.8\(7\)/
+    );
+    assert.match(stdout, /Rule 8\(3\) \(one-year retention floor\)/);
     assert.match(stdout, /Act s\.11 \(access summary\)/);
     assert.match(stdout, /Act s\.12 \(erasure\)/);
     assert.match(stdout, /Rules 4 \+ First Schedule Part B/);

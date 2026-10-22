@@ -6,10 +6,12 @@ import { join } from "node:path";
 import {
   buildHostConformanceScenario,
   createEffectBoundary,
+  PrivacyEventConflictError,
   PrivacyOutcomeUnknownError,
   PrivacyPreEffectError,
   type HostConformanceScenario,
   type HostEffectBoundary,
+  type HostEffectBoundaryOptions,
   type HostPrivacyConfig,
 } from "../src/hostkit/index.js";
 
@@ -60,6 +62,9 @@ function boundaryFor(
   overrides: {
     readonly authorizedContext?: Readonly<Record<string, unknown>>;
     readonly callbackPath?: boolean;
+    readonly execute?: HostEffectBoundaryOptions["execute"];
+    readonly persistAuthority?: HostEffectBoundaryOptions["persistAuthority"];
+    readonly attemptRef?: string;
   } = {}
 ): HostEffectBoundary {
   const callbackPath = overrides.callbackPath ?? false;
@@ -71,6 +76,9 @@ function boundaryFor(
     gate: subject.gate,
     now: subject.now,
     authorizedContext: overrides.authorizedContext ?? subject.authorizedContext,
+    ...(overrides.attemptRef !== undefined
+      ? { attemptRef: overrides.attemptRef }
+      : {}),
     ...(callbackPath
       ? {}
       : {
@@ -79,8 +87,8 @@ function boundaryFor(
             HostConformanceScenario["redemption"]
           >,
         }),
-    execute: subject.effect,
-    persistAuthority: subject.persistAuthority,
+    execute: overrides.execute ?? subject.effect,
+    persistAuthority: overrides.persistAuthority ?? subject.persistAuthority,
   });
 }
 
@@ -101,8 +109,124 @@ describe("host effect boundary", () => {
       assert.equal(events.length, 1);
       assert.equal(events[0]?.state, "SUCCEEDED");
       assert.equal(events[0]?.eventId, receipt.eventId);
-      // The authority use was burned exactly once.
-      assert.equal(subject.auth.snapshot().used.length, 1);
+      // The authority use was burned exactly once. `used` is [grant, count]
+      // pairs, so `.length` alone would count grants touched, not uses.
+      assert.equal(subject.auth.snapshot().used[0]?.[1], 1);
+    });
+  });
+
+  it("awaits an asynchronous authority persistence before the effect", async () => {
+    await withScratch(async (root) => {
+      const subject = scenario(root, "async-persist", { callbackPath: true });
+      const order: string[] = [];
+      const boundary = boundaryFor(subject, {
+        callbackPath: true,
+        persistAuthority: async (auth) => {
+          order.push("persist:start");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          subject.persistAuthority(auth);
+          order.push("persist:done");
+        },
+        execute: async (ctx) => {
+          order.push("effect");
+          return subject.effect(ctx);
+        },
+      });
+      await boundary.run();
+      assert.deepEqual(order, ["persist:start", "persist:done", "effect"]);
+    });
+  });
+
+  it("does not run the effect when an asynchronous persistence rejects", async () => {
+    await withScratch(async (root) => {
+      const subject = scenario(root, "async-reject", { callbackPath: true });
+      const boundary = boundaryFor(subject, {
+        callbackPath: true,
+        persistAuthority: async () => {
+          throw new Error("authority store changed under us");
+        },
+      });
+      await assert.rejects(
+        () => boundary.run(),
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message === "authority store changed under us"
+      );
+      assert.equal(subject.observed.effectRuns, 0);
+      const events = subject.events.listBySubject(CONFIG.dataPrincipalRef);
+      assert.equal(events[0]?.state, "FAILED_FINAL");
+    });
+  });
+
+  it("treats a retry of the same terms as the same attempt", async () => {
+    await withScratch(async (root) => {
+      const subject = scenario(root, "retry", { callbackPath: true });
+      const boundary = boundaryFor(subject, { callbackPath: true });
+      await boundary.run();
+      await assert.rejects(
+        () => boundary.run(),
+        (error: unknown) => error instanceof PrivacyEventConflictError
+      );
+      assert.equal(subject.observed.effectRuns, 1);
+      assert.equal(subject.auth.snapshot().used[0]?.[1], 1);
+      assert.equal(
+        subject.events.listBySubject(CONFIG.dataPrincipalRef).length,
+        1
+      );
+    });
+  });
+
+  it("refuses an over-long attempt reference before consuming authority", async () => {
+    await withScratch(async (root) => {
+      const subject = scenario(root, "retry-too-long", { callbackPath: true });
+      const boundary = boundaryFor(subject, {
+        callbackPath: true,
+        attemptRef: "a".repeat(201),
+      });
+      await assert.rejects(
+        () => boundary.run(),
+        (error: unknown) => error instanceof PrivacyPreEffectError
+      );
+      assert.equal(subject.observed.effectRuns, 0);
+      assert.equal(subject.auth.snapshot().used[0]?.[1] ?? 0, 0);
+    });
+  });
+
+  it("denies an unauthorized run with a coarse pre-effect error", async () => {
+    await withScratch(async (root) => {
+      const subject = scenario(root, "deny-authority", { denyAuthority: true });
+      await assert.rejects(
+        () => boundaryFor(subject).run(),
+        (error: unknown) =>
+          error instanceof PrivacyPreEffectError &&
+          error.message === "authority denied"
+      );
+      assert.equal(subject.observed.privacyReads, 0);
+      assert.equal(subject.observed.effectRuns, 0);
+    });
+  });
+
+  it("binds the receipt to the authorized terms, not the host's", async () => {
+    await withScratch(async (root) => {
+      const subject = scenario(root, "receipt-binding", { callbackPath: true });
+      const boundary = boundaryFor(subject, {
+        callbackPath: true,
+        execute: async () => ({
+          receiptId: "host-receipt",
+          capabilityId: "c".repeat(64),
+          recipient: "someone-else",
+          resource: "another-resource",
+          purpose: "another-purpose",
+          termsDigest: "another-terms",
+          transaction: "host-transaction",
+          at: "receipt-secret" as unknown as number,
+        }),
+      });
+      const receipt = await boundary.run();
+      assert.equal(receipt.resource, subject.operation.resource.id);
+      assert.equal(receipt.purpose, subject.operation.purpose);
+      assert.equal(receipt.termsDigest, subject.demand.termsDigest);
+      assert.equal(receipt.at, subject.now());
     });
   });
 
@@ -158,7 +282,7 @@ describe("host effect boundary", () => {
       assert.equal(events[0]?.state, "FAILED_FINAL");
       // The authority use was already burned when the fence denied: the
       // fence runs after the consumption, never before it.
-      assert.equal(subject.auth.snapshot().used.length, 1);
+      assert.equal(subject.auth.snapshot().used[0]?.[1], 1);
     });
   });
 

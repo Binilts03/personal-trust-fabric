@@ -90,6 +90,11 @@ export interface HostEffectContext {
   /** The attempt identity this evidence is filed under. */
   readonly attemptRef: string;
   /**
+   * The idempotency key for this effect. Equal to the attempt reference:
+   * the same terms produce the same key, so a host can dedupe a retry.
+   */
+  readonly idempotencyKey: string;
+  /**
    * Signal that the external effect has started. A callback that starts an
    * effect MUST call this first: after it, a failure is an unknown outcome,
    * never a proven pre-effect failure.
@@ -132,12 +137,19 @@ export interface HostEffectBoundaryOptions {
   readonly execute?: (
     ctx: HostEffectContext
   ) => Promise<ExecutionReceipt | void>;
-  /** Durable authority persistence. Defaults to the file store's CAS. */
-  readonly persistAuthority?: (auth: Authority) => void;
   /**
-   * A stable attempt identity. Omit it for a fresh attempt; reuse it only
-   * for a retry of the same attempt (ADR-0024: attempt identity is
-   * explicit, and a terminal event is never reused for a new effect).
+   * Durable authority persistence. Defaults to the file store's CAS.
+   *
+   * May be asynchronous: the boundary awaits it before the effect, so a
+   * host that keeps authority in a database gets the same burn-before-effect
+   * ordering as the file store.
+   */
+  readonly persistAuthority?: (auth: Authority) => void | Promise<void>;
+  /**
+   * A stable attempt identity. Defaults to the terms digest, so a retry of
+   * the same terms lands on the same attempt and cannot run the effect a
+   * second time. Supply a distinct value only for a genuinely distinct
+   * operation (a fresh authorization/redemption), never for a retry.
    */
   readonly attemptRef?: string;
 }
@@ -156,6 +168,26 @@ function boundedRef(value: unknown, what: string): string {
     throw new Error(`host boundary: malformed ${what}`);
   }
   return value;
+}
+
+/**
+ * Attempt references are bounded opaque tokens. The format cannot prove a
+ * value is not an identifier; the host remains responsible for that. The
+ * default is the terms digest, and a malformed or over-long value is refused
+ * before any evidence or consumption. The 200-character ceiling matches the
+ * privacy runtime's own validation, so a value accepted here cannot fail
+ * later, after authority has been spent.
+ */
+const OPAQUE_REF = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,199}$/;
+
+function attemptRefOf(value: string | undefined, termsDigest: string): string {
+  const ref = value ?? termsDigest;
+  if (!OPAQUE_REF.test(ref)) {
+    throw new PrivacyPreEffectError(
+      "host boundary: the attempt reference is not opaque"
+    );
+  }
+  return ref;
 }
 
 /**
@@ -305,13 +337,19 @@ export function createEffectBoundary(
       raw?.transaction === undefined
         ? undefined
         : boundedRef(raw.transaction, "transaction reference");
+    const at =
+      typeof raw?.at === "number" && Number.isFinite(raw.at) && raw.at >= 0
+        ? Math.floor(raw.at)
+        : now();
     return {
       receiptId,
       action: operation.action.name,
-      resource: raw?.resource ?? operation.resource.id,
-      purpose: raw?.purpose ?? operation.purpose ?? "",
-      termsDigest: raw?.termsDigest ?? termsDigest,
-      at: raw?.at ?? now(),
+      // The receipt always binds the AUTHORISED terms. A host callback can
+      // report ids and an external reference, never a different operation.
+      resource: operation.resource.id,
+      purpose: operation.purpose ?? "",
+      termsDigest,
+      at,
       ...(authorityId !== undefined ? { authorityId } : {}),
       ...(capabilityId !== undefined ? { capabilityId } : {}),
       ...(transaction !== undefined ? { transaction } : {}),
@@ -349,9 +387,10 @@ export function createEffectBoundary(
       assertTermsBinding();
 
       // 2. Authority, non-consuming. The privacy state is not an oracle for
-      // an unauthorized caller (ADR-0024).
+      // an unauthorized caller (ADR-0024). The agent-facing error is coarse:
+      // the internal deny reason stays out of it.
       if (!authorityPreview()) {
-        throw new Error("authority denied");
+        throw new PrivacyPreEffectError("authority denied");
       }
 
       // 3. Privacy preflight, then 4. the live recheck.
@@ -376,8 +415,10 @@ export function createEffectBoundary(
       }
 
       // 5. Evidence precommit, before any consumption: a crash from here on
-      // leaves a PREPARED attempt the operator can reconcile.
-      const attemptRef = opts.attemptRef ?? randomUUID();
+      // leaves a PREPARED attempt the operator can reconcile. The attempt
+      // identity defaults to the terms digest, so a retry is the same
+      // attempt rather than a second effect.
+      const attemptRef = attemptRefOf(opts.attemptRef, live.termsDigest);
       let event;
       try {
         event = opts.runtime.prepareEvent(live, gate, attemptRef);
@@ -396,12 +437,11 @@ export function createEffectBoundary(
           nowSec: now(),
         });
         if (!consumed.allow) {
-          throw new PrivacyPreEffectError(
-            `authority denied at redeem time: ${consumed.reason}`
-          );
+          // The agent gets the coarse class, never the internal reason.
+          throw new PrivacyPreEffectError("authority denied");
         }
         authorityId = consumed.citations[0]?.authorityId;
-        persist(auth);
+        await persist(auth);
       } catch (error) {
         finalize(event.eventId, "FAILED_FINAL", { finalizedAt: now() });
         throw error;
@@ -422,6 +462,7 @@ export function createEffectBoundary(
         operation,
         termsDigest: live.termsDigest,
         attemptRef,
+        idempotencyKey: attemptRef,
         markEffectStarted: () => {
           effectStarted = true;
         },
@@ -466,6 +507,10 @@ export function createEffectBoundary(
           evidenceRef: `execution-receipt:${receipt.receiptId}`,
         });
       } catch (error) {
+        // The effect happened and the success could not be recorded. Do not
+        // leave a PREPARED event that a retry could mistake for a fresh
+        // attempt; mark the ambiguity if the store will take it.
+        finalize(event.eventId, "OUTCOME_UNKNOWN", { finalizedAt: now() });
         throw new PrivacyOutcomeUnknownError(error);
       }
       return receipt;

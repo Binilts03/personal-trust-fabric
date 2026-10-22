@@ -91,14 +91,35 @@ adoption path, and it is what the reference MCP host does.
 - The library cannot be used as a compliance certificate, a DPIA, a
   breach-notification system, a DSAR tool, or a registered Consent
   Manager. Those remain operator obligations and are named as such.
-- A future release may add a _host kit_ (a reusable effect-boundary helper
-  with a conformance test) so that adoption is one call plus a test rather
-  than a composition. That is an ergonomics improvement, not a change of
-  the decision: the host still composes the runtime.
+- The host kit (2026-10-22) makes adoption one boundary plus a test. That is an
+  ergonomics improvement, not a change of the decision: the host still
+  composes the runtime, and a host that does not call the kit is uncovered,
+  not compliant.
 - The file-backed evidence store's scaling limits (documented in
   `docs/audit/limits.md`) are a property of the _reference_ store, not of
   the decision: a host with its own indexed event store keeps the same
   contract.
+
+## Amendment: the host kit owns the store wiring (2026-10-22)
+
+Decision 2 keeps the curated `./privacy` surface persistence-free, and it
+stays that way. The host kit does not widen `./privacy`; it adds a separate
+`./hostkit` surface that deliberately exports `privacyForHostOperation`,
+`makeHostPrivacyGate` and the `HostPrivacyConfig` type. Building the runtime
+and gate from the encrypted store is the adoption tax the kit exists to
+remove.
+
+The exception is narrow:
+
+- Only `./hostkit` may expose the store-wiring helper. `./privacy` and the
+  root barrel do not re-export it.
+- The helper returns a host-owned `PrivacyRuntime` and `PrivacyGateRequest`.
+  It does not hide the store from the host or move enforcement into PTF.
+- The boundary remains per-host and explicit. A host that does not call
+  `createEffectBoundary` (or its own equivalent) is uncovered, not
+  compliant.
+- A host may bypass the helper and build the same objects itself. The kit
+  does not make one persistence implementation the only supported path.
 
 ## References
 

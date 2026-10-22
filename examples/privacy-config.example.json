@@ -1,0 +1,16 @@
+{
+  "dataPrincipalRef": "subject:opaque-4a32",
+  "controllerId": "example-india",
+  "recipientRoles": {
+    "approved-processor": "data-processor",
+    "approved-merchant": "third-party"
+  },
+  "actionCategories": {
+    "/pay": ["payment"]
+  },
+  "subjectAssurance": {
+    "classification": "adult",
+    "proofRef": "trusted-identity-record:12",
+    "assertedBy": "privacy-office"
+  }
+}

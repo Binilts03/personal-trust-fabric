@@ -29,22 +29,23 @@ vault, the approval presenter, and the provider seam.
 
 ## What leaves the host
 
-The request body carries exactly three things:
+The request body is the **authorized terms** (`req.context`, which the
+provider seam already binds to the approved operation, field for field) plus
+two binding fields and nothing else:
 
-- the **authorized terms** (`req.context`, which the provider seam already
-  binds to the approved operation, field for field),
 - the **capability id**,
 - the **terms digest**.
 
-Nothing else. No secret, no free-text note, no extra effect-bearing key. The
-body is canonical JSON, so the bytes on the wire are the bytes the host
-signed.
+No secret, no free-text note, no extra effect-bearing key. The body is
+canonical JSON, and the string the adapter sends is the same string the host
+signed, so the server can recompute it from the body it received. `fetch`
+encodes that string as UTF-8; the adapter does not re-serialise it.
 
 The credential never enters the body. It stays in the host's `sign`
 callback, which turns the canonical body into auth headers. The adapter
 never sees the credential value.
 
-Three things travel beside the body, as headers:
+Headers carry the content type, the idempotency key and the auth headers:
 
 - `content-type: application/json` — set by the adapter. A host that
   supplies its own content type is refused: the adapter decides what the
@@ -132,15 +133,19 @@ Redirects are refused, not followed: a redirect would carry the signed
 request to a host the terms never named.
 
 The adapter never logs. There is no log line for a request or a response,
-and the response body never reaches an error message. A host that wants
-telemetry uses `onDiagnostic`, which reports the phase and the status only.
+and the adapter does not copy the response body into its own error messages.
+A host callback that puts a response value in an error can still leak it;
+`safeText` sanitises and caps, it does not redact. A host that wants telemetry
+uses `onDiagnostic`, which reports the phase and the status only.
 
 ## x402 — HTTP 402 agent payment
 
 Implemented from the x402 Foundation specification: **Protocol Version 2**,
-`specs/x402-specification-v2.md` and `specs/transports-v2/http.md` (x402
-Foundation, Linux Foundation). The v2 transport uses three headers, none of
-them `X-` prefixed:
+[x402-specification-v2.md](https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md)
+and
+[transports-v2/http.md](https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/http.md)
+(x402 Foundation, Linux Foundation). The v2 transport uses three headers, none
+of them `X-` prefixed:
 
 | header              | direction       | carries                     |
 | ------------------- | --------------- | --------------------------- |
@@ -148,12 +153,13 @@ them `X-` prefixed:
 | `PAYMENT-SIGNATURE` | client → server | base64 `PaymentPayload`     |
 | `PAYMENT-RESPONSE`  | server → client | base64 `SettlementResponse` |
 
-`X-PAYMENT` is v1 and is not sent. `WWW-Authenticate` is not part of x402
-at any version and is not read. The challenge is read from
-`PAYMENT-REQUIRED`; a JSON body carrying the challenge is the fallback, and
-both the v1 body shape (`paymentRequirements`, `maxAmountRequired`) and the
-v2 body shape (`accepts`, `amount`) are accepted. The version marker the
-server sent is checked, never rewritten.
+`X-PAYMENT` is v1 and is not sent. The core v2 transport does not use
+`WWW-Authenticate` and the adapter does not read it; the `auth-hints` extension
+does discuss it. The challenge is read from `PAYMENT-REQUIRED`; a JSON body
+carrying the challenge is the fallback, and both the v1 body shape
+(`paymentRequirements`, `maxAmountRequired`) and the v2 body shape (`accepts`,
+`amount`) are accepted. The version marker the server sent is checked, never
+rewritten.
 
 ### Amounts, asset, payee
 
@@ -298,9 +304,11 @@ and the approval must agree.
 - A rail result is evidence, not proof. `onSettlement` is where the host
   runs the independent check (`checkSettlement`); the adapter's own checks
   are a floor, not the proof.
-- The response body is never logged and never copied into an error message.
-  A server string that reaches an error message is stripped of control
-  characters and truncated to 80 characters.
+- The adapter never logs the response body and never copies it into its own
+  error messages. A host callback that puts a response value in an error
+  message can still leak it; `safeText` strips control characters and caps
+  the string at 80 characters including the ellipsis, but it does not
+  redact.
 - The `detail` the host's `interpret` returns is not part of the receipt.
   The receipt keeps a fixed field set.
 - The x402 adapter signs through the host's `settle` callback and never

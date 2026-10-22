@@ -27,7 +27,7 @@ For behavior changes, also exercise the changed public seam in a clean process a
 - **Use project language.** `CONTEXT.md` defines the domain vocabulary.
 - **Decisions need ADRs.** Architecture changes add or amend a record under `docs/adr/`.
 - **Residuals need limits.** Honest ceilings belong in `docs/audit/limits.md`.
-- **Tests at public seams.** Prefer `src/index.ts`; bin tests may exercise their entry points.
+- **Tests at public seams.** Prefer `src/index.ts` or the curated `./hostkit` barrel; bin tests may exercise their entry points.
 - **Changelog entries.** Put user-visible changes under `## [Unreleased]`.
 - **Brand is protected.** Intentional brand work follows `docs/brand/BRAND.md`.
 

@@ -62,6 +62,9 @@ An enabled _stdio reference host_ can use a separate locally protected JSON file
 }
 ```
 
+The same sample ships as `examples/privacy-config.example.json`; the aliases
+and the opaque subject reference are placeholders.
+
 Set `PTF_MCP_PRIVACY_CONFIG=/absolute/path/to/privacy-config.json` in the host process environment. **Do not give the agent write access to the file or environment.** The reference MCP server reads this operator JSON **at startup**; file changes require a server restart. Deactivating a Processing Activity, withdrawing a consent, or disabling a basis in the encrypted privacy state is rechecked per processing attempt and does not require re-reading the operator JSON to take effect. The configuration contains **no legal basis identifier** and no directly identifying Data Principal value. Legal basis/activity records are independently established by the operator in encrypted privacy state.
 
 In the reference MCP server, the opt-in mode gates **`ptf_request_data` / `ptf_present_data`** disclosures and **`ptf_propose` / `ptf_redeem` payment processing**. A payment additionally requires operator-defined `actionCategories["/pay"]`, an approved recipient role, a live corresponding Processing Activity and an active Basis Evidence. A payment effect is wrapped so privacy evidence is precommitted **before authority consumption and journaled execution**. It keeps the existing tool names and call flow and adds no agent-supplied legal-basis, controller or Data Principal fields; conservative length/format checks reject malformed or pathological values. Missing/invalid configured controls fail closed. Absence of the setting retains the authority-only processing path (shared input validation may still reject malformed or pathological values).
@@ -84,12 +87,14 @@ A correction remains an operator-controlled `vault-put` followed by `privacy cor
 
 Consult primary law directly:
 
-- [Digital Personal Data Protection Act, 2023 (India Code)](https://www.indiacode.nic.in/bitstream/123456789/22037/1/a2023-22.pdf).
+- [Digital Personal Data Protection Act, 2023 — Gazette print via MeitY](https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf). The [India Code mirror](https://www.indiacode.nic.in/bitstream/123456789/22037/1/a2023-22.pdf) was not reachable from the environment used to verify the text.
 - [Digital Personal Data Protection Rules, 2025 — Gazette G.S.R. 846(E), dated 13 November 2025](https://www.meity.gov.in/static/uploads/2025/11/53450e6e5dc0bfa85ebd78686cadad39.pdf).
-- [MeitY DPDP Rules index (also contains December 2025 corrigendum)](https://www.meity.gov.in/documents/act-and-policies/digital-personal-data-protection-rules-2025-gDOxUjMtQWa).
-- [DPDP Act commencement notification](https://www.meity.gov.in/static/uploads/2025/11/c56ceae6c383460ca69577428d36828b.pdf).
+- [Corrigendum to the Rules, G.S.R. 892(E), 10 December 2025](https://www.meity.gov.in/static/uploads/2025/12/3c7ebbae0e5456f493f486e6845df86b.pdf) (typographical; it does not move a date).
+- [MeitY DPDP Rules index](https://www.meity.gov.in/documents/act-and-policies/digital-personal-data-protection-rules-2025-gDOxUjMtQWa).
+- [DPDP Act commencement notification, G.S.R. 843(E)](https://www.meity.gov.in/static/uploads/2025/11/c56ceae6c383460ca69577428d36828b.pdf).
+- [Data Protection Board of India established, G.S.R. 844(E)](https://www.meity.gov.in/static/uploads/2025/11/cc217843dc3bcb37b2b05bcc3b4e031f.pdf).
 
-Commencement is phased. The rules specify that Rule 4 takes effect one year after the relevant Gazette publication and most other substantive rules at eighteen months. Always verify current applicable notifications before making an organisation-specific compliance determination. PTF does not calculate legal deadlines.
+Commencement is phased. The Act brings ss.1(2), 2, 18-26, 35, 38-43 and 44(1),(3) into force on 13 November 2025; s.6(9) and s.27(1)(d) on 13 November 2026; and ss.3-17, s.27 (except (1)(d)), ss.28-34, 36, 37 and 44(2) on 13 May 2027. The Rules bring the Board into force on 13 November 2025, Consent Managers on 13 November 2026, and the substantive Data Fiduciary duties on 13 May 2027; Rule 4 takes effect one year after the relevant Gazette publication and most other substantive rules at eighteen months. Always verify current applicable notifications before making an organisation-specific compliance determination. PTF does not calculate legal deadlines.
 
 ## Not implemented: operator must supply complementary controls
 

@@ -8,8 +8,8 @@ permalink: /host-kit/
 # Host kit
 
 The host kit is a reusable effect boundary. A host composes it once, at the
-place where it performs external effects, and every operation it performs
-is then decided by Authority, narrowed by the privacy plane, and evidenced.
+place where it performs external effects, and every operation routed through
+it is then decided by Authority, narrowed by the privacy plane, and evidenced.
 
 It is a library boundary, not an interceptor. A host that does not route its
 effects through it is uncovered, not compliant — see
@@ -30,7 +30,7 @@ import {
 The subpath is the surface. The kit binds host stores, so it is not
 re-exported from the curated root barrel.
 
-## One call
+## Compose it once
 
 ```ts
 import {
@@ -71,10 +71,12 @@ const receipt = await boundary.run();
 ```
 
 `privacyForHostOperation` binds the privacy runtime to the encrypted host
-stores. It covers the two reference actions, `/pay` and `/disclose`. A host
-that owns another action composes its own gate from a
-`TrustedProcessingContext`; the runtime, the stores and the ordering do not
-change.
+stores; `createEffectBoundary` owns the nine-step order. The kit removes the
+store-wiring tax, but it does not hide the two objects: the host still builds
+the runtime and the gate, and still owns the effect. `privacyForHostOperation`
+covers the two reference actions, `/pay` and `/disclose`. A host that owns
+another action composes its own gate from a `TrustedProcessingContext`; the
+runtime, the stores and the ordering do not change.
 
 `check()` is the dry run. It performs no effect, writes no Processing Event
 and consumes no authority use. Its result can never execute.
@@ -83,6 +85,18 @@ and consumes no authority use. Its result can never execute.
 carries fixed fields only — ids, digests and the provider's external
 reference. It never carries a secret, the data principal reference, the
 controller or the data categories.
+
+A retry reuses the same attempt. `attemptRef` is optional and defaults to the
+terms digest, so a second `run()` for the same terms is refused with
+`PrivacyEventConflictError` before the effect runs. Supply a distinct,
+opaque reference only for a genuinely distinct operation; the value is
+limited to 200 characters from letters, digits, `:`, `.`, `_` and `-`, and
+it also becomes the effect's `idempotencyKey`.
+
+`persistAuthority` may return a promise. The boundary awaits it before the
+effect, so a host with a database-backed authority keeps the
+burn-before-effect ordering; a rejection is a pre-effect failure
+(`FAILED_FINAL`, no effect).
 
 ## The ordering
 
@@ -101,12 +115,14 @@ The boundary runs nine steps, in this order:
 | 9   | evidence finalize       | `SUCCEEDED`, `FAILED_FINAL` or `OUTCOME_UNKNOWN`                         |
 
 A failure before step 8 is a provable pre-effect failure. The Processing
-Event becomes `FAILED_FINAL` and the error is a `PrivacyPreEffectError`
-(the privacy plane) or the authority's own error.
+Event becomes `FAILED_FINAL` and the error is a `PrivacyPreEffectError`: the
+coarse reason distinguishes an authority denial from a privacy denial, and
+the internal reason stays in operator evidence.
 
 A failure after the effect started is `OUTCOME_UNKNOWN`. The boundary never
 reports a success it cannot prove, and never reports an ambiguous outcome as
-a denial. The execution journal stays the reconciliation oracle.
+a denial. On the provider path, the execution journal stays the
+reconciliation oracle.
 
 The fence in step 7 narrows the withdrawal race to the gap between the fence
 and the external effect. That gap is not one atomic transaction.
@@ -125,23 +141,43 @@ failure as an unknown outcome.
 
 ## Conformance
 
-The kit ships nine executable checks. Each one runs a real boundary against a
-real store and observes the durable state; none of them asserts a slogan.
+The kit ships ten executable checks. Each one builds a real boundary against a
+real encrypted store and observes the durable state; none of them asserts a
+slogan.
+
+The command needs an initialised store and a passphrase:
 
 ```sh
-node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./privacy-config.json
+export PTF_PASSPHRASE="ptf-demo-only-change-me"
+node dist/src/cli.js --dir ./ptf-store init
+node dist/src/cli.js --dir ./ptf-store keygen --alias you
+node dist/src/cli.js --dir ./ptf-store privacy init
+node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./examples/privacy-config.example.json
 ```
 
-The command prints one line per check:
+`--privacy-config` is required. The example file is a template; replace the
+opaque subject reference, controller id and recipient aliases before a real
+run (fields are documented in
+[privacy/dpdp.md](privacy/dpdp.md#operator-setup)). For a real store, use a
+0600 file with `PTF_PASSPHRASE_FILE`; the env var above is for this local demo.
+
+The command tests the **reference composition** and prints the store and
+configuration preamble, then one line per check:
 
 ```text
-authority-first  PASS  ADR-0024 §4: an unauthorised caller is denied by the authority ...
-dry-run-has-no-effect  PASS  ADR-0018: CHECK != REDEEM != EXECUTE - a dry-run result ...
+store: ./ptf-store (privacy state loaded, revision 0)
+operator configuration: valid (recipient roles: 2, /pay categories: 1)
+boundary: reference composition (a host with its own composition calls runHostConformance with its factory)
+authority-first  PASS  ADR-0024 (privacy is a narrowing layer): an unauthorised caller is denied by the authority ...
+dry-run-has-no-effect  PASS  ADR-0018: CHECK != REDEEM != EXECUTE - a dry-run result can never execute
+...
+10/10 checks passed
 ```
 
 The exit code is `0` only when every check passes. The checks run in a
-scratch directory: the operator's store is read, never written, and nothing
-reaches the network.
+scratch directory seeded from the operator's configuration: the operator's
+store is read for the keystore, never written, and nothing reaches the
+network.
 
 A host with its own boundary composition passes its own factory:
 
@@ -154,7 +190,9 @@ const results = await runHostConformance({
 ```
 
 `runHostConformance` returns one result per check. A failing check is a
-result with `ok: false` and a detail, never an exception.
+result with `ok: false` and a detail, never an exception. The CLI does not
+load a host module dynamically; a custom host runs this in its own test
+harness.
 
 ## What it does not do
 

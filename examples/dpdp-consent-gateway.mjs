@@ -16,7 +16,7 @@
 //   - no credentials, no network, and no state outside a temp dir it removes
 //   - no personal values in the output: claim NAMES and opaque refs only
 //   - no internal deny reasons: a failure prints the operator's coarse wording
-//   - no legal claim: the script exercises controls, it certifies nothing
+//   - no legal claim: the script exercises controls and produces evidence
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,7 +46,8 @@ import {
   privacyForHostOperation,
 } from "../dist/src/hostkit/index.js";
 
-// A fixed clock keeps this transcript byte-for-byte reproducible.
+// A fixed clock makes the substantive transcript deterministic; line endings
+// may still differ by platform.
 const NOW = 1767225600; // 2026-01-01T00:00:00Z
 const STAMP = new Date(NOW * 1000).toISOString().replace(".000Z", "Z");
 
@@ -194,10 +195,10 @@ try {
     kind: "certain-legitimate-use",
     id: "b-2",
     controllerId: CONTROLLER,
-    purpose: "clinical-utility-review",
+    purpose: "care-coordination",
     dataCategories: ["diagnostic-summary"],
-    provisionRef: "dpdp:s7:clinical-utility",
-    evidenceRef: "policy:clinical-utility-2026",
+    provisionRef: "dpdp:s7:voluntary-provision",
+    evidenceRef: "policy:care-coordination-2026",
     assertedBy: "clinic-privacy-office",
     active: true,
   });
@@ -646,43 +647,76 @@ try {
       "step 2",
       "Act s.6(1) (data necessary); Act s.7 (certain legitimate uses)",
     ],
-    ["step 3", "Act s.6(10) (burden of proof); Act s.8(4)-s.8(7) (safeguards)"],
+    [
+      "step 3",
+      "Act s.6(10) (burden of proof, in a proceeding); Act s.8(4)-s.8(5) (safeguards)",
+    ],
     [
       "step 4",
-      "Act s.11 (access summary); Rules 6(1)(c), 6(1)(e) (access logs)",
+      "Act s.11 (access summary); Rules 6(1)(c), 6(1)(e) (logging/retention; the event is not an access log)",
     ],
-    ["step 5", "Act s.6(4)-s.6(6) (withdrawal); Act s.8(4)-s.8(7) (erase)"],
-    ["step 6", "Act s.12 (erasure); Act s.8(4)-s.8(7) (erase)"],
-    ["step 7", "Rules 4 + First Schedule Part B (Consent Manager record)"],
+    ["step 5", "Act s.6(4)-s.6(6) (withdrawal); Act s.8(7) (erase)"],
     [
-      "operator duty",
-      "Rules 8(1), 8(2) (retention; 48 hours' notice before erasure)",
+      "step 6",
+      "Act s.12 (erasure); Act s.8(7) (erase); Rule 8(3) (one-year retention floor)",
     ],
-    ["not exercised", "Act s.13; Rules 14; Rules 7; Act s.16"],
+    [
+      "step 7",
+      "Rules 4 + First Schedule Part B (Consent Manager record; transferee Data Fiduciary)",
+    ],
+    [
+      "not applicable",
+      "Rules 8(1), 8(2) (Third Schedule classes only; a clinic is not one)",
+    ],
+    [
+      "not exercised",
+      "Act s.13; Rules 14; Rules 7; Act s.16 (notified restrictions)",
+    ],
   ];
   for (const [label, text] of table) {
     say(`  ${label.padEnd(13)}  ${text}`);
   }
   say("");
   say(
-    "  Act s.6(4)-s.6(6) is exactly what step 5 shows: withdrawal as easy as the"
+    "  Act s.6(4)-s.6(6) frames step 5: the run shows withdrawal, processing"
   );
   say(
-    "  consent was given, processing ceasing, the processor ceasing, and the earlier"
-  );
-  say("  disclosure left untouched.");
-  say(
-    "  Act s.6(10) is what steps 3 and 4 produce: the proof that a notice was given"
-  );
-  say("  and that consent was given.");
-  say(
-    "  Rules 4 with First Schedule Part B is the closest thing in Indian law to the"
+    "  stopped before the effect, and the earlier disclosure left untouched. It"
   );
   say(
-    "  event log this run produces; it becomes enforceable on 13 November 2026."
+    "  does not show comparable ease for the Data Principal, processor cessation,"
+  );
+  say('  or the "reasonable time" s.6(6) allows.');
+  say(
+    "  Act s.6(10) applies where a question arises in a proceeding: the notice"
   );
   say(
-    "  Neither the Act nor the Rules impose a general processing-activity record duty."
+    "  (n-1) and consent (c-1) records are the evidence; the Processing Event"
+  );
+  say("  chains to them and records the attempt.");
+  say(
+    "  Rules 4 with First Schedule Part B is the nearest analogue, but Part B"
+  );
+  say(
+    "  item 3(c) covers transfers to a transferee Data Fiduciary, not processor"
+  );
+  say("  disclosures; PTF is not a Consent Manager.");
+  say(
+    "  Neither the Act nor the Rules impose a general processing-activity record"
+  );
+  say(
+    "  duty; rule 6(1)(c) requires access logging, and rule 6(1)(e) and rule 8(3)"
+  );
+  say("  require one year of logs and data.");
+  say("");
+  say(
+    "  The Act is phased too: ss.1(2), 2, 18-26, 35, 38-43, 44(1),(3) from"
+  );
+  say(
+    "  13 November 2025; s.6(9) and s.27(1)(d) from 13 November 2026; and"
+  );
+  say(
+    "  ss.3-17 (including every Act section in this table) from 13 May 2027."
   );
   say("");
   say(
@@ -694,12 +728,18 @@ try {
   say(
     "  including notice, security safeguards, breach notification and Data Principal"
   );
-  say("  rights). The Board was still being staffed as of August 2026.");
+  say(
+    "  rights). The Board's recruitment advertisement is dated 6 May 2026"
+  );
+  say(
+    "  (Employment News, 6 June 2026); the Government's 12 August 2026 answer"
+  );
+  say("  reported no appointments.");
   say("");
   say(
     "  This table records what the script demonstrates and which obligation it serves."
   );
-  say("  It is not a legal determination, and PTF certifies nothing.");
+  say("  It is not a legal determination.");
   say("");
 
   // ---------------------------------------------------------------------

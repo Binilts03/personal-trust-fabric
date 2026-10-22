@@ -59,7 +59,7 @@ This is a working, tested reference implementation on the road to peer review �
 
 **What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
 
-On top of that there is now a **privacy plane** for India's DPDP Act and Rules: a narrowing gate beside Authority (never a source of it), per-attempt Processing Events as evidence, an operator CLI, and a **host kit** so a host adopts the whole ordering with one call and proves it with a conformance suite. Two HTTP transports (signed JSON over any REST endpoint, and the x402 HTTP 402 flow at protocol version 2) make the effect real. One worked vertical runs the whole thing in a single command: `node examples/dpdp-consent-gateway.mjs`.
+On top of that there is now a **privacy plane** for India's DPDP Act and Rules: a narrowing gate beside Authority (never a source of it), per-attempt Processing Events as evidence, an operator CLI, and a **host kit** that composes the whole ordering in one boundary and can check the composition with a conformance suite. Two HTTP transports (signed JSON to a REST endpoint, and the x402 HTTP 402 flow at protocol version 2) make the effect real. One worked vertical runs the whole thing in a single command: `npm run build && node examples/dpdp-consent-gateway.mjs`.
 
 **What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), or an HSM-backed custodian (file keystore reference). Every ceiling is documented in `docs/audit/limits.md` — the file lists what PTF _cannot_ do more carefully than what it can. Unresolved items are tracked as milestones below, not buried.
 
@@ -68,24 +68,23 @@ On top of that there is now a **privacy plane** for India's DPDP Act and Rules: 
 Requires Node 22+.
 
 ```sh
-npm install personal-trust-fabric
-```
-
-The first release is not on npm yet, so today you install from the repository:
-
-```sh
 npm install github:Binilts03/personal-trust-fabric
 ```
 
-Either way you get a working package: the `ptf`, `ptf-mcp-server` and
-`ptf-pdp-server` binaries, the curated entry points, and the `./privacy`,
-`./providers` and `./vault` subpaths. To work on the library itself:
+The first release is not on npm yet; when it is, `npm install
+personal-trust-fabric` is the same package. Either way you get a working
+package: the `ptf`, `personal-trust-fabric`, `ptf-mcp-server` and
+`ptf-pdp-server` binaries, the curated root, and the `./privacy`, `./hostkit`,
+`./providers`, `./vault`, `./adapters/http`, `./adapters/x402` and
+profile/edge subpaths. To work on the library itself:
 
 ```sh
 git clone https://github.com/Binilts03/personal-trust-fabric.git
 cd personal-trust-fabric
 npm install
-npm run typecheck && npm test && npm run eval
+npm run typecheck && npm run build && npm test && npm run eval
+node scripts/check-seams.mjs
+bash scripts/harness.sh
 ```
 
 The DPDP consent-gateway vertical — a clinic sharing a Data Principal's summary with a lab, a consent withdrawal that stops the next attempt, and an erasure of that Data Principal's records — runs with one command and no credentials: `npm run build && node examples/dpdp-consent-gateway.mjs`. Walkthrough: [docs/verticals/dpdp-consent-gateway.md](docs/verticals/dpdp-consent-gateway.md).
@@ -129,7 +128,7 @@ if (!decision.allow) throw new Error("denied");
 ## Operator quickstart
 
 ```sh
-export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase" && chmod 600 "$HOME/.ptf/passphrase"
+export PTF_PASSPHRASE="choose-a-long-passphrase"
 node dist/src/cli.js --dir ./ptf-store init
 node dist/src/cli.js --dir ./ptf-store keygen --alias you
 node dist/src/cli.js --dir ./ptf-store keygen --alias shop
@@ -142,31 +141,35 @@ node dist/src/cli.js --dir ./ptf-restored restore --from ./backups/ptf-store
 node dist/src/cli.js --help
 ```
 
+The env var is for a throwaway local demo. For a real store, put the
+passphrase in a 0600 file and set `PTF_PASSPHRASE_FILE` (which takes
+precedence).
+
 One CLI/MCP writer per store (optimistic revision control fails closed instead of last-write-wins). Vault records persist AES-256-GCM-encrypted under a keystore DEK with freshness binding; proposals persist per termsDigest file (restart-safe, idempotent); backups are one unit plus an anchor checkpoint and refuse to merge vintages. See `docs/audit/operations.md` for the container image, health signals, rotation, and restore drills.
 
-## Two commands to see the privacy plane work
+## Try the privacy plane
 
 ```sh
-node examples/dpdp-consent-gateway.mjs
+npm run build && node examples/dpdp-consent-gateway.mjs
 ```
 
-The DPDP vertical: a clinic shares a patient's diagnostic summary with a lab, a consent withdrawal stops the next attempt at the effect boundary, and the erasure is exact and subject-bound. No credentials, no network, no state outside a temporary directory. The walkthrough with the full transcript is in `docs/verticals/dpdp-consent-gateway.md`.
+The DPDP vertical: a clinic shares a patient's diagnostic summary with a lab, a consent withdrawal stops the next attempt at the effect boundary, and the erasure is exact and subject-bound — for the PTF-managed records bound to that Data Principal reference; external copies, processor systems and backups are outside that path. No credentials, no network, no state outside a temporary directory. The walkthrough with the full transcript is in `docs/verticals/dpdp-consent-gateway.md`.
 
 ```sh
-node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./privacy-config.json
+node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./examples/privacy-config.example.json
 ```
 
-The conformance suite: nine checks, each one a rule, each one observed against a real encrypted store. It exits non-zero when a check fails, so a host can put it in CI and say, with evidence, that its own agent paths enforce the controls.
+The conformance suite: ten checks, each one a rule, each one observed against a real encrypted store. It exits non-zero when a check fails, so it can be a CI gate for the reference composition. A host with its own composition runs `runHostConformance({ boundary })` from its own test harness; the CLI does not test a third-party host's paths.
 
 ```sh
-export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase"
+export PTF_PASSPHRASE="choose-a-long-passphrase"
 node dist/src/cli.js --dir ./ptf-store init
 node dist/src/cli.js --dir ./ptf-store keygen --alias you
 node dist/src/cli.js --dir ./ptf-store privacy init
-node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./privacy-config.json
+node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./examples/privacy-config.example.json
 ```
 
-It needs an initialised store (for the keystore and the encrypted privacy state) and the operator's privacy configuration, because that is what the checks are run against.
+It needs an initialised store (for the keystore and the encrypted privacy state) and the operator's privacy configuration, because that is what seeds the scenarios. The checks create their own scratch stores and do not write the operator's store.
 
 ## Architecture (four planes)
 

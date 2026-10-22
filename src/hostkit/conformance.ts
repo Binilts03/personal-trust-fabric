@@ -15,6 +15,7 @@ import { type ProtectedProvider } from "../adapters/providers.js";
 import { dpdpProfile } from "../privacy/dpdp.js";
 import type { PrivacyRecipientRole } from "../privacy/model.js";
 import {
+  PrivacyEventConflictError,
   PrivacyOutcomeUnknownError,
   PrivacyPreEffectError,
 } from "../privacy/errors.js";
@@ -42,7 +43,7 @@ import {
 /**
  * The host kit conformance suite.
  *
- * Nine executable checks over the effect boundary. Each check proves one
+ * Ten executable checks over the effect boundary. Each check proves one
  * property of the ordering in `boundary.ts` and names the rule it proves.
  * A failing check is a result, not an exception: the operator sees which
  * property broke.
@@ -82,6 +83,12 @@ export interface HostConformanceResult {
 export interface HostConformanceObservations {
   /** The effect callback ran. */
   effectRan: boolean;
+  /** How many times the effect path ran (a retry must not increase this). */
+  effectRuns: number;
+  /** How many privacy-runtime reads the boundary made. */
+  privacyReads: number;
+  /** The attempt reference the boundary handed the effect. */
+  attemptRef?: string;
   /** The effect callback signalled that the effect started. */
   effectStarted: boolean;
   /** A Processing Event existed when the authority consumption was persisted. */
@@ -130,6 +137,8 @@ export interface HostConformanceScenarioOptions {
   /** The scratch root the scenario store is created in. */
   readonly root: string;
   readonly config: HostPrivacyConfig;
+  /** The operation context. Defaults to the payment context. */
+  readonly context?: Readonly<Record<string, unknown>>;
   /** The declared authorized context. Defaults to the demand's context. */
   readonly authorizedContext?: Readonly<Record<string, unknown>>;
   /** The authority denies the operation. */
@@ -271,6 +280,11 @@ export function buildHostConformanceScenario(
   }
   const recipientRole: PrivacyRecipientRole =
     options.config.recipientRoles[recipient] ?? "other";
+  const context: Readonly<Record<string, unknown>> = options.context ?? {
+    amount: AMOUNT,
+    currency: CURRENCY,
+    recipient,
+  };
   const dek = createPrivacyDek();
   const keys: Record<string, Uint8Array> = { [PRIVACY_DEK_ALIAS]: dek };
   seedPrivacyState(
@@ -311,7 +325,7 @@ export function buildHostConformanceScenario(
   const operation: AuthorityOperation = {
     action: { name: "/pay" },
     resource: { type: RESOURCE.type, id: RESOURCE.id },
-    context: { amount: AMOUNT, currency: CURRENCY, recipient },
+    context: { ...context },
     purpose: PURPOSE,
   };
   const ingress: VerifiedIdentity = {
@@ -326,6 +340,17 @@ export function buildHostConformanceScenario(
     termsDigest: digestForOperation(bound),
   };
 
+  const observed: HostConformanceObservations = {
+    effectRan: false,
+    effectRuns: 0,
+    privacyReads: 0,
+    effectStarted: false,
+    eventPreparedBeforeConsumption: false,
+    authorityPersistedBeforeEffect: false,
+    consentWithdrawn: false,
+    persistFailed: false,
+  };
+
   const scoped = privacyForHostOperation({
     dir,
     keys,
@@ -334,6 +359,31 @@ export function buildHostConformanceScenario(
     demand,
     config: options.config,
     now,
+  });
+
+  // Count reads of the privacy plane. The boundary must decide authority
+  // first; an unauthorised caller must not learn anything from this plane.
+  const runtime = new Proxy(scoped.runtime, {
+    get(target, property, receiver) {
+      const member = Reflect.get(target, property, receiver);
+      if (typeof member !== "function") return member;
+      if (
+        property === "preflight" ||
+        property === "recheck" ||
+        property === "fence" ||
+        property === "prepareEvent" ||
+        property === "finalizeEvent"
+      ) {
+        return (...args: unknown[]) => {
+          observed.privacyReads += 1;
+          return (member as (...inner: unknown[]) => unknown).apply(
+            target,
+            args
+          );
+        };
+      }
+      return member.bind(target);
+    },
   });
 
   const redemption: Redemption | undefined =
@@ -345,7 +395,7 @@ export function buildHostConformanceScenario(
           chainId: CAPABILITY_ID,
           operation: {
             cmd: "/pay",
-            args: { ...operation.context },
+            args: { ...context },
             recipient,
             resource: RESOURCE.id,
             purpose: PURPOSE,
@@ -356,15 +406,6 @@ export function buildHostConformanceScenario(
           redemptionId: "rdm-conformance",
         };
 
-  const observed: HostConformanceObservations = {
-    effectRan: false,
-    effectStarted: false,
-    eventPreparedBeforeConsumption: false,
-    authorityPersistedBeforeEffect: false,
-    consentWithdrawn: false,
-    persistFailed: false,
-  };
-
   const provider: ProtectedProvider = {
     kind: "payment",
     namespace: "conformance",
@@ -372,6 +413,8 @@ export function buildHostConformanceScenario(
       // The observations are taken here, at the rail boundary: the durable
       // authority state must already show the consumed use.
       observed.effectRan = true;
+      observed.effectRuns += 1;
+      observed.attemptRef = req.termsDigest;
       observed.authorityPersistedBeforeEffect =
         authorityUsesOnDisk(dir, GRANT_ID) > 0;
       observed.effectStarted = true;
@@ -404,6 +447,8 @@ export function buildHostConformanceScenario(
     ctx: HostEffectContext
   ): Promise<ExecutionReceipt | void> => {
     observed.effectRan = true;
+    observed.effectRuns += 1;
+    observed.attemptRef = ctx.attemptRef;
     observed.authorityPersistedBeforeEffect =
       authorityUsesOnDisk(dir, GRANT_ID) > 0;
     if (options.failBeforeStart === true) {
@@ -452,8 +497,8 @@ export function buildHostConformanceScenario(
     ingress,
     operation,
     demand,
-    authorizedContext: options.authorizedContext ?? operation.context,
-    runtime: scoped.runtime,
+    authorizedContext: options.authorizedContext ?? context,
+    runtime,
     gate: scoped.gate,
     events: new FilePrivacyEventRepository({ dir, dek, nowSec: now }),
     provider,
@@ -523,15 +568,18 @@ interface HostCheck {
 }
 
 /**
- * The nine checks. Each one runs a real boundary against a real store and
- * observes the durable state; none of them asserts a slogan.
+ * The ten checks. Each one runs a real boundary against a real store and
+ * observes the durable state; none of them asserts a slogan. The spec's
+ * `coarse-failure` and `opaque-identifiers` properties are asserted by the
+ * authority/privacy denial and secret-free checks rather than given ids of
+ * their own.
  */
 const CHECKS: readonly HostCheck[] = [
   {
     id: "authority-first",
     title: "the authority decides first and consumes nothing",
     requirement:
-      "ADR-0024 §4: an unauthorised caller is denied by the authority before the privacy plane can allow anything, and the preflight consumes no authority use",
+      "ADR-0024 (privacy is a narrowing layer): an unauthorised caller is denied by the authority before the privacy plane is read, and the preflight consumes no authority use",
     async run(ctx): Promise<void> {
       const denied = ctx.scenario({
         id: "authority-first",
@@ -539,22 +587,39 @@ const CHECKS: readonly HostCheck[] = [
         config: ctx.options.config,
         denyAuthority: true,
       });
-      const decision = await ctx.boundary(denied).check();
+      let thrown: unknown;
+      try {
+        await ctx.boundary(denied).run();
+      } catch (error) {
+        thrown = error;
+      }
       assert(
-        decision.allow === false && decision.reason === "authority-denied",
-        `an unauthorised operation must be denied by the authority, got: ${decision.reason ?? "allowed"}`
+        thrown instanceof PrivacyPreEffectError,
+        `an unauthorised operation must fail before the effect, got: ${describe(thrown)}`
+      );
+      assert(
+        (thrown as Error).message === "authority denied",
+        `the authority denial must be coarse, got: ${(thrown as Error).message}`
+      );
+      assert(
+        denied.observed.privacyReads === 0,
+        "the privacy plane must not be read for an unauthorised caller"
       );
       assert(
         denied.auth.snapshot().used.length === 0,
         "the authority preflight must not consume a use"
       );
       assert(
-        denied.observed.effectRan === false,
-        "the dry run must not reach the effect"
+        denied.observed.effectRuns === 0,
+        "the denied attempt must not reach the effect"
       );
       assert(
         eventFiles(denied.dir) === 0,
-        "the dry run must not write a Processing Event"
+        "the denied attempt must not write a Processing Event"
+      );
+      assert(
+        authorityUsesOnDisk(denied.dir, GRANT_ID) === 0,
+        "the denied attempt must not persist a consumption"
       );
     },
   },
@@ -601,7 +666,7 @@ const CHECKS: readonly HostCheck[] = [
     id: "privacy-denial-fails-closed",
     title: "a privacy denial stops the attempt before any consumption",
     requirement:
-      "ADR-0024 §3 and §9: a privacy decision may deny an operation, and a denied attempt never consumes authority and never runs the effect",
+      "ADR-0024 (privacy is a narrowing layer; invariant 9): a privacy decision may deny an operation, and a denied attempt never consumes authority and never runs the effect",
     async run(ctx): Promise<void> {
       const scenario = ctx.scenario({
         id: "privacy-denied",
@@ -621,7 +686,11 @@ const CHECKS: readonly HostCheck[] = [
         `the denial must be a pre-effect failure, got: ${describe(thrown)}`
       );
       assert(
-        scenario.observed.effectRan === false,
+        (thrown as Error).message === "privacy denied",
+        `the privacy denial must be coarse, got: ${(thrown as Error).message}`
+      );
+      assert(
+        scenario.observed.effectRuns === 0,
         "a denied attempt must not run the effect"
       );
       assert(
@@ -707,6 +776,48 @@ const CHECKS: readonly HostCheck[] = [
       assert(
         blocked.observed.effectRan === false,
         "the effect must not run when the consumption could not be persisted"
+      );
+    },
+  },
+  {
+    id: "no-double-effect-on-retry",
+    title: "a retry of the same attempt cannot run the effect twice",
+    requirement:
+      "ADR-0024 (attempt identity is explicit): a retry lands on the existing attempt, and a terminal attempt is never reused for a second effect",
+    async run(ctx): Promise<void> {
+      const scenario = ctx.scenario({
+        id: "retry",
+        root: ctx.options.tmpDir,
+        config: ctx.options.config,
+        callbackPath: true,
+      });
+      const boundary = ctx.boundary(scenario);
+      const first = await boundary.run();
+      assert(
+        typeof first.eventId === "string" && first.eventId.length > 0,
+        "the first attempt must name its Processing Event"
+      );
+      let thrown: unknown;
+      try {
+        await boundary.run();
+      } catch (error) {
+        thrown = error;
+      }
+      assert(
+        thrown instanceof PrivacyEventConflictError,
+        `a retry must be refused as an existing attempt, got: ${describe(thrown)}`
+      );
+      assert(
+        scenario.observed.effectRuns === 1,
+        `the effect must run once, ran ${scenario.observed.effectRuns} times`
+      );
+      assert(
+        eventFiles(scenario.dir) === 1,
+        `exactly one Processing Event must cover both calls, found ${eventFiles(scenario.dir)}`
+      );
+      assert(
+        authorityUsesOnDisk(scenario.dir, GRANT_ID) === 1,
+        `exactly one authority use must be burned, found ${authorityUsesOnDisk(scenario.dir, GRANT_ID)}`
       );
     },
   },
@@ -872,10 +983,18 @@ const CHECKS: readonly HostCheck[] = [
     requirement:
       "invariant 3 and ADR-0018: use without possession - no personal value and no direct subject identifier reaches a receipt or an event",
     async run(ctx): Promise<void> {
+      const recipient = Object.keys(ctx.options.config.recipientRoles)[0] ?? "";
+      const sentinel = "sentinel-secret-7f3a";
       const scenario = ctx.scenario({
         id: "secret-free",
         root: ctx.options.tmpDir,
         config: ctx.options.config,
+        context: {
+          amount: AMOUNT,
+          currency: CURRENCY,
+          recipient,
+          secret: sentinel,
+        },
       });
       const receipt = await ctx.boundary(scenario).run();
       const rendered = canonicalize(receipt);
@@ -924,8 +1043,27 @@ const CHECKS: readonly HostCheck[] = [
         "the event must not carry a direct subject identifier"
       );
       assert(
-        canonicalize(event).indexOf("secret") === -1,
-        "the event must not carry a secret"
+        !canonicalize(event).includes(sentinel),
+        "the event must not carry the effect-bearing secret"
+      );
+      const attemptRef = scenario.observed.attemptRef;
+      if (typeof attemptRef !== "string") {
+        throw new Error("the effect must receive an attempt reference");
+      }
+      assert(
+        /^[A-Za-z0-9][A-Za-z0-9:._-]{0,199}$/.test(attemptRef),
+        `the attempt reference must be an opaque token, got: ${attemptRef}`
+      );
+      assert(
+        !attemptRef.includes("@") &&
+          !attemptRef.includes(" ") &&
+          attemptRef !== scenario.config.dataPrincipalRef &&
+          !attemptRef.includes(scenario.config.dataPrincipalRef),
+        "the attempt reference must not carry a direct subject identifier"
+      );
+      assert(
+        !rendered.includes(sentinel),
+        "the receipt must not carry the effect-bearing secret"
       );
     },
   },

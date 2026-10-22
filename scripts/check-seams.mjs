@@ -2,8 +2,9 @@
 /**
  * Single source of truth for PTF's static architecture guards.
  *
- * Public seam: tests may import only the public barrel (`src/index.ts`) or the
- * bin entry points. A small, exact list of repository-owned persistence
+ * Public seam: tests may import the public barrel (`src/index.ts`), the
+ * curated `./hostkit` subpath barrel, or the bin entry points. A small,
+ * exact list of repository-owned persistence
  * suites may reach the file repositories directly because the published
  * `./privacy` surface intentionally excludes them. The exemption is scoped to
  * the named test file and specifier; it never applies repo-wide.

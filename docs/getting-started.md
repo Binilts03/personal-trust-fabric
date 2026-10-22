@@ -11,23 +11,20 @@ Requires Node 22+.
 
 ## Install
 
-To use PTF as a dependency in your own project:
-
-```sh
-npm install personal-trust-fabric
-```
-
-The first release is not on npm yet. Until it is, install it from the
-repository (npm builds the package during the install, so you get a working
-`dist`):
+To use PTF as a dependency in your own project, install from the repository
+until the first npm release lands (npm builds the package during the install,
+so you get a working `dist`):
 
 ```sh
 npm install github:Binilts03/personal-trust-fabric
 ```
 
-That gives you the `ptf`, `ptf-mcp-server` and `ptf-pdp-server` binaries,
-the curated entry point, and the `./privacy`, `./providers` and `./vault`
-subpaths.
+Once it is published, `npm install personal-trust-fabric` is the same package.
+
+That gives you the `ptf`, `personal-trust-fabric`, `ptf-mcp-server` and
+`ptf-pdp-server` binaries, the curated entry point, and the `./privacy`,
+`./hostkit`, `./providers`, `./vault`, `./adapters/http`, `./adapters/x402`
+and profile/edge subpaths.
 
 To work on PTF itself:
 
@@ -40,13 +37,17 @@ npm install
 ## Verify
 
 ```sh
-npm run typecheck && npm test && npm run eval
+npm run typecheck && npm run build && npm test && npm run eval
+node scripts/check-seams.mjs
+bash scripts/harness.sh
+npm run verify:package
+npm run check:brand
 ```
 
-All three must pass. The gate runs: strict TypeScript, 490+ unit tests, 9
-eval/property tests, brand check, zero-dependency core check, public-seam
-test check, and the package check that installs the tarball into a clean
-directory.
+All of these must pass. The gate runs: strict TypeScript, the build, 576 unit
+tests across 92 suites, 9 eval/property tests, the brand check, the
+zero-dependency core check, the public-seam test check, the harness, and the
+package check that installs the tarball into a clean directory.
 
 To check only what a consumer receives:
 
@@ -93,7 +94,7 @@ if (!decision.allow) throw new Error("denied");
 ## Operator Quickstart (Real Use)
 
 ```sh
-export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase" && chmod 600 "$HOME/.ptf/passphrase"
+export PTF_PASSPHRASE="choose-a-long-passphrase"
 node dist/src/cli.js --dir ./ptf-store init
 node dist/src/cli.js --dir ./ptf-store keygen --alias you
 node dist/src/cli.js --dir ./ptf-store keygen --alias shop
@@ -104,6 +105,10 @@ node dist/src/cli.js --dir ./ptf-store audit --verify
 node dist/src/cli.js --dir ./ptf-store backup --to ./backups/ptf-store
 node dist/src/cli.js --dir ./ptf-restored restore --from ./backups/ptf-store
 ```
+
+For a real store, put the passphrase in a 0600 file and set
+`PTF_PASSPHRASE_FILE` (which takes precedence) instead of exporting the
+secret; the env var above is for a throwaway local demo.
 
 One CLI/MCP writer per store (optimistic revision control fails closed). Vault records persist AES-256-GCM-encrypted under a keystore DEK with freshness binding. Proposals persist per termsDigest file (restart-safe, idempotent). Backups are one unit plus an anchor checkpoint and refuse to merge vintages.
 

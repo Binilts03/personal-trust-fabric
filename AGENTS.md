@@ -9,7 +9,7 @@ PTF is a user-owned authority and protected-use layer. Agents may reason about a
 - `src/store/` — durable local state, keystore, vault, backup, proposals, and audit support.
 - `src/profiles/` — domain conventions over the generic authority model.
 - `src/privacy/` - DPDP privacy plane: a narrowing gate beside Authority, never a source of it. `mcp.ts` builds policy, `host.ts` wires the encrypted host stores for any host, `mcp-host.ts` is the MCP shape of that wiring, `runtime.ts` owns preflight/recheck/fence/prepare/finalize.
-- `src/hostkit/` - the adoption surface: one call that puts the gates around an effect in the required order, plus the conformance suite a host runs in CI.
+- `src/hostkit/` - the adoption surface: one boundary composition that puts the gates around an effect in the required order, plus the conformance suite a host runs in CI.
 - `tests/` — public-seam, abuse, and regression tests.
 - `docs/adr/` — architecture decisions.
 - `docs/audit/` — public architecture, limits, verification, operations, and threat evidence.
@@ -39,7 +39,7 @@ npm run eval
 bash scripts/harness.sh
 ```
 
-Tests use `src/index.ts` as the public seam; CLI/MCP/PDP bin tests may import their bin entry points. Architecture changes require an ADR. User-visible changes require a changelog entry.
+Tests use `src/index.ts` as the public seam, or the curated `./hostkit` barrel when the test exercises the host kit; CLI/MCP/PDP bin tests may import their bin entry points. Architecture changes require an ADR. User-visible changes require a changelog entry.
 
 ## Brand contract
 

@@ -248,18 +248,24 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   only forwards the headers it returned. A non-2xx, an unparsable body, a
   missing external reference, a refused attestation, a network error, a
   timeout, a refused redirect, and an oversized body (over 1 MiB) are all
-  failed effects — the adapter never invents a success. The response body
-  is never logged and never copied into an error message; `onDiagnostic`
-  reports phase and status only; a server string that reaches an error
-  message is stripped of control characters and truncated to 80. The
-  host's `interpret` owns the response mapping, so a host that reads a
-  credential out of the response and puts it in an error message would leak
-  it — host duty. Host-supplied headers are checked before the socket
+  failed effects — the adapter never invents a success. The adapter never
+  logs the response body and never copies it into its own error messages. It
+  parses the body and hands the object to the host's `interpret`; `safeText`
+  strips control characters and caps a server or host string at 80 characters
+  including the ellipsis, but it does not redact. A host callback that puts a
+  response value in an error message can still leak it — host duty.
+  `onDiagnostic` reports phase and status only. Host-supplied headers are
+  checked before the socket
   (CR/LF, a colon in a name, a name over 64 characters, a value over 4096,
   `host`, `content-length`, `transfer-encoding`, `connection`, and any
   `content-type` are refused); the endpoint url must be `https:` unless the
   host sets `allowInsecureHttp`, and it is a host constant, never a request
-  term. The whole submit has one deadline (30s by default) and the
+  term. Redirects are refused. The endpoint is not SSRF-guarded: the adapter
+  does not resolve or pin DNS, and it does not block private address ranges,
+  so a host that derives the URL from tenant input, or a poisoned resolver,
+  can reach a private address. Use `fetchWithPinning` or an egress proxy for
+  that residual (the same URL residual recorded above). The whole submit has
+  one deadline (30s by default) and the
   `Idempotency-Key` header defaults to the terms digest. x402 speaks
   Protocol Version 2 (`PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE` /
   `PAYMENT-RESPONSE`; `X-PAYMENT` is v1 and is not sent,
@@ -278,6 +284,32 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   payment is never retried by the adapter, and `settle` only signs: it
   never broadcasts and never moves value. Rail results stay evidence
   (proof: `tests/http-provider.test.ts`, `tests/x402-provider.test.ts`).
+
+## Host kit (experimental)
+
+- The boundary is a library, not an interceptor. A host that does not route
+  every effect through `createEffectBoundary` (or an equivalent) is
+  **uncovered**: the boundary does not cover it. The conformance suite checks
+  the composition it is given; it cannot prove the host routes every path
+  through it (ADR-0025 decisions 1 and 4).
+- The callback contract distinguishes pre-effect from post-effect failure with
+  `ctx.markEffectStarted()`. A host callback that starts an external effect
+  without calling it first makes a started effect look like `FAILED_FINAL`;
+  call it before the first side effect.
+- `persistAuthority` defaults to `saveAuthority`; a host with a database-backed
+  authority must supply its own durable CAS and await it. A crash between the
+  in-memory consumption and the durable write can lose the use; a crash after
+  the write but before the effect leaves a durable use with an unknown
+  outcome. The host owns that reconciliation.
+- The fence and the external effect are still two steps. A withdrawal can land
+  between them; the fence narrows the race and does not eliminate it. A host
+  that needs strict revocation ordering must serialise at its own level.
+- The receipt is a projection of the authorized terms, not proof that the
+  external system did what it claimed. Provider settlement and attestation stay
+  evidence; use `checkSettlement` for rail-side proof.
+- The conformance suite is a scenario factory in process. It does not load a
+  host module dynamically; a custom host passes its factory and runs it in its
+  own test harness.
 
 ## Vault / agent contract / providers (P0 slices 1–3)
 

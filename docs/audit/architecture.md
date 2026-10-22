@@ -89,6 +89,14 @@ no lateral delegation.
   `renderProposal`; never mints authority.
 - `profiles/payment`: payment conventions + helpers (`paymentBounds`,
   `recipientBounds`), no policy language, no I/O.
+- `hostkit`: opt-in composition of Authority and the privacy runtime at the
+  effect boundary (nine-step order, durable consumption, privacy fence,
+  receipt/evidence projection) plus the in-process conformance suite. It is a
+  library boundary, not an interceptor: a host that does not route an effect
+  through it is uncovered, not proven (ADR-0025).
+- `adapters/http` / `adapters/x402`: signed-JSON POST and x402 v2 HTTP
+  transports over the protected provider seam; both fail closed and keep the
+  credential in the host's `sign` callback.
 - `adapters/providers`: protected provider seam (payment/travel/retail/email/
   identity fakes + `providerAsExecutor`/`executeViaProvider`); PTF owns policy,
   consent, secret-handling, receipts — rails stay host duty.

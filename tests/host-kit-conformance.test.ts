@@ -65,9 +65,16 @@ const boundaryWithoutFence: HostConformanceBoundaryFactory = (
 ): HostEffectBoundary => {
   const termsMatch = (): boolean =>
     sameTerms(subject.operation.context, subject.authorizedContext);
+  const authorityPreview = (): boolean =>
+    subject.auth.evaluate(subject.operation, subject.ingress, {
+      nowSec: subject.now(),
+    }).allow;
   return {
     async check() {
       if (!termsMatch()) return { allow: false, reason: "terms-mismatch" };
+      if (!authorityPreview()) {
+        return { allow: false, reason: "authority-denied" };
+      }
       const first = subject.runtime.preflight(subject.gate);
       if (!first.allow) {
         return { allow: false, reason: first.publicReason };
@@ -78,6 +85,9 @@ const boundaryWithoutFence: HostConformanceBoundaryFactory = (
       if (!termsMatch()) {
         throw new PrivacyPreEffectError("the effect context differs");
       }
+      if (!authorityPreview()) {
+        throw new PrivacyPreEffectError("authority denied");
+      }
       const first = subject.runtime.preflight(subject.gate);
       if (!first.allow) {
         throw new PrivacyPreEffectError(
@@ -87,7 +97,11 @@ const boundaryWithoutFence: HostConformanceBoundaryFactory = (
         );
       }
       const live = subject.runtime.recheck(first, subject.gate);
-      const event = subject.runtime.prepareEvent(live, subject.gate);
+      const event = subject.runtime.prepareEvent(
+        live,
+        subject.gate,
+        live.termsDigest
+      );
       const consumed = subject.auth.evaluate(
         subject.operation,
         subject.ingress,
@@ -110,6 +124,7 @@ const boundaryWithoutFence: HostConformanceBoundaryFactory = (
           operation: subject.operation,
           termsDigest: live.termsDigest,
           attemptRef: event.attemptRef ?? "attempt",
+          idempotencyKey: event.attemptRef ?? "attempt",
           markEffectStarted: () => {
             started = true;
           },
@@ -147,7 +162,7 @@ describe("host kit conformance suite", () => {
         config: CONFIG,
         tmpDir: root,
       });
-      assert.equal(results.length, 9);
+      assert.equal(results.length, 10);
       for (const result of results) {
         assert.ok(
           result.ok,

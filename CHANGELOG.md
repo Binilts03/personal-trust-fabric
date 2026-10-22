@@ -13,8 +13,8 @@ release day. This project adheres to Semantic Versioning.
 
 ### Added
 
-- The host kit: `createEffectBoundary` is the one call that puts the authority and privacy gates around an effect in the right order (authority first and non-consuming, then the privacy preflight and the live recheck, then the evidence precommit, then the authority consumption and its durable CAS, then the privacy fence at the effect boundary, then the effect, then the finalisation as `SUCCEEDED`, `FAILED_FINAL`, or `OUTCOME_UNKNOWN`). `runHostConformance` is nine checks, each one a rule, each one observed against a real encrypted store, so a host can prove in CI that its own agent paths enforce the controls. `ptf host-conformance` runs the same suite from the operator surface and exits non-zero when a check fails. The kit ships on the `./hostkit` subpath.
-- Two HTTP provider transports that speak real protocols: `createHttpProvider` signs a canonical JSON body and posts it to any REST endpoint (the credential stays in the host's `sign` callback), and `createX402Provider` speaks the x402 HTTP 402 flow at Protocol Version 2 (`PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE`). The x402 amount is in the asset's atomic units and the core spec does not define the decimals, so the host supplies the exact authorised amount and the adapter compares it for equality and never converts units. It refuses before settling anything when the challenge asks for more than the user authorised, or when the network, scheme, or signed value differs from the approved terms. Both ship on the `./adapters/http` and `./adapters/x402` subpaths and are tested against a real local HTTP server.
+- The host kit: `createEffectBoundary` composes the authority and privacy gates around an effect in the right order (authority first and non-consuming, then the privacy preflight and the live recheck, then the evidence precommit, then the authority consumption and its durable CAS, then the privacy fence at the effect boundary, then the effect, then the finalisation as `SUCCEEDED`, `FAILED_FINAL`, or `OUTCOME_UNKNOWN`). `runHostConformance` is ten checks, each one a rule, each one observed against a real encrypted store, so a host can check the composition it is given in CI. It does not prove that a separately running host routes every effect through the boundary; a host that does not is uncovered, not proven. `ptf host-conformance` runs the same suite from the operator surface against the reference composition and exits non-zero when a check fails. The kit ships on the `./hostkit` subpath.
+- Two HTTP provider transports: `createHttpProvider` signs a canonical JSON body and posts it to a REST endpoint (the credential stays in the host's `sign` callback), and `createX402Provider` speaks the x402 HTTP 402 flow at Protocol Version 2 (`PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE`). The x402 amount is in the asset's atomic units and the core spec does not define the decimals, so the host supplies the exact authorised amount and the adapter compares it for equality and never converts units. It refuses before settling anything when the challenge amount differs in either direction, or when the network, scheme, asset, payee, resource or signed value differs from the approved terms. Both ship on the `./adapters/http` and `./adapters/x402` subpaths and are tested against a real local HTTP server: the x402 transport covers higher/lower amounts, different assets, different payees and different resources; the HTTP transport covers signed submission, failures, redirects, timeouts and secret-free bodies.
 
 - P3P wire-shape alignment (SDK 1.3.0): `normalizeP3pReceipt` maps real
   `decodeReceipt` output (`status`/`reference`/`settlement`/`challengeId`/
@@ -235,6 +235,10 @@ additions, and each one is listed there with its trigger.
 
 ### Fixed
 
+- The `@modelcontextprotocol/server` floor is now `^2.3.1` in `package.json`
+  and the lockfile, closing the drift that let a fresh install resolve an
+  older SDK. `npm audit --omit=dev` reports no vulnerabilities on the
+  resulting tree.
 - The two HTTP provider transports, after an independent security review:
   the x402 transport now binds the challenged **asset** and **payee** to
   the authorised terms (`authorizedAsset`, `authorizedPayTo`, and the

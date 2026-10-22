@@ -55,15 +55,20 @@ All commands require `--dir <store-path>` (default `./ptf-store`).
 
 ## Privacy & Host Kit
 
-| Command                                    | Description                                                                      |
-| ------------------------------------------ | -------------------------------------------------------------------------------- |
-| `privacy <subcommand>`                     | DPDP evidence, runtime checks, summaries, erasure, recovery (`ptf privacy help`) |
-| `host-conformance --privacy-config <file>` | Run the host kit's nine conformance checks against the store (no network)        |
+| Command                                    | Description                                                                              |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `privacy <subcommand>`                     | DPDP evidence, runtime checks, summaries, erasure, recovery (`ptf privacy help`)         |
+| `host-conformance --privacy-config <file>` | Run the host kit's ten conformance checks against the reference composition (no network) |
 
-`host-conformance` prints one line per check — id, `PASS`/`FAIL`, the rule
-the check proves, and the failure detail. The exit code is `0` only when
-every check passes. The checks run in a scratch directory: the store is read,
-never written.
+`host-conformance` prints the store, the operator-configuration summary, a
+boundary line, one line per check (id, `PASS`/`FAIL`, the rule the check
+proves, and any failure detail), and `N/N checks passed`. The exit code is `0`
+only when every check passes. The checks run in a scratch directory: the
+store is read, never written. It needs an initialised store
+(`init`, `keygen`, `privacy init`) and a privacy config; the shipped template
+is `examples/privacy-config.example.json`. The CLI tests the reference
+composition. A host with its own composition calls
+`runHostConformance({ boundary })` in its own test harness.
 
 ## Common Flags
 
@@ -85,7 +90,7 @@ never written.
 
 ```sh
 # Initialize and set up keys
-export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase"
+export PTF_PASSPHRASE="choose-a-long-passphrase"
 node dist/src/cli.js --dir ./ptf-store init
 node dist/src/cli.js --dir ./ptf-store keygen --alias you
 node dist/src/cli.js --dir ./ptf-store keygen --alias shop

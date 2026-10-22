@@ -5,8 +5,10 @@
  * The kit is a library boundary, not an interceptor: a host that does not
  * compose it is uncovered, not compliant (ADR-0025).
  *
- * The privacy store wiring lives in `src/privacy/host.ts` and stays out of
- * this barrel on purpose: the host binds its own stores.
+ * The privacy store wiring lives in `src/privacy/host.ts`. It is exposed
+ * here on purpose: removing the store-wiring tax is the point of the kit
+ * (ADR-0025, amendment of 2026-10-22). The curated `./privacy` subpath
+ * remains the persistence-free library surface.
  */
 export { createEffectBoundary, hostTermsDigest } from "./boundary.js";
 export type {
@@ -19,6 +21,7 @@ export type {
 } from "./boundary.js";
 
 export {
+  PrivacyEventConflictError,
   PrivacyOutcomeUnknownError,
   PrivacyPreEffectError,
 } from "../privacy/errors.js";

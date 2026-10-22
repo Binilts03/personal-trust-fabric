@@ -8,7 +8,8 @@ permalink: /launch/demo/
 # The five-minute demo
 
 The demo is one terminal and one idea: the authority belongs to the person,
-not to the platform, and every effect leaves evidence.
+not to the platform, and every effect routed through the boundary leaves
+evidence.
 
 Everything below runs from a clean clone with no credentials and no network
 beyond `npm install`.
@@ -20,16 +21,17 @@ npm install
 npm run build
 ```
 
-## Beat 1: the decision is exact (30 seconds)
+## Beat 1: the decision is bounded (30 seconds)
 
 ```sh
 node examples/payment-disclosure.mjs
 ```
 
-The point of this beat: the decision is a pure function of an exact
-operation, an exact recipient, an exact amount and a verified actor. Change
-the amount by one rupee and the grant no longer covers it. There is no model
-in the loop and no "the agent decided".
+The point of this beat: the decision is a deterministic policy evaluation of
+the operation, the recipient, the amount and the host-asserted actor. The
+grant is a set of bounds, not one exact operation. In this example the payment
+cap is ₹1,790: ₹1,790 fits, ₹1,791 does not. The host checks every effect
+against the grant. There is no model in the loop and no "the agent decided".
 
 ## Beat 2: the DPDP vertical (2 minutes)
 
@@ -43,29 +45,40 @@ things in the transcript:
 1. The disclosure reveals claim **names**, not values, and only the ones the
    processing activity and basis allow.
 2. A Processing Event is written before the effect and carries the purpose,
-   the basis, the category and the recipient.
+   the basis, the category and the recipient. It records the requested
+   category set, including any category the basis withheld; it is not the
+   disclosure manifest.
 3. Consent is withdrawn. The **second** attempt is stopped at the effect
-   boundary. The first disclosure still stands; the second never happened,
-   and the evidence says so instead of guessing.
-4. The erasure is exact and subject-bound, and it refuses anything it cannot
-   prove belongs to that subject.
+   boundary: the withdrawal lands after the live privacy recheck but before
+   the effect, and nothing is released. A **third**, once the withdrawal is
+   durable, is denied before any evidence is prepared. The first disclosure
+   stands; neither stopped attempt reached the lab.
+4. Erasure is scoped to the PTF-managed records bound to that subject. The
+   lab's own copies and backups are outside this path.
 
 The walkthrough with the full transcript is in
 [../verticals/dpdp-consent-gateway.md](../verticals/dpdp-consent-gateway.md).
 
-## Beat 3: prove the host enforces (1 minute)
+## Beat 3: prove the composition (1 minute)
 
 ```sh
-export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase"
+export PTF_PASSPHRASE="ptf-demo-only-change-me"
 node dist/src/cli.js --dir ./ptf-store init
 node dist/src/cli.js --dir ./ptf-store keygen --alias you
 node dist/src/cli.js --dir ./ptf-store privacy init
-node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./privacy-config.json
+node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./examples/privacy-config.example.json
 ```
 
-Nine checks, each one a rule, each one printed with the rule it proves. The
-exit code is 0 only when all of them pass, so a host can put it in CI and
-say, with evidence, that its own agent paths enforce the controls.
+Ten checks, each one a rule, each one printed with the rule it proves. The
+exit code is 0 only when all of them pass. The suite checks the composition it
+is given; it does not prove that a separately running host routes every
+effect through the boundary. A host that does not is uncovered, not proven.
+
+The example config is a template. Replace the opaque subject reference, the
+controller id and the recipient aliases before a real run; the fields are
+documented in [../privacy/dpdp.md](../privacy/dpdp.md#operator-setup). The
+throwaway passphrase above is only for this local demo; use
+`PTF_PASSPHRASE_FILE` with a 0600 file for a real store.
 
 ## Beat 4: the crash window (1 minute)
 
@@ -103,5 +116,5 @@ Say this part out loud, it is what makes the rest credible:
 The gap this project fills is not a feature gap, it is a standards gap:
 agent protocols (MCP, A2A) tell agents how to talk, not what they may do.
 The interesting work now is a real deployment with a real provider and a
-real data controller, and a second pair of eyes on the ordering guarantees
+real data controller, and a second pair of eyes on the ordering invariants
 in `src/hostkit/`.

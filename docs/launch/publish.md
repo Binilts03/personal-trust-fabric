@@ -1,10 +1,12 @@
 # Publishing to npm
 
-PTF is publish-ready: `npm pack` produces a 236 kB tarball with the compiled
-`dist`, the curated `exports` map, the `ptf` / `ptf-mcp-server` /
-`ptf-pdp-server` binaries, the README and the LICENSE. The npm name
-`personal-trust-fabric` is unclaimed (verified with `npm view`, which returns
-404 for an unclaimed name).
+The package is publishable: `npm pack` produces a tarball with the compiled
+`dist`, the curated `exports` map, four binaries (`ptf`,
+`personal-trust-fabric`, `ptf-mcp-server`, `ptf-pdp-server`), the README and
+the LICENSE. At the 2026-10-22 check it was 269 kB (263 KiB), 161 files;
+re-measure with `npm pack --dry-run --json` immediately before publishing.
+The npm name `personal-trust-fabric` is unclaimed (verified with `npm view`,
+which returns 404 for an unclaimed name); re-check the name too.
 
 This runbook is the last mile. It needs one human with an npm account.
 
@@ -13,9 +15,11 @@ This runbook is the last mile. It needs one human with an npm account.
 1. The working tree is clean and `main` is green:
 
    ```sh
-   npm run typecheck && npm test && npm run eval
+   npm run typecheck && npm run build && npm test && npm run eval
    node scripts/check-seams.mjs
    bash scripts/harness.sh
+   npm run verify:package
+   npm run check:brand
    ```
 
 2. The CHANGELOG has an entry for everything in the release, and the version
@@ -33,15 +37,16 @@ This runbook is the last mile. It needs one human with an npm account.
 ## Publish
 
 ```sh
-npm login            # or: npm token create --registry=https://registry.npmjs.org
-npm publish          # publishConfig in package.json sets access=public + provenance
+npm login
+npm publish
 ```
 
-`publishConfig.provenance` is already set, so npm will attach a provenance
-statement if the publish runs from a CI job with the npm provenance
-credentials. From a laptop, npm publishes without provenance. If you want the
-statement, publish from GitHub Actions with `NODE_AUTH_TOKEN` and
-`id-token: write`.
+`publishConfig.provenance` is `true`. npm 10.9.8 refuses a laptop publish with
+`EUSAGE: Automatic provenance generation not supported for provider: ...`.
+Publish from GitHub Actions with `id-token: write` and `NODE_AUTH_TOKEN`, or
+remove `publishConfig.provenance` for a local publish and say provenance is
+skipped. Do not tell the operator that a laptop publish silently attaches a
+provenance statement.
 
 ## Verify the published package
 
@@ -62,9 +67,12 @@ the package is installed in the project. The package also ships a
 
 ## After publishing
 
-- Tag the release: `git tag -a v0.1.0 -m "..." && git push origin v0.1.0`.
-- Add the install line to the README status section (it currently says
-  "npm pending" for the first release only).
+- Tag the release. `v0.1.0` already exists at `a6d20ad` (2026-09-12) and
+  `v0.1.0-rc.1` at `727f122`; do not reuse either tag. Cut the next tag
+  (`v0.1.1` unless the release plan says otherwise) on the commit that was
+  published.
+- Add the install line to the README status section (it currently says "The
+  first release is not on npm yet" for the first release only).
 - Post the announcement. The draft is in
   [linkedin-post.md](linkedin-post.md); the demo behind it is in
   [demo-script.md](demo-script.md).
