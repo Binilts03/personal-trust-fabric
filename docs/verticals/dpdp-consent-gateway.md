@@ -171,10 +171,6 @@ step 7 - what each step demonstrates, and which obligation it serves
 
 ---
 
-## What to conclude from each step```
-
----
-
 ## What to conclude from each step
 
 **Step 1 — the operator's privacy state.** Notice, consent, basis and activity
