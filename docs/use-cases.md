@@ -23,7 +23,7 @@ optional privacy controls. No industry or jurisdiction defines the product.
 Build and run the local flows from a checkout:
 
 ```sh
-npm install
+npm ci
 npm run build
 node examples/payment-disclosure.mjs
 node examples/vault-protected-action.mjs

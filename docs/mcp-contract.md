@@ -31,7 +31,7 @@ request JSON never carries identity (ADR-0013, ADR-0023).
       "cwd": "/path/to/personal-trust-fabric",
       "env": {
         "PTF_STORE_DIR": "./ptf-store",
-        "PTF_PASSPHRASE": "",
+        "PTF_PASSPHRASE_FILE": "/absolute/path/to/.ptf/passphrase",
         "PTF_MCP_PRINCIPAL": "did:example:you",
         "PTF_MCP_ACTOR": "did:example:agent"
       }
@@ -40,7 +40,11 @@ request JSON never carries identity (ADR-0013, ADR-0023).
 }
 ```
 
-`PTF_PASSPHRASE` must come from environment (or 0600 file) — never commit a real value; empty fails closed.
+Use a passphrase file created by the [Getting Started guide]({{ '/getting-started/' | relative_url }}).
+The `PTF_PASSPHRASE_FILE` path above is a placeholder; replace it with
+the actual private file path on the machine running the server. Do not
+commit passphrases. A direct `PTF_PASSPHRASE` environment value takes
+precedence if configured, so avoid setting it accidentally.
 
 ## Tools
 

@@ -8,6 +8,8 @@ release day. This project adheres to Semantic Versioning.
 
 ### Documentation
 
+- Repaired onboarding and documentation regressions: the first-run path now starts from a source checkout rather than an unpublished registry package, creates the keystore passphrase file before using the operator CLI, supplies tested-against-source CLI flags and examples for Bash and PowerShell, and corrects stale CLI/MCP/host-kit help and verification links.
+
 - Clarified that DPDP-informed processing is an optional PTF use case, not the product's identity. Added cross-domain use-case navigation; labelled reference scripts as synthetic and host CLI conformance as reference-only; removed stale launch-post navigation. No runtime or API change.
 
 > Release state (honest): the `v0.1.0` tag (2026-09-12) predates

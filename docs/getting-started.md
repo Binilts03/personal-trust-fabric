@@ -5,113 +5,141 @@ nav_order: 1
 permalink: /getting-started/
 ---
 
-# Getting Started
+# Getting started
 
-Requires Node 22+.
+PTF is currently a **reference implementation**. These steps run a local
+simulation: no live payment is made and no external service receives personal
+data. The fastest way to evaluate it is to run the checked-in examples before
+setting up an operator store.
 
-## Install
+**Requirements:** Node.js 22 or later, npm 10 or later, and Git. Commands
+below use a fresh checkout; the installation is **not yet published to npm**.
 
-To use PTF as a dependency in your own project:
+## 1. Run an example first
 
-```sh
-npm install personal-trust-fabric
-```
-
-The first release is not on npm yet. Until it is, install it from the
-repository (npm builds the package during the install, so you get a working
-`dist`):
-
-```sh
-npm install github:Binilts03/personal-trust-fabric
-```
-
-That gives you the `ptf`, `ptf-mcp-server` and `ptf-pdp-server` binaries,
-the curated entry point, and the `./privacy`, `./providers` and `./vault`
-subpaths.
-
-To work on PTF itself:
+From a terminal:
 
 ```sh
 git clone https://github.com/Binilts03/personal-trust-fabric.git
 cd personal-trust-fabric
-npm install
+npm ci
+npm run build
+node examples/payment-disclosure.mjs
 ```
 
-## Verify
+The script exercises a bounded, synthetic payment using a fake executor and
+a minimal data disclosure. No passphrase, external credentials, real money or
+agent-host configuration is needed. See [use cases]({{ '/use-cases/' | relative_url }})
+for other *offline* examples.
+
+The `ptf` **operator CLI** is also available from this checkout:
 
 ```sh
-npm run typecheck && npm test && npm run eval
+node dist/src/cli.js --help
 ```
 
-All three must pass. The gate runs: strict TypeScript, 490+ unit tests, 9
-eval/property tests, brand check, zero-dependency core check, public-seam
-test check, and the package check that installs the tarball into a clean
-directory.
+Use `node dist/src/cli.js` in the commands below. The `ptf` binary is
+included in package metadata but you do not need a published npm package or
+a global installation for this walkthrough.
 
-To check only what a consumer receives:
+## 2. Set up a local CLI store (optional)
+
+The commands in this section simulate the operator granting bounded authority
+to an agent named `shopper`. The recipient `shop` is a local identity. The
+CLI's default payment executor is **fake**: `pay` returns a reference receipt,
+not a real transfer.
+
+**Choose one shell**. Do not execute both setup blocks against the same store.
+
+### macOS / Linux / Bash
+
+Create a private passphrase file **before** running `keygen` (the previous
+quickstart omitted this step). The Node command uses exclusive file creation;
+it refuses to overwrite an existing passphrase.
 
 ```sh
-npm run verify:package
+node -e 'const fs=require("node:fs");const os=require("node:os");const path=require("node:path");const {randomBytes}=require("node:crypto");const dir=path.join(os.homedir(),".ptf");fs.mkdirSync(dir,{recursive:true,mode:0o700});fs.writeFileSync(path.join(dir,"passphrase"),randomBytes(32).toString("hex")+"\n",{flag:"wx",mode:0o600});'
+unset PTF_PASSPHRASE
+export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase"
 ```
 
-## Quick Decision (3 steps)
-
-```ts
-import { Authority, paymentBounds } from "personal-trust-fabric";
-import { recipientBounds } from "personal-trust-fabric/profiles/payment";
-
-const authority = new Authority();
-authority.addGrant({
-  id: "groceries",
-  principal: "did:example:you",
-  actor: { kind: "exact", id: "did:example:agent" },
-  action: { name: "/pay" },
-  bounds: [
-    ...paymentBounds({ amountMax: 2000, currency: "INR" }),
-    ...recipientBounds(["did:example:shop"]),
-  ],
-});
-
-const decision = authority.evaluate(
-  {
-    action: { name: "/pay" },
-    resource: { type: "invoice", id: "invoice:inv-1" },
-    context: { amount: 1790, currency: "INR", recipient: "did:example:shop" },
-    purpose: "groceries",
-  },
-  {
-    id: "did:example:agent",
-    principal: "did:example:you",
-    source: "local-registration",
-    proofRef: "example",
-  }
-);
-if (!decision.allow) throw new Error("denied");
-// decision.citations[0].authorityId === "groceries"
-```
-
-## Operator Quickstart (Real Use)
+Then initialize and run the simulation:
 
 ```sh
-export PTF_PASSPHRASE_FILE="$HOME/.ptf/passphrase" && chmod 600 "$HOME/.ptf/passphrase"
 node dist/src/cli.js --dir ./ptf-store init
 node dist/src/cli.js --dir ./ptf-store keygen --alias you
-node dist/src/cli.js --dir ./ptf-store keygen --alias shop
-node dist/src/cli.js --dir ./ptf-store recipient --alias shop --key <hex-from-keygen>
+SHOP_LINE="$(node dist/src/cli.js --dir ./ptf-store keygen --alias shop)"
+SHOP_KEY="${SHOP_LINE#shop: }"
+node dist/src/cli.js --dir ./ptf-store recipient --alias shop --key "$SHOP_KEY"
 node dist/src/cli.js --dir ./ptf-store grant --id g1 --principal you --cmd /pay --agent shopper --amount-max 2000 --currency INR --recipient shop
 node dist/src/cli.js --dir ./ptf-store pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes
 node dist/src/cli.js --dir ./ptf-store audit --verify
-node dist/src/cli.js --dir ./ptf-store backup --to ./backups/ptf-store
-node dist/src/cli.js --dir ./ptf-restored restore --from ./backups/ptf-store
 ```
 
-One CLI/MCP writer per store (optimistic revision control fails closed). Vault records persist AES-256-GCM-encrypted under a keystore DEK with freshness binding. Proposals persist per termsDigest file (restart-safe, idempotent). Backups are one unit plus an anchor checkpoint and refuse to merge vintages.
+### Windows PowerShell
 
-See [Operations](audit/operations) for container image, health signals, rotation, and restore drills.
+Run this from the same checkout. The generated passphrase is local to your
+Windows account; Windows file permissions are controlled by ACLs rather than
+Unix `chmod` modes.
 
-## Next Steps
+```powershell
+node -e 'const fs=require("node:fs");const os=require("node:os");const path=require("node:path");const {randomBytes}=require("node:crypto");const dir=path.join(os.homedir(),".ptf");fs.mkdirSync(dir,{recursive:true,mode:0o700});fs.writeFileSync(path.join(dir,"passphrase"),randomBytes(32).toString("hex")+"\n",{flag:"wx",mode:0o600});'
+Remove-Item Env:PTF_PASSPHRASE -ErrorAction SilentlyContinue
+$env:PTF_PASSPHRASE_FILE = Join-Path $HOME '.ptf/passphrase'
 
-- Read [Architecture](architecture) for the four planes
-- Browse [ADRs](adr) for design decisions
-- Review [Audit docs](audit) for limits, threats, verification
-- Explore [Research](research) for protocol deep-dives
+node dist/src/cli.js --dir ./ptf-store init
+node dist/src/cli.js --dir ./ptf-store keygen --alias you
+$shopLine = node dist/src/cli.js --dir ./ptf-store keygen --alias shop
+$shopKey = $shopLine -replace '^shop: ', ''
+node dist/src/cli.js --dir ./ptf-store recipient --alias shop --key $shopKey
+node dist/src/cli.js --dir ./ptf-store grant --id g1 --principal you --cmd /pay --agent shopper --amount-max 2000 --currency INR --recipient shop
+node dist/src/cli.js --dir ./ptf-store pay --principal you --agent shopper --recipient shop --amount 100 --currency INR --resource invoice:1 --yes
+node dist/src/cli.js --dir ./ptf-store audit --verify
+```
+
+**Expected behavior:** `init` creates a store; `keygen` prints a public key
+as `shop: <hex>`; the grant is recorded; `pay` prints a synthetic JSON
+receipt; and `audit --verify` checks the hash chain. The `shop` private
+key and principal key remain in the local encrypted keystore. The example
+`--yes` skips a CLI confirmation prompt; do not treat it as permission
+from a real user or a security review.
+
+Keep `$HOME/.ptf/passphrase` **outside** the PTF store, repository and
+backups. Do not commit it, share it with an agent, or lose it: losing the
+passphrase prevents you from opening the encrypted keystore. Prefer a
+dedicated disposable development store for experimentation.
+
+If the exclusive-create command reports `EEXIST`, the passphrase file
+already exists. **Do not overwrite it** to resolve an error. Reuse it for a
+store encrypted with it, or intentionally create a separate passphrase and
+store. An existing `./ptf-store` is likewise intentionally not overwritten
+by `init`.
+
+## 3. Verify and continue
+
+To run the repository's checks:
+
+```sh
+npm run check:brand
+npm run typecheck
+npm test
+npm run eval
+npm run verify:package -- --install
+```
+
+These validate the local code and package shape; they do not establish
+production security or real-world compliance. Run them **from the checkout**.
+The repo's required CI jobs additionally exercise code, documentation and
+secret-scanning gates.
+
+- [CLI reference]({{ '/cli-reference/' | relative_url }}) — supported
+  operator commands and options.
+- [MCP contract]({{ '/mcp-contract/' | relative_url }}) — connecting a local
+  agent host (an additional setup step, not automatic in the CLI walkthrough).
+- [Host kit]({{ '/host-kit/' | relative_url }}) — integrating protected
+  effects and testing an adopting host.
+- [Known limits]({{ '/audit/limits/' | relative_url }}) — single-writer
+  topology, reference executors and other explicit restrictions.
+
+The optional DPDP-informed scenario remains an [offline use case]({{ '/use-cases/' | relative_url }}),
+**not** a complete compliance workflow or a live clinic/lab demonstration.

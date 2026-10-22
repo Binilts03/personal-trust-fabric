@@ -21,7 +21,7 @@ beyond `npm install`.
 ```sh
 git clone https://github.com/Binilts03/personal-trust-fabric.git
 cd personal-trust-fabric
-npm install
+npm ci
 npm run build
 ```
 

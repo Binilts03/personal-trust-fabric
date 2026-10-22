@@ -129,7 +129,7 @@ console.assert(redeemed.ok && redeemed.chainId === cid);
 console.assert(redeemed.ok && redeemed.consumed && redeemed.proofVerified);
 ```
 
-For operator-level verification, follow the quickstart in `README.md` and finish with:
+For operator-level verification, follow the complete [Getting Started guide](../getting-started.md) (including passphrase-file creation) and finish with:
 
 ```sh
 node dist/src/cli.js --dir ./ptf-store audit --verify

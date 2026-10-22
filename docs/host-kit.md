@@ -31,6 +31,13 @@ re-exported from the curated root barrel.
 
 ## One call
 
+**Integration sketch, not a copy-paste quickstart.** This assumes the
+host has already constructed `storeDir`, `keys`, `auth`, verified
+`ingress`, `demand`, `config`, a provider and a redemption. It also
+assumes the host implements `runTheEffect` and routes **every relevant
+effect path** through this boundary. To try PTF without those
+prerequisites, start with [Getting Started]({{ '/getting-started/' | relative_url }}).
+
 ```ts
 import {
   createEffectBoundary,
