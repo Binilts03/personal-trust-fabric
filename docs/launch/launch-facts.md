@@ -1,13 +1,13 @@
 ---
 layout: default
-title: Launch facts
+title: Preview facts
 nav_order: 2
 permalink: /launch/facts/
 ---
 
-# Launch facts
+# Preview facts
 
-Every factual claim in the launch post, with its source. Retrieved
+Every factual claim in the technical-preview post, with its source. Retrieved
 2026-10-21 unless stated. Anything marked UNVERIFIED must not appear in a
 post.
 

@@ -153,7 +153,7 @@ One CLI/MCP writer per store (optimistic revision control fails closed instead o
 npm run build && node examples/dpdp-consent-gateway.mjs
 ```
 
-The DPDP vertical: a clinic shares a patient's diagnostic summary with a lab, a consent withdrawal stops the next attempt at the effect boundary, and the erasure is exact and subject-bound — for the PTF-managed records bound to that Data Principal reference; external copies, processor systems and backups are outside that path. No credentials, no network, no state outside a temporary directory. The walkthrough with the full transcript is in `docs/verticals/dpdp-consent-gateway.md`.
+The DPDP vertical: a clinic shares a patient's diagnostic summary with a lab, a consent withdrawal stops the next attempt at the effect boundary, and erasure is scoped and subject-bound — for the PTF-managed records bound to that Data Principal reference; external copies, processor systems and backups are outside that path. No credentials, no network, no state outside a temporary directory. The walkthrough with the full transcript is in `docs/verticals/dpdp-consent-gateway.md`.
 
 ```sh
 node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./examples/privacy-config.example.json

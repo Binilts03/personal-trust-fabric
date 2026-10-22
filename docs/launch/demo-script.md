@@ -11,15 +11,24 @@ The demo is one terminal and one idea: the authority belongs to the person,
 not to the platform, and every effect routed through the boundary leaves
 evidence.
 
-Everything below runs from a clean clone with no credentials and no network
-beyond `npm install`.
+> **Preview gate.** These commands are for the commit named in the post. Until
+> that commit is on the public default branch, clone the preview branch or
+> check out the pinned commit rather than `main`, and run the clean-clone gate
+> in [publish.md](publish.md#technical-preview-gate-before-npm) first. Do not
+> publish a link to this demo before the gate passes.
+
+Everything below runs from a clean checkout of that commit with no credentials
+and no network beyond `npm install`.
 
 ```sh
-git clone https://github.com/Binilts03/personal-trust-fabric.git
+git clone --branch verify/2026-10-22-hardening https://github.com/Binilts03/personal-trust-fabric.git
 cd personal-trust-fabric
 npm install
 npm run build
 ```
+
+If the branch has been merged, use the release tag or pinned commit instead of
+the branch name.
 
 ## Beat 1: the decision is bounded (30 seconds)
 

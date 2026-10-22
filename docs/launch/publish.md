@@ -10,6 +10,57 @@ which returns 404 for an unclaimed name); re-check the name too.
 
 This runbook is the last mile. It needs one human with an npm account.
 
+## Technical preview gate (before npm)
+
+The LinkedIn draft is a technical preview, not the npm launch. Do not post it,
+or send its link to reviewers, until every item below passes.
+
+1. **Make the exact commit reachable.** A local branch is not a preview. Push
+   the branch (with approval) or merge it, then use a link that resolves to the
+   commit named in the post. Do not link `main` while `main` is behind, and do
+   not use a link that points at a branch you may rewrite.
+2. **Clean-clone that exact commit and run the demo.**
+
+   ```sh
+   git clone --branch verify/2026-10-22-hardening https://github.com/Binilts03/personal-trust-fabric.git ptf-preview
+   cd ptf-preview
+   git rev-parse HEAD
+   npm ci
+   npm run build
+   node examples/payment-disclosure.mjs
+   node examples/dpdp-consent-gateway.mjs
+   export PTF_PASSPHRASE="ptf-demo-only-change-me"
+   node dist/src/cli.js --dir ./ptf-store init
+   node dist/src/cli.js --dir ./ptf-store keygen --alias you
+   node dist/src/cli.js --dir ./ptf-store privacy init
+   node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./examples/privacy-config.example.json
+   ```
+
+   Both examples must exit 0 and the last command must print
+   `10/10 checks passed`. Record the commit hash and date with the result.
+   If the branch has been merged, replace the branch with the release tag or
+   pinned commit.
+
+3. **Make the install line true.** Until npm publication, use the git URL with
+   the branch or commit, not the bare package name:
+
+   ```sh
+   npm install github:Binilts03/personal-trust-fabric#verify/2026-10-22-hardening
+   ```
+
+   `npm install personal-trust-fabric` is not available until the package is
+   published.
+
+4. **Keep the framing honest.** Say technical preview, request for comment, or
+   preview. Do not say launch, release, shipped, or landed unless the linked
+   commit is on the public default branch.
+5. **Keep the limits and the ask.** Do not add compliance claims, unverified
+   counters, or "DPDP compliant." Ask for three to five technical reviewers,
+   not signups.
+
+The preview is ready when the link, the clean-clone result, the install command
+and the post all describe the same commit.
+
 ## Before you publish
 
 1. The working tree is clean and `main` is green:
@@ -73,7 +124,9 @@ the package is installed in the project. The package also ships a
   published.
 - Add the install line to the README status section (it currently says "The
   first release is not on npm yet" for the first release only).
-- Post the announcement. The draft is in
+- If the technical preview has not been posted yet, post it now with the npm
+  install line. If it was already posted, update the install line and the
+  pinned preview link to the published package. The draft is in
   [linkedin-post.md](linkedin-post.md); the demo behind it is in
   [demo-script.md](demo-script.md).
 
