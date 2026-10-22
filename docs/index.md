@@ -39,6 +39,7 @@ Default deny. Exact terms. Use without possession. External messages are evidenc
 | [Security Model](security-model)   | Default-deny, attenuation, receipt-only secret use                         |
 | [MCP Contract](mcp-contract)       | Agent-facing tools: propose, check, redeem, present                        |
 | [CLI Reference](cli-reference)     | `ptf` command: init, keygen, grant, pay, audit, backup                     |
+| [Use cases](use-cases)             | Reference flows and optional DPDP-informed processing                     |
 | [ADRs](adr)                        | Architecture Decision Records                                              |
 | [Audit Docs](audit)                | Limits, operations, verification, threats                                  |
 
@@ -53,6 +54,14 @@ This is a working, tested reference implementation on the road to peer review �
 **What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
 
 **What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in [docs/audit/limits.md](audit/limits) — the file lists what PTF _cannot_ do more carefully than what it can.
+
+---
+
+## Use cases, not product silos
+
+PTF's primary abstraction is bounded, user-owned authority for interchangeable agents. The implemented local examples cover payment, disclosure and protected credential use. The DPDP-informed profile is **an optional host-integrated privacy restriction**, illustrated through an offline fictional clinic-to-lab scenario, not a deployed service or compliance demonstration.
+
+See the [use-case catalog](use-cases) for exactly what is exercised.
 
 ---
 
