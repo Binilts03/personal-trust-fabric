@@ -75,10 +75,11 @@ cd personal-trust-fabric
 npm ci
 npm run build
 node examples/payment-disclosure.mjs
+node examples/generic-protected-action.mjs
 node dist/src/cli.js --help
 ```
 
-The script performs a fake bounded payment and a minimal disclosure: no
+The first script performs a fake bounded payment and a minimal disclosure: no
 funds move and no external credential is required. The CLI is a real
 operator interface, not only an SDK. For a complete first-run CLI setup
 (including passphrase creation, key registration, an agent grant, and a
@@ -119,6 +120,14 @@ const decision = authority.evaluate(
 if (!decision.allow) throw new Error("denied");
 // Every allow cites its grant: decision.citations[0].authorityId === "groceries"
 ```
+
+The second script demonstrates a scoped **synthetic email** action through the
+published `./hostkit` interface. It uses recipient-signed, one-use
+proof and a fake provider; **no actual email is sent**. Optional privacy
+enforcement is host-composed, not a global compliance or interception
+feature. Currently `ptf_request_action` remains MCP proposal-only;
+`ptf_redeem` is payment-only until the existing journal-first replay
+can be shared with verified generic execution.
 
 ## Operator CLI
 
