@@ -98,6 +98,7 @@
     "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/tests/*.test.js\"",
+    "test:examples": "npm run build && node --test dist/tests/example-smoke.test.js",
     "eval": "npm run build && node --test \"dist/tests/eval/*.test.js\"",
     "bench": "node scripts/bench.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run eval",
