@@ -68,6 +68,36 @@ describe("domain-neutral protected effect", () => {
       assert.equal(auth.snapshot().used.length, 1);
     } finally { rmSync(dir, {recursive:true, force:true}); }
   });
+  it("never forwards a host callback's mismatched receipt terms as a successful receipt", async () => {
+    const { dir, auth } = fixture();
+    try {
+      const effect = createProtectedEffect({
+        dir, auth, ingress, operation, authorizedContext: operation.context,
+        now: () => NOW,
+        processing: { kind: "not-enforced", reason: "synthetic-no-personal-data" },
+        effect: {
+          kind: "trusted-callback",
+          execute: async (ctx) => {
+            ctx.markEffectStarted();
+            return {
+              receiptId: "receipt-bad",
+              capabilityId: "not-proven",
+              recipient: "provider:email",
+              resource: "another-message",
+              purpose: "unexpected",
+              transaction: "synthetic-email",
+              termsDigest: "f".repeat(64),
+              at: NOW,
+            };
+          },
+        },
+        persistAuthority: () => {},
+      });
+      await assert.rejects(() => effect.run(), /outcome unknown|reconcile/i);
+      assert.equal(auth.snapshot().used.length, 1);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it("rejects effect-bearing context mutation before consumption", async () => {
     const { dir, auth } = fixture();
     try {
