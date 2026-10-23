@@ -161,315 +161,254 @@ function boundedRef(value: unknown, what: string): string {
 /**
  * The host effect boundary. See the module comment for the ordering.
  */
-export function createEffectBoundary(
-  opts: HostEffectBoundaryOptions
-): HostEffectBoundary {
-  const { auth, gate, ingress, now } = opts;
-  if (gate.authority !== auth) {
-    // The privacy decision and the consumption must be made against the
-    // same authority state; two instances could disagree.
-    throw new Error(
-      "host boundary: the gate must carry the same Authority instance"
-    );
-  }
-  if (opts.provider !== undefined && opts.redemption === undefined) {
-    throw new Error("host boundary: a provider requires a redemption");
-  }
-  if (
-    opts.provider === undefined &&
-    opts.execute === undefined &&
-    opts.redemption === undefined
-  ) {
-    throw new Error("host boundary: an effect path is required");
-  }
-  const operation = gate.operation;
-  const authorizedContext =
-    opts.authorizedContext ?? opts.redemption?.operation.args;
-  if (authorizedContext === undefined) {
-    throw new Error(
-      "host boundary: authorizedContext required when no redemption derives it"
-    );
-  }
-  if (
-    opts.redemption !== undefined &&
-    !deepEqual(opts.redemption.operation.args, authorizedContext)
-  ) {
-    throw new Error(
-      "host boundary: the redemption's authorized terms differ from the declared context"
-    );
-  }
-  const persist =
-    opts.persistAuthority ??
-    ((instance: Authority): void => {
-      saveAuthority(opts.dir, instance);
-    });
 
-  /** Step 1: the effect context must equal the authorized context exactly. */
+export type ProcessingMode =
+  | { readonly kind: "not-enforced"; readonly reason: "synthetic-no-personal-data" | "no-host-privacy-profile-configured" }
+  | { readonly kind: "enforced"; readonly runtime: PrivacyRuntime; readonly gate: PrivacyGateRequest };
+
+export type EffectMode =
+  | { readonly kind: "provider"; readonly provider: ProtectedProvider; readonly redemption: Redemption }
+  | { readonly kind: "trusted-callback"; readonly execute: (ctx: HostEffectContext) => Promise<ExecutionReceipt | void>; readonly redemption?: Redemption };
+
+export interface ProtectedEffectOptions {
+  readonly dir: string;
+  readonly auth: Authority;
+  readonly ingress: VerifiedIdentity;
+  readonly operation: AuthorityOperation;
+  readonly authorizedContext: Readonly<Record<string, unknown>>;
+  readonly now: () => number;
+  readonly processing: ProcessingMode;
+  readonly effect: EffectMode;
+  readonly persistAuthority?: (auth: Authority) => void;
+  readonly attemptRef?: string;
+}
+
+export type ProtectedEffectReceipt = Omit<HostEffectReceipt, "eventId"> & { readonly privacyEventId?: string };
+export interface ProtectedEffect {
+  check(): Promise<HostEffectDecision>;
+  run(): Promise<ProtectedEffectReceipt>;
+}
+
+export class ProtectedEffectOutcomeUnknownError extends Error {
+  constructor(cause: unknown) {
+    super("protected effect outcome unknown; reconcile before retry");
+    this.name = "ProtectedEffectOutcomeUnknownError";
+    this.cause = cause;
+  }
+}
+
+/** One effect-ordering implementation for privacy-enforced and explicit non-enforced hosts. */
+export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEffect {
+  const { auth, ingress, operation, now, processing } = opts;
+  if (processing === undefined || (processing.kind !== "enforced" && processing.kind !== "not-enforced")) {
+    throw new Error("host boundary: explicit processing mode required");
+  }
+  if (processing.kind === "not-enforced" &&
+      processing.reason !== "synthetic-no-personal-data" &&
+      processing.reason !== "no-host-privacy-profile-configured") {
+    throw new Error("host boundary: invalid non-enforcement reason");
+  }
+  if (processing.kind === "enforced" &&
+      (processing.gate.authority !== auth ||
+       !deepEqual(processing.gate.operation, operation) ||
+       !deepEqual(processing.gate.ingress, ingress))) {
+    throw new Error("host boundary: privacy gate and operation must share authority and identity");
+  }
+  if (opts.effect === undefined ||
+      (opts.effect.kind !== "provider" && opts.effect.kind !== "trusted-callback")) {
+    throw new Error("host boundary: trusted effect path required");
+  }
+  const redemption = opts.effect.redemption;
+  const authorizedContext = opts.authorizedContext;
+  if (authorizedContext === undefined) throw new Error("host boundary: authorizedContext required");
+  if (redemption !== undefined && !deepEqual(redemption.operation?.args, authorizedContext)) {
+    throw new Error("host boundary: the redemption's authorized terms differ from the declared context");
+  }
+  const persist = opts.persistAuthority ?? ((instance: Authority): void => saveAuthority(opts.dir, instance));
+
   function assertTermsBinding(): void {
     if (!deepEqual(operation.context, authorizedContext)) {
-      throw new PrivacyPreEffectError(
-        "host boundary: the effect context differs from the authorized operation"
-      );
+      throw new PrivacyPreEffectError("host boundary: the effect context differs from the authorized operation");
     }
   }
-
-  /** Step 2: the authority decides first, and decides nothing yet. */
-  function authorityPreview(): boolean {
-    const decision = auth.evaluate(operation, ingress, {
-      consume: false,
-      nowSec: now(),
-    });
-    return decision.allow;
+  function preview(): boolean {
+    return auth.evaluate(operation, ingress, { consume: false, nowSec: now() }).allow;
   }
-
-  /**
-   * The redemption must be minted for the operation the boundary is about
-   * to execute. The terms digest binds the action, resource, context and
-   * purpose, so a redemption for other terms cannot ride along.
-   */
-  function redemptionMatches(termsDigest: string): boolean {
-    if (opts.redemption === undefined) return true;
-    const op = opts.redemption.operation;
-    return (
-      op.termsDigest === termsDigest &&
-      op.cmd === operation.action.name &&
+  function redemptionMatches(digest: string): boolean {
+    if (redemption === undefined) return true;
+    const op = redemption.operation;
+    return redemption.ok === true && redemption.consumed === true &&
+      redemption.proofVerified === true && typeof redemption.chainId === "string" &&
+      redemption.chainId.length > 0 && op !== undefined &&
+      op.termsDigest === digest && op.cmd === operation.action.name &&
       op.resource === operation.resource.id &&
-      (op.purpose ?? undefined) === (operation.purpose ?? undefined)
-    );
+      (op.purpose ?? undefined) === (operation.purpose ?? undefined) &&
+      deepEqual(op.args, authorizedContext);
   }
-
-  function finalize(
-    eventId: string,
-    state: "SUCCEEDED" | "FAILED_FINAL" | "OUTCOME_UNKNOWN",
-    patch: { readonly finalizedAt: number; readonly evidenceRef?: string }
-  ): void {
-    try {
-      opts.runtime.finalizeEvent(eventId, state, patch);
-    } catch {
-      // Bookkeeping never masks the failure that caused it. The journal
-      // stays the recovery oracle for an ambiguous outcome.
-    }
-  }
-
-  /**
-   * Step 8: the effect. The journaled provider path is preferred when a
-   * provider and a redemption are supplied; otherwise the host callback
-   * runs.
-   */
-  async function performEffect(
-    ctx: HostEffectContext
-  ): Promise<ExecutionReceipt | void> {
-    if (opts.provider !== undefined && opts.redemption !== undefined) {
-      const op = opts.redemption.operation;
-      if (op.resource === undefined || op.purpose === undefined) {
-        throw new Error(
-          "host boundary: the redemption must carry resource and purpose"
-        );
-      }
-      return executeWithJournal({
-        dir: opts.dir,
-        provider: opts.provider,
-        req: {
-          capabilityId: opts.redemption.chainId,
-          termsDigest: op.termsDigest,
-          action: op.cmd,
-          recipient: op.recipient,
-          resource: op.resource,
-          purpose: op.purpose,
-          context: { ...operation.context },
-        },
-        redemption: opts.redemption,
-        nowSec: now(),
-        at: now(),
-        onEffectStart: ctx.markEffectStarted,
-      });
-    }
-    if (opts.execute === undefined) {
-      throw new Error("host boundary: no effect path configured");
-    }
-    return opts.execute(ctx);
-  }
-
-  function project(
-    raw: ExecutionReceipt | void,
-    termsDigest: string,
-    eventId: string,
-    authorityId: string | undefined,
-    capabilityId: string | undefined
-  ): HostEffectReceipt {
-    const receiptId = boundedRef(
-      raw?.receiptId ?? `host-${randomUUID()}`,
-      "receipt id"
-    );
-    const transaction =
-      raw?.transaction === undefined
-        ? undefined
-        : boundedRef(raw.transaction, "transaction reference");
+  function project(raw: ExecutionReceipt | void, digest: string,
+                   eventId: string | undefined, authorityId: string | undefined): ProtectedEffectReceipt {
+    const receiptId = boundedRef(raw?.receiptId ?? ("host-" + randomUUID()), "receipt id");
+    const transaction = raw?.transaction === undefined ? undefined :
+      boundedRef(raw.transaction, "transaction reference");
     return {
       receiptId,
       action: operation.action.name,
       resource: raw?.resource ?? operation.resource.id,
       purpose: raw?.purpose ?? operation.purpose ?? "",
-      termsDigest: raw?.termsDigest ?? termsDigest,
+      termsDigest: raw?.termsDigest ?? digest,
       at: raw?.at ?? now(),
       ...(authorityId !== undefined ? { authorityId } : {}),
-      ...(capabilityId !== undefined ? { capabilityId } : {}),
+      ...(redemption !== undefined ? { capabilityId: redemption.chainId } : {}),
       ...(transaction !== undefined ? { transaction } : {}),
-      eventId,
+      ...(eventId !== undefined ? { privacyEventId: eventId } : {}),
     };
   }
-
+  async function perform(ctx: HostEffectContext): Promise<ExecutionReceipt | void> {
+    if (opts.effect.kind === "provider") {
+      const r = opts.effect.redemption;
+      const op = r.operation;
+      if (op.resource === undefined || op.purpose === undefined) {
+        throw new Error("host boundary: redemption must carry resource and purpose");
+      }
+      return executeWithJournal({
+        dir: opts.dir, provider: opts.effect.provider,
+        req: {
+          capabilityId: r.chainId, termsDigest: op.termsDigest, action: op.cmd,
+          recipient: op.recipient, resource: op.resource, purpose: op.purpose,
+          context: { ...operation.context }
+        },
+        redemption: r, nowSec: now(), at: now(),
+        onEffectStart: ctx.markEffectStarted,
+      });
+    }
+    return opts.effect.execute(ctx);
+  }
   return {
     async check(): Promise<HostEffectDecision> {
-      try {
-        assertTermsBinding();
-      } catch {
-        return { allow: false, reason: "terms-mismatch" };
+      try { assertTermsBinding(); } catch { return { allow: false, reason: "terms-mismatch" }; }
+      if (!preview()) return { allow: false, reason: "authority-denied" };
+      let digest = hostTermsDigest(operation, ingress);
+      if (processing.kind === "enforced") {
+        const first = processing.runtime.preflight(processing.gate);
+        if (!first.allow) return { allow: false, reason: first.publicReason };
+        try { digest = processing.runtime.recheck(first, processing.gate).termsDigest; }
+        catch { return { allow: false, reason: "privacy-denied" }; }
       }
-      if (!authorityPreview()) {
-        return { allow: false, reason: "authority-denied" };
-      }
-      const first = opts.runtime.preflight(gate);
-      if (!first.allow) {
-        return { allow: false, reason: first.publicReason };
-      }
-      try {
-        opts.runtime.recheck(first, gate);
-      } catch {
-        return { allow: false, reason: "privacy-denied" };
-      }
-      if (!redemptionMatches(first.termsDigest)) {
-        return { allow: false, reason: "terms-mismatch" };
-      }
-      return { allow: true, termsDigest: first.termsDigest };
+      if (!redemptionMatches(digest)) return { allow: false, reason: "terms-mismatch" };
+      return { allow: true, termsDigest: digest };
     },
-
-    async run(): Promise<HostEffectReceipt> {
-      // 1. Terms binding. A smuggled effect-bearing key stops here.
+    async run(): Promise<ProtectedEffectReceipt> {
       assertTermsBinding();
-
-      // 2. Authority, non-consuming. The privacy state is not an oracle for
-      // an unauthorized caller (ADR-0024).
-      if (!authorityPreview()) {
-        throw new Error("authority denied");
-      }
-
-      // 3. Privacy preflight, then 4. the live recheck.
-      const first = opts.runtime.preflight(gate);
-      if (!first.allow) {
-        throw new PrivacyPreEffectError(
-          first.publicReason === "authority-denied"
-            ? "authority denied"
-            : "privacy denied"
-        );
-      }
-      let live;
-      try {
-        live = opts.runtime.recheck(first, gate);
-      } catch {
-        throw new PrivacyPreEffectError("privacy denied");
-      }
-      if (!redemptionMatches(live.termsDigest)) {
-        throw new PrivacyPreEffectError(
-          "host boundary: the redemption's terms differ from the authorized operation"
-        );
-      }
-
-      // 5. Evidence precommit, before any consumption: a crash from here on
-      // leaves a PREPARED attempt the operator can reconcile.
+      if (!preview()) throw new Error("authority denied");
       const attemptRef = opts.attemptRef ?? randomUUID();
-      let event;
-      try {
-        event = opts.runtime.prepareEvent(live, gate, attemptRef);
-      } catch (error) {
-        if (error instanceof PrivacyEventConflictError) throw error;
-        throw new PrivacyPreEffectError("privacy denied");
+      let digest = hostTermsDigest(operation, ingress);
+      let eventId: string | undefined;
+      let fence = (): void => {};
+      let finalize = (_state: "SUCCEEDED" | "FAILED_FINAL" | "OUTCOME_UNKNOWN"): void => {};
+      if (processing.kind === "enforced") {
+        const first = processing.runtime.preflight(processing.gate);
+        if (!first.allow) {
+          throw new PrivacyPreEffectError(first.publicReason === "authority-denied" ? "authority denied" : "privacy denied");
+        }
+        let live: ReturnType<PrivacyRuntime["recheck"]>;
+        try { live = processing.runtime.recheck(first, processing.gate); }
+        catch { throw new PrivacyPreEffectError("privacy denied"); }
+        digest = live.termsDigest;
+        if (!redemptionMatches(digest)) {
+          throw new PrivacyPreEffectError("host boundary: redemption terms differ from authorized operation");
+        }
+        try {
+          const event = processing.runtime.prepareEvent(live, processing.gate, attemptRef);
+          eventId = event.eventId;
+          fence = () => processing.runtime.fence(live, processing.gate);
+          finalize = (state) => {
+            try { processing.runtime.finalizeEvent(event.eventId, state, { finalizedAt: now() }); }
+            catch { /* journal remains the recovery oracle */ }
+          };
+        } catch (error) {
+          if (error instanceof PrivacyEventConflictError) throw error;
+          throw new PrivacyPreEffectError("privacy denied");
+        }
+      } else if (!redemptionMatches(digest)) {
+        throw new Error("host boundary: redemption terms or proof invalid");
       }
-
-      // 6. Consume the authority use and persist it durably, before the
-      // effect. A crash between here and the effect burns a use instead of
-      // resurrecting one-time authority (invariant 9).
       let authorityId: string | undefined;
       try {
-        const consumed = auth.evaluate(operation, ingress, {
-          consume: true,
-          nowSec: now(),
-        });
-        if (!consumed.allow) {
-          throw new PrivacyPreEffectError(
-            `authority denied at redeem time: ${consumed.reason}`
-          );
-        }
+        const consumed = auth.evaluate(operation, ingress, { consume: true, nowSec: now() });
+        if (!consumed.allow) throw new PrivacyPreEffectError("authority denied at redeem time: " + consumed.reason);
         authorityId = consumed.citations[0]?.authorityId;
         persist(auth);
-      } catch (error) {
-        finalize(event.eventId, "FAILED_FINAL", { finalizedAt: now() });
-        throw error;
-      }
-
-      // 7. The fence. The privacy state is re-read at the effect boundary:
-      // a withdrawal that lands after the recheck stops the attempt.
-      try {
-        opts.runtime.fence(live, gate);
-      } catch {
-        finalize(event.eventId, "FAILED_FINAL", { finalizedAt: now() });
+      } catch (error) { finalize("FAILED_FINAL"); throw error; }
+      try { fence(); } catch {
+        finalize("FAILED_FINAL");
         throw new PrivacyPreEffectError("privacy denied");
       }
-
-      // 8. The effect.
-      let effectStarted = false;
+      let started = false;
       const ctx: HostEffectContext = {
-        operation,
-        termsDigest: live.termsDigest,
-        attemptRef,
-        markEffectStarted: () => {
-          effectStarted = true;
-        },
+        operation, termsDigest: digest, attemptRef,
+        markEffectStarted: () => { started = true; }
       };
       let raw: ExecutionReceipt | void;
-      try {
-        raw = await performEffect(ctx);
-      } catch (error) {
-        if (effectStarted) {
-          // The effect may have happened. Never report it as a denial.
-          finalize(event.eventId, "OUTCOME_UNKNOWN", { finalizedAt: now() });
-          throw new PrivacyOutcomeUnknownError(error);
+      try { raw = await perform(ctx); } catch (error) {
+        finalize(started ? "OUTCOME_UNKNOWN" : "FAILED_FINAL");
+        if (started) {
+          if (processing.kind === "enforced") throw new PrivacyOutcomeUnknownError(error);
+          throw new ProtectedEffectOutcomeUnknownError(error);
         }
-        finalize(event.eventId, "FAILED_FINAL", { finalizedAt: now() });
-        // The cause is kept for the host. A host that forwards this error to
-        // an agent maps it to a coarse message first.
-        throw new PrivacyPreEffectError(
-          `host boundary: the effect failed before the effect boundary: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
+        throw new PrivacyPreEffectError("host boundary: effect failed before effect boundary: " +
+          (error instanceof Error ? error.message : String(error)));
       }
-
-      // 9. Finalize the evidence. A bookkeeping failure here is not a
-      // denial: the effect happened, so the attempt stays reconcilable.
-      let receipt: HostEffectReceipt;
-      try {
-        receipt = project(
-          raw,
-          live.termsDigest,
-          event.eventId,
-          authorityId,
-          opts.redemption?.chainId
-        );
-      } catch (error) {
-        finalize(event.eventId, "OUTCOME_UNKNOWN", { finalizedAt: now() });
-        throw new PrivacyOutcomeUnknownError(error);
+      let receipt: ProtectedEffectReceipt;
+      try { receipt = project(raw, digest, eventId, authorityId); }
+      catch (error) {
+        finalize("OUTCOME_UNKNOWN");
+        if (processing.kind === "enforced") throw new PrivacyOutcomeUnknownError(error);
+        throw new ProtectedEffectOutcomeUnknownError(error);
       }
-      try {
-        opts.runtime.finalizeEvent(event.eventId, "SUCCEEDED", {
-          finalizedAt: receipt.at,
-          evidenceRef: `execution-receipt:${receipt.receiptId}`,
-        });
-      } catch (error) {
-        throw new PrivacyOutcomeUnknownError(error);
+      if (processing.kind === "enforced" && eventId !== undefined) {
+        try {
+          processing.runtime.finalizeEvent(eventId, "SUCCEEDED", {
+            finalizedAt: receipt.at, evidenceRef: "execution-receipt:" + receipt.receiptId,
+          });
+        } catch (error) { throw new PrivacyOutcomeUnknownError(error); }
       }
       return receipt;
-    },
+    }
+  };
+}
+
+/** Compatibility adapter: this historical entry point ALWAYS enforces privacy. */
+export function createEffectBoundary(opts: HostEffectBoundaryOptions): HostEffectBoundary {
+  if (opts.provider !== undefined && opts.redemption === undefined) {
+    throw new Error("host boundary: a provider requires a redemption");
+  }
+  if (opts.provider === undefined && opts.execute === undefined) {
+    throw new Error("host boundary: an effect path is required");
+  }
+  const ctx = opts.authorizedContext ?? opts.redemption?.operation.args;
+  if (ctx === undefined) {
+    throw new Error("host boundary: authorizedContext required when no redemption derives it");
+  }
+  const effect: EffectMode =
+    opts.provider !== undefined && opts.redemption !== undefined
+      ? { kind: "provider", provider: opts.provider, redemption: opts.redemption }
+      : { kind: "trusted-callback", execute: opts.execute as (ctx: HostEffectContext) => Promise<ExecutionReceipt | void>,
+          ...(opts.redemption !== undefined ? { redemption: opts.redemption } : {}) };
+  const canonical = createProtectedEffect({
+    dir: opts.dir, auth: opts.auth, ingress: opts.ingress, now: opts.now,
+    operation: opts.gate.operation, authorizedContext: ctx,
+    processing: { kind: "enforced", runtime: opts.runtime, gate: opts.gate },
+    effect,
+    ...(opts.persistAuthority !== undefined ? { persistAuthority: opts.persistAuthority } : {}),
+    ...(opts.attemptRef !== undefined ? { attemptRef: opts.attemptRef } : {})
+  });
+  return {
+    check: () => canonical.check(),
+    run: async (): Promise<HostEffectReceipt> => {
+      const { privacyEventId, ...receipt } = await canonical.run();
+      if (privacyEventId === undefined) throw new Error("host boundary: evidence missing");
+      return { ...receipt, eventId: privacyEventId };
+    }
   };
 }
 
