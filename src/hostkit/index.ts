@@ -8,10 +8,15 @@
  * The privacy store wiring lives in `src/privacy/host.ts` and stays out of
  * this barrel on purpose: the host binds its own stores.
  */
-export { createEffectBoundary, hostTermsDigest } from "./boundary.js";
+export { createEffectBoundary, createProtectedEffect, hostTermsDigest, ProtectedEffectOutcomeUnknownError } from "./boundary.js";
 export type {
   HostEffectBoundary,
   HostEffectBoundaryOptions,
+  ProcessingMode,
+  EffectMode,
+  ProtectedEffectOptions,
+  ProtectedEffectReceipt,
+  ProtectedEffect,
   HostEffectContext,
   HostEffectDecision,
   HostEffectDenialReason,
