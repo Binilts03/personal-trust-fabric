@@ -18,7 +18,7 @@ optional privacy controls. No industry or jurisdiction defines the product.
 | --- | --- | --- | --- |
 | Bounded payment and minimal disclosure | [payment-disclosure.mjs](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/payment-disclosure.mjs) | Exact-terms grant, recipient proof, fake payment executor, claim subset disclosure | Real payment or production payment-provider adoption |
 | Vault-scoped disclosure and protected credential use | [vault-protected-action.mjs](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/vault-protected-action.mjs) | Purpose/agent-scoped reads, in-host secret use, dry-run proposals, fake provider receipt | Real external credential processing, production custody |
-| **DPDP-informed personal-data processing (optional)** | [Synthetic clinic-to-lab walkthrough]({{ '/verticals/dpdp-consent-gateway/' | relative_url }}) | Configured privacy basis and activity, Authority plus privacy checks, Processing Events, withdrawal checked before subsequent disclosure, subject-scoped PTF vault erasure | Actual clinic/lab systems, legally valid consent, statutory compliance, full privacy-program automation, or coverage of unintegrated host paths |
+| Synthetic delegated email | `examples/generic-protected-action.mjs` | Scoped `/email/send` grant, recipient-signed proof, fake external reference, optional privacy module | Live email, authenticated real-world email server, general MCP execution |\n| **DPDP-informed personal-data processing (optional)** | [Synthetic clinic-to-lab walkthrough]({{ '/verticals/dpdp-consent-gateway/' | relative_url }}) | Configured privacy basis and activity, Authority plus privacy checks, Processing Events, withdrawal checked before subsequent disclosure, subject-scoped PTF vault erasure | Actual clinic/lab systems, legally valid consent, statutory compliance, full privacy-program automation, or coverage of unintegrated host paths |
 
 Build and run the local flows from a checkout:
 
@@ -27,6 +27,7 @@ npm ci
 npm run build
 node examples/payment-disclosure.mjs
 node examples/vault-protected-action.mjs
+node examples/generic-protected-action.mjs
 node examples/dpdp-consent-gateway.mjs
 ```
 
