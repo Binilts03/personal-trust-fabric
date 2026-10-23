@@ -429,3 +429,35 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
 - **Enforcement diagnostics:** `privacy verify` can verify local encrypted stores and configured reference-host input, and reports gated, denied and uncovered paths. It cannot attest that a running external process is executing the privacy wrapper. Operators must prove the actual tool/provider boundary with end-to-end tests and deployment logs.
 
 See [DPDP profile](../privacy/dpdp.md) for a precisely scoped operator setup and legal source links.
+
+
+## Domain-neutral Host Kit consolidation (branch candidate)
+
+- `createProtectedEffect` supports an explicit non-privacy reference
+  host and privacy-enforced processing; this is **not** a global interceptor.
+  A host using `not-enforced` asserts its own processing applicability.
+  The SDK cannot attest legal/organisational applicability, prevent a
+  malicious host from selecting the wrong mode, or secure host-owned
+  callbacks against exfiltration.
+- Generic `createHostRedemptionChallenge` issues a local, short-lived,
+  one-use signed capability **inside the trusted host**; it does not
+  prove external recipient registration or make the MCP agent interface
+  support registered generic executions. The SDK expects correct host
+  identity/key custody and exact, independently authorized Authority
+  context. Local `Capabilities` use is not a durable distributed proof
+  ledger; Authority uses still require durable persistence.
+- The reference MCP server still uses its established payment-specific
+  consumption, journal replay and optional processing-event recovery
+  path. Generic `ptf_request_action` remains proposal-only.
+  `./hostkit` provider submission uses the existing journal but
+  **does not independently guarantee journal-first replay before
+  a spent Authority is checked**. A returned successful receipt is
+  not a guarantee of exactly-once operation across host restarts.
+  Never retry an unknown outcome without reconciling the effect.
+- Existing `/pay` amount/currency guardrails remain in
+  `src/core/authority.ts` and in local capability validation.
+  These are intentional compatibility protections. Deleting them
+  before all direct/restore/MCP/CLI call paths prove equivalent denial
+  would weaken security.
+- No live email/payment/DPDP integrations are attested by the new
+  synthetic examples, and no statement here certifies legal compliance.
