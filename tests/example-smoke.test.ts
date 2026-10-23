@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const examples = ["payment-disclosure.mjs", "vault-protected-action.mjs"] as const;
+const examples = ["payment-disclosure.mjs", "vault-protected-action.mjs", "generic-protected-action.mjs"] as const;
 
 describe("documented reference examples", () => {
   for (const name of examples) {
