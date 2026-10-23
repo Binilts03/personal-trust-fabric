@@ -247,15 +247,27 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
   }
   function project(raw: ExecutionReceipt | void, digest: string,
                    eventId: string | undefined, authorityId: string | undefined): ProtectedEffectReceipt {
+    // Never let a trusted callback re-label the authorized effect in a receipt.
+    // This is checked even though provider execution has its own binding:
+    // callback integrations are a separate host-controlled effect source.
+    if (raw !== undefined && (
+      raw.resource !== operation.resource.id ||
+      raw.purpose !== (operation.purpose ?? "") ||
+      raw.termsDigest !== digest ||
+      (operation.context["recipient"] !== undefined &&
+       raw.recipient !== operation.context["recipient"])
+    )) {
+      throw new Error("host boundary: receipt fields disagree with authorized operation");
+    }
     const receiptId = boundedRef(raw?.receiptId ?? ("host-" + randomUUID()), "receipt id");
     const transaction = raw?.transaction === undefined ? undefined :
       boundedRef(raw.transaction, "transaction reference");
     return {
       receiptId,
       action: operation.action.name,
-      resource: raw?.resource ?? operation.resource.id,
-      purpose: raw?.purpose ?? operation.purpose ?? "",
-      termsDigest: raw?.termsDigest ?? digest,
+      resource: operation.resource.id,
+      purpose: operation.purpose ?? "",
+      termsDigest: digest,
       at: raw?.at ?? now(),
       ...(authorityId !== undefined ? { authorityId } : {}),
       ...(redemption !== undefined ? { capabilityId: redemption.chainId } : {}),
