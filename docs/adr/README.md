@@ -26,3 +26,5 @@
 | [0023](0023-agent-ingress.md)                         | Authenticated multi-agent ingress: registry + session proof, fixed mode preserved, replaceability proof        | accepted | 2026-09-22 |
 | [0024](0024-privacy-enforcement-narrows-authority.md) | Privacy enforcement narrows authority; evidence stays separate from technical power                            | accepted | 2026-10-18 |
 | [0025](0025-privacy-enforcement-is-per-host.md)       | Privacy enforcement is per-host, explicit, and composed at the effect boundary                                 | accepted | 2026-10-21 |
+
+| [0026](0026-domain-neutral-effect-consolidation.md) | Domain-neutral protected-effect consolidation (in progress; generic MCP execution not yet proven) | proposed | 2026-10-24 |
