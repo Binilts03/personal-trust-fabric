@@ -46,3 +46,6 @@ export type {
   HostConformanceScenario,
   HostConformanceScenarioOptions,
 } from "./conformance.js";
+
+export { createHostRedemptionChallenge } from "./recipient-proof.js";
+export type { HostRedemptionChallenge } from "./recipient-proof.js";
