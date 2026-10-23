@@ -100,3 +100,25 @@ bash scripts/harness.sh
 ```
 
 Architecture changes require an ADR in `docs/adr/`.
+
+
+## Reusable protected-effect seam (proposed consolidation)
+
+`src/hostkit/boundary.ts` now exports one
+`createProtectedEffect` ordering implementation plus the compatibility
+`createEffectBoundary` adapter. The trusted host chooses a concrete
+provider or trusted callback, supplies verified actor identity and
+exact effect context, and explicitly selects whether configured privacy
+narrowing is enforced. The `./hostkit` public subpath also offers
+`createHostRedemptionChallenge` for recipient-signed generic operations;
+it wraps the **existing internal** capability format without exposing
+sealed capabilities on the wire.
+
+This is an SDK-level consolidation, not proof that all product entry
+points already use the same orchestrator. Existing MCP payment,
+disclosure, operator CLI protected-secret use, and direct adapter calls
+have their own historical host sequencing. In particular, MCP payment
+has a dedicated journal-first replay sequence that must be preserved
+before its execution can migrate to the canonical host boundary.
+See ADR-0026 and the limits register. DPDP remains an optional
+`PrivacyProfile` and may only narrow already verified Authority.
