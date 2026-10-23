@@ -22,6 +22,7 @@ function fixture() {
     principal: "owner",
     actor: { kind: "exact", id: "agent-a" },
     action: { name: "/email/send" },
+    bounds: [],
     exp: NOW + 600,
     maxUses: 1,
   });
