@@ -9,7 +9,6 @@
 // Values never print: outputs carry ids/names/digests/receipts only.
 import {
   Authority,
-  Capabilities,
   VaultStore,
   claimsSubset,
   digestForOperation,
@@ -22,6 +21,7 @@ import {
   useCredential,
 } from "../dist/src/api.js";
 import {
+  Capabilities,
   Disclose,
   generateEd25519Keypair,
   leafCidHex,
