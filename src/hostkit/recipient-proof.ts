@@ -29,7 +29,8 @@ export function createHostRedemptionChallenge(input: {
       action === "/disclose" || action.startsWith("/disclose/")) {
     throw new Error("host redemption: reserved domain; use existing entry point");
   }
-  if (!operation.purpose || !operation.resource.id ||
+  const purpose = operation.purpose;
+  if (!purpose || !operation.resource.id ||
       typeof recipient !== "string" || recipient.length === 0 ||
       operation.context["recipient"] !== recipient) {
     throw new Error("host redemption: resource, purpose and exact recipient required");
@@ -51,7 +52,7 @@ export function createHostRedemptionChallenge(input: {
     sub: ingress.principal,
     cmd: action,
     pol: [],
-    purpose: operation.purpose,
+    purpose,
     resource: operation.resource.id,
     recipient,
     exp: input.nowSec() + 300,
@@ -64,7 +65,7 @@ export function createHostRedemptionChallenge(input: {
     redeem(proof: { readonly key: Uint8Array; readonly sig: Uint8Array }): Redemption {
       const outcome = capabilities.redeem([capability], {
         cmd: action, args: { ...operation.context }, recipient,
-        resource: operation.resource.id, purpose: operation.purpose,
+        resource: operation.resource.id, purpose,
         termsDigest: digest,
       }, { proof });
       if (!outcome.ok) {
