@@ -141,6 +141,24 @@ if (installCheck) {
         `the installed package does not export the curated entry point: ${out.trim()}`
       );
     }
+    // Copy the real third-domain example INTO the fresh consumer. Executing
+    // it from the source tree would accidentally resolve local dist instead
+    // of the packed installation and invalidate this check.
+    const genericProbe = join(consumer, "generic-protected-action.mjs");
+    writeFileSync(
+      genericProbe,
+      readFileSync(join(root, "examples/generic-protected-action.mjs"), "utf8")
+    );
+    const genericOutput = execFileSync(process.execPath, [genericProbe], {
+      cwd: consumer,
+      encoding: "utf8",
+    });
+    if (!genericOutput.includes("email receipt:") ||
+        genericOutput.includes("PRIVATE KEY") ||
+        genericOutput.includes("PAN-SECRET")) {
+      fail("packed consumer generic protected action failed or leaked sensitive output");
+    }
+
   } catch (error) {
     fail(`the tarball does not install and import: ${error.message}`);
   } finally {
