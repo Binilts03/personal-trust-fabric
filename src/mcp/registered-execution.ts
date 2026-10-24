@@ -146,8 +146,19 @@ export class RegisteredActionExecutor {
         }
       }
       const receipt = { ...journal.receipt, action: operation.action.name };
+      const result = processingEvidence === "gap"
+        ? { ...receipt, status: "executed" as const, processingEvidence: "gap" as const }
+        : receipt;
       try {
-        recoverExecutedProposal(this.deps.dir, args.termsDigest, receipt, this.deps.now());
+        if (processingEvidence === "gap") {
+          state.audit.append({
+            actor: ingress.id,
+            action: "privacy-evidence-gap",
+            capabilityId: receipt.capabilityId,
+            detail: receipt.receiptId,
+          });
+        }
+        recoverExecutedProposal(this.deps.dir, args.termsDigest, result, this.deps.now());
         state.audit.append({
           actor: ingress.id,
           action: "redeem",
@@ -157,9 +168,7 @@ export class RegisteredActionExecutor {
           registryRev: state.reg.loadedRevision(),
         });
       } catch { /* journal still proves the effect, and never retransmits */ }
-      return answer(processingEvidence === "gap"
-        ? { ...receipt, status: "executed", processingEvidence: "gap" }
-        : receipt);
+      return answer(result);
     }
     if (journal.kind === "unknown") {
       return answer({ status: "outcome_unknown", termsDigest: args.termsDigest });
