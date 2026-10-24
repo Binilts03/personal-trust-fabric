@@ -4,12 +4,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  Authority, PrivacyRuntime,
+  Authority, PrivacyRuntime, generateEd25519Keypair, signBytes, makeFakeProviders,
   type PrivacySnapshot, type PrivacyProfile,
   type PrivacyEventRepository, type ProcessingEventPrepare,
   type ProcessingEventRecord, type ProcessingEventFinalize
 } from "../src/index.js";
-import { createProtectedEffect } from "../src/hostkit/index.js";
+import { createProtectedEffect, createEffectBoundary, createHostRedemptionChallenge } from "../src/hostkit/index.js";
 
 const NOW = 1_800_000_000;
 const ingress = { id: "agent-email", principal: "owner", source: "local-registration" as const, proofRef: "host-registry" };
@@ -72,6 +72,9 @@ class Events implements PrivacyEventRepository {
     this.entries.set(id,value); return value;
   }
   findByKey() { return this.entries.values().next().value ?? null; }
+  findByAttempt(termsDigest: string, attemptRef: string) {
+    return [...this.entries.values()].filter(x => x.termsDigest === termsDigest && x.attemptRef === attemptRef);
+  }
   listBySubject(ref: string) { return [...this.entries.values()].filter(e=>e.dataPrincipalRef===ref); }
   recoverPrepared() { return []; }
 }
@@ -148,4 +151,38 @@ describe("generic host processing with optional privacy profile",()=>{
       assert.equal(effects,0);
     }finally{rmSync(f.dir,{recursive:true,force:true})}
   });
+  it("replays a journaled provider through the legacy boundary without losing eventId",async()=>{
+    const f=fixture();
+    try {
+      const owner=generateEd25519Keypair();
+      const signer=generateEd25519Keypair();
+      const keys=new Map([["owner",owner.publicKeyRaw],["provider:email",signer.publicKeyRaw]]);
+      const challenge=createHostRedemptionChallenge({
+        operation,ingress,recipient:"provider:email",
+        principalPrivateKey:owner.privateKey,
+        resolveKey:(id)=>keys.get(id)??null,
+        nowSec:()=>NOW
+      });
+      const redemption=challenge.redeem({
+        key:signer.publicKeyRaw,
+        sig:signBytes(signer.privateKey,Buffer.from(challenge.cidHex,"hex"))
+      });
+      const provider=makeFakeProviders({nowSec:()=>NOW}).email;
+      const options={
+        dir:f.dir,auth:f.auth,ingress,runtime:f.runtime,gate:f.gate,
+        now:()=>NOW,provider,redemption,authorizedContext:operation.context,
+        attemptRef:"attempt-reference",
+        persistAuthority:()=>{}
+      };
+      const first=await createEffectBoundary(options).run();
+      assert.equal(first.eventId,"pev-reference");
+      assert.equal(provider.calls.length,1);
+      const recovered=await createEffectBoundary(options).run();
+      assert.equal(recovered.eventId,first.eventId);
+      assert.equal(recovered.receiptId,first.receiptId);
+      assert.equal(provider.calls.length,1,"replay cannot execute a second provider effect");
+      assert.equal(f.auth.snapshot().used.length,1);
+    }finally{rmSync(f.dir,{recursive:true,force:true})}
+  });
+
 });
