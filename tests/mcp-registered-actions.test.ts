@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
@@ -360,6 +360,19 @@ describe("host-registered generic MCP effect",()=>{
       assert.equal(result.error,false);
       assert.equal(result.body["privacyEventId"],"pev-email-mcp");
       assert.equal(eventRows.get("pev-email-mcp")?.state,"SUCCEEDED");
+      assert.equal(provider.calls.length,1);
+      // Simulate the process crashing after provider journal commit but before
+      // the durable proposal transition, with independent privacy evidence
+      // missing. The provider outcome is proven, the processing evidence is
+      // a reported gap, and there must be NO new submission.
+      const proposalPath=join(fx.dir,"proposals",digest+".json");
+      const row=JSON.parse(readFileSync(proposalPath,"utf8")) as Record<string,unknown>;
+      row["state"]="pending";delete row["receipt"];
+      writeFileSync(proposalPath,JSON.stringify(row));
+      eventRows.clear();
+      const replay=decode(await wire.call("tools/call",{name:"ptf_redeem",arguments:{termsDigest:digest}}));
+      assert.equal(replay.body["status"],"executed");
+      assert.equal(replay.body["processingEvidence"],"gap");
       assert.equal(provider.calls.length,1);
     }finally{await wire.close();rmSync(fx.dir,{recursive:true,force:true})}
   });
