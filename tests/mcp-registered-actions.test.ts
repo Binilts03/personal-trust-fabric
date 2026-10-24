@@ -373,6 +373,18 @@ describe("host-registered generic MCP effect",()=>{
       const replay=decode(await wire.call("tools/call",{name:"ptf_redeem",arguments:{termsDigest:digest}}));
       assert.equal(replay.body["status"],"executed");
       assert.equal(replay.body["processingEvidence"],"gap");
+      const persistent = decode(await wire.call("tools/call", {
+        name: "ptf_get_receipt", arguments: { termsDigest: digest }
+      }));
+      assert.equal(
+        (persistent.body["receipt"] as Record<string, unknown>)?.["processingEvidence"],
+        "gap",
+        "evidence gap must remain visible after stored proposal recovery"
+      );
+      const repeated=decode(await wire.call("tools/call",{
+        name:"ptf_redeem",arguments:{termsDigest:digest}
+      }));
+      assert.equal(repeated.body["processingEvidence"],"gap");
       assert.equal(provider.calls.length,1);
     }finally{await wire.close();rmSync(fx.dir,{recursive:true,force:true})}
   });
