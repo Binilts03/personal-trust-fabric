@@ -19,6 +19,7 @@ import {
 } from "../privacy/errors.js";
 import type { PrivacyGateRequest, PrivacyRuntime } from "../privacy/runtime.js";
 import { saveAuthority } from "../store/files.js";
+import { inspectExecutionJournal } from "../store/execution-replay.js";
 
 /**
  * The host effect boundary (ADR-0025).
@@ -242,6 +243,7 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
       redemption.chainId.length > 0 && op !== undefined &&
       op.termsDigest === digest && op.cmd === operation.action.name &&
       op.resource === operation.resource.id &&
+      op.recipient === operation.context["recipient"] &&
       (op.purpose ?? undefined) === (operation.purpose ?? undefined) &&
       deepEqual(op.args, authorizedContext);
   }
@@ -270,7 +272,7 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
       termsDigest: digest,
       at: raw?.at ?? now(),
       ...(authorityId !== undefined ? { authorityId } : {}),
-      ...(redemption !== undefined ? { capabilityId: redemption.chainId } : {}),
+      ...(redemption !== undefined ? { capabilityId: raw?.capabilityId ?? redemption.chainId } : {}),
       ...(transaction !== undefined ? { transaction } : {}),
       ...(eventId !== undefined ? { privacyEventId: eventId } : {}),
     };
@@ -311,6 +313,54 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
     },
     async run(): Promise<ProtectedEffectReceipt> {
       assertTermsBinding();
+      // Journal-first evidence is inspected before live Authority only for an
+      // exact, consumed and proof-verified provider operation. A completed
+      // effect survives a spent grant; ambiguous/corrupt state never retries.
+      if (opts.effect.kind === "provider") {
+        const digest = hostTermsDigest(operation, ingress);
+        if (!redemptionMatches(digest)) {
+          throw new PrivacyPreEffectError("host boundary: redemption terms or proof invalid");
+        }
+        const journal = inspectExecutionJournal({
+          dir: opts.dir,
+          namespace: opts.effect.provider.namespace ?? opts.effect.provider.kind,
+          termsDigest: digest,
+          action: operation.action.name,
+          recipient: opts.effect.redemption.operation.recipient,
+          resource: operation.resource.id,
+          purpose: operation.purpose ?? "",
+          context: operation.context
+        });
+        if (journal.kind === "succeeded") {
+          if (processing.kind === "enforced") {
+            // A privacy-backed attempt cannot report success until its event
+            // is reconciled. Missing/unverifiable evidence is an unknown,
+            // not a silent downgrade to an unregulated successful receipt.
+            try {
+              processing.runtime.reconcileAttemptEvent(processing.gate, {
+                termsDigest: digest,
+                attemptRef: opts.attemptRef ?? digest,
+                state: "SUCCEEDED",
+                finalizedAt: journal.receipt.at,
+                evidenceRef: "execution-receipt:" + journal.receipt.receiptId,
+                preparedAt: journal.record.createdAt,
+                createIfMissing: true
+              });
+            } catch (error) {
+              throw new ProtectedEffectOutcomeUnknownError(error);
+            }
+          }
+          return project(journal.receipt, digest, undefined, undefined);
+        }
+        if (journal.kind === "failed_final") {
+          throw new PrivacyPreEffectError("host boundary: prior execution failed; new terms required");
+        }
+        if (journal.kind === "unknown") {
+          throw new ProtectedEffectOutcomeUnknownError(
+            new Error("journal: uncertain prior execution (" + journal.reason + ")")
+          );
+        }
+      }
       if (!preview()) throw new Error("authority denied");
       const attemptRef = opts.attemptRef ?? randomUUID();
       let digest = hostTermsDigest(operation, ingress);
