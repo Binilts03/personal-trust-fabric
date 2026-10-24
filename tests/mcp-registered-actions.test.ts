@@ -7,6 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/server";
 import {
   Authority, RecipientRegistry, generateEd25519Keypair, makeFakeProviders,
   saveAuthority, saveRegistry, loadAuthority, sealKeystore, signBytes,
+  AgentRegistry, saveAgents, loadAgents,
   PrivacyRuntime, type AuthorityRequest, type VerifiedIdentity,
   type PrivacyEventRepository, type ProcessingEventRecord,
   type ProcessingEventPrepare, type ProcessingEventFinalize, type PrivacySnapshot
@@ -387,6 +388,69 @@ describe("host-registered generic MCP effect",()=>{
       assert.equal(repeated.body["processingEvidence"],"gap");
       assert.equal(provider.calls.length,1);
     }finally{await wire.close();rmSync(fx.dir,{recursive:true,force:true})}
+  });
+
+  it("retires a registered agent before redemption while preserving another agent's grant",async()=>{
+    const fx=seed();
+    const membership=new AgentRegistry(()=>NOW);
+    membership.register(A,undefined,NOW);
+    membership.register(B,undefined,NOW);
+    saveAgents(fx.dir,membership);
+    const auth=loadAuthority(fx.dir,{nowSec:()=>NOW});
+    auth.addGrant({id:"email-b-registered",principal:P,actor:{kind:"exact",id:B},
+      action:{name:"/email/send"},bounds:[],exp:NOW+300,maxUses:1});
+    saveAuthority(fx.dir,auth);
+    const provider=makeFakeProviders({nowSec:()=>NOW}).email;
+    const registration={action:"/email/send" as const,provider,
+      processing:()=>({kind:"not-enforced" as const,reason:"no-host-privacy-profile-configured" as const}),
+      validate:()=>{}};
+    const make=(actor:string)=>createPtfServer({
+      dir:fx.dir,env:{PTF_PASSPHRASE:"pw"},principal:P,actor,now:()=>NOW,
+      registeredActions:[registration]
+    });
+    const a=await connect(make(A));
+    try {
+      const proposal=decode(await a.call("tools/call",{
+        name:"ptf_request_action",arguments:demand
+      }));
+      assert.equal(proposal.body["allowed"],true);
+      const digest=proposal.body["termsDigest"] as string;
+      const agents=loadAgents(fx.dir);
+      agents.remove(A,NOW);
+      saveAgents(fx.dir,agents);
+      for (const name of ["ptf_redeem","ptf_check","ptf_get_receipt"]) {
+        const denied=decode(await a.call("tools/call",{
+          name,arguments:{termsDigest:digest}
+        }));
+        assert.equal(denied.error,true,"retired actor denied at "+name);
+      }
+    } finally { await a.close(); }
+    const b=await connect(make(B));
+    try {
+      const proposal=decode(await b.call("tools/call",{
+        name:"ptf_request_action",arguments:demand
+      }));
+      assert.equal(proposal.body["allowed"],true);
+      const digest=proposal.body["termsDigest"] as string;
+      const ch=decode(await b.call("tools/call",{
+        name:"ptf_redeem",arguments:{termsDigest:digest}
+      }));
+      assert.equal(ch.body["needProof"],true);
+      const done=decode(await b.call("tools/call",{
+        name:"ptf_redeem",arguments:{
+          termsDigest:digest,
+          recipientKeyHex:Buffer.from(fx.recipient.publicKeyRaw).toString("hex"),
+          recipientSigHex:Buffer.from(signBytes(fx.recipient.privateKey,
+            Buffer.from(ch.body["cidHex"] as string,"hex"))).toString("hex"),
+        }
+      }));
+      assert.equal(done.error,false);
+      assert.equal(done.body["action"],"/email/send");
+      assert.equal(provider.calls.length,1);
+    } finally {
+      await b.close();
+      rmSync(fx.dir,{recursive:true,force:true});
+    }
   });
 
 });
