@@ -53,7 +53,7 @@ precedence if configured, so avoid setting it accidentally.
 | `ptf_authenticate`      | Registry mode: challenge, then signature-bound session  | No                  |
 | `ptf_propose`           | Dry-run: exact terms + digest                           | No (CHECK)          |
 | `ptf_check`             | Status of a proposal                                    | No                  |
-| `ptf_redeem`            | `/pay` challenge → proof → receipt                      | **Yes** (REDEEM)    |
+| `ptf_redeem`            | `/pay` or registered action: challenge → proof → receipt | **Yes** (REDEEM)    |
 | `ptf_request_data`      | Propose a disclosure                                    | No (CHECK)          |
 | `ptf_present_data`      | Holder-signed presentation, nonce-bound, single-present | **Yes** (REDEEM)    |
 | `ptf_request_action`    | Propose any `/-path` except `/disclose*`                | No (CHECK)          |
@@ -117,3 +117,11 @@ keys and proof verification, provider outcome reconciliation, and
 appropriate privacy basis checks. The reference server remains
 single-operator stdio; these tests do not certify a multi-tenant
 production deployment.
+
+### Trusted-host registration contract
+
+The registration API is programmatic (`createPtfServer({ registeredActions })`), **not** a new stdio JSON-RPC registration tool or a new automatically enabled CLI flag. Each exact registration provides `action`, `provider`, `validate(demand)`, and `processing(demand, ingress, auth)`. The third argument is the **same live Authority handle** used for effect consumption; privacy gates must use it, not a reconstructed copy.
+
+Validators must reject extra fields and require opaque resource handles. The built-in `validateOpaqueEmailAction(demand, recipient)` reference checks `/email/send`, `email-message` resources, `msg:` handles and exactly `messageId` plus `recipient` context. A default stdio launch that does not pass `registeredActions` stays payment-only for execution; all other arbitrary action proposals are still non-executable. A host with `PTF_MCP_PRIVACY_CONFIG` must return `{ kind: "enforced", runtime, gate }` for a registered action; the agent cannot override this via request JSON.
+
+A submitted provider whose outcome is ambiguous requires query-first reconciliation; no blind retry occurs. A journal-proven success with missing privacy evidence is returned as `status: "executed"` and `processingEvidence: "gap"`, and that evidence-gap status is retained in a recovered proposal receipt for subsequent lookups. The Processing Event repository's durability and legal basis remain host/operator responsibilities.

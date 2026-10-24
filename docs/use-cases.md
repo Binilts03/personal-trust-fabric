@@ -65,3 +65,5 @@ applications of the same authority semantics. These are not presented as
 completed adapters, deployed integrations or validated product needs.
 Evidence from additional real host integrations, not the number of demo
 scripts, should determine which use cases merit expansion.
+
+**Registered MCP actions:** A trusted embedding host may also register a synthetic `/email/send` action for the reference MCP server. The existing `ptf_request_action` → `ptf_redeem` flow then uses a real recipient-signed proof, Host Kit protected effect, and journal-first replay. This behavior is exercised in `tests/mcp-registered-actions.test.ts`, not by a deployed email service. Without trusted-host registration the generic action remains proposal-only.

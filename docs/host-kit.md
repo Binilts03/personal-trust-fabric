@@ -224,10 +224,4 @@ always requires privacy and retains its historical `eventId` receipt
 property for its consumers. Do not treat the older path as automatically
 enforcing every other host's effects.
 
-**Limit:** this reusable SDK entry does not by itself make arbitrary
-actions redeemable through the current reference MCP server.
-trusted-host registrations now allow an exact, non-payment action to
-be proposed through `ptf_request_action` and redeemed with recipient proof
-through `ptf_redeem`. Unregistered actions remain non-executable; the
-reference email adapter performs no live delivery. See MCP contract. See the [MCP contract]({{ '/mcp-contract/' | relative_url }})
-and [known limits]({{ '/audit/limits/' | relative_url }}).
+**Host integration limit:** The reference MCP server can execute only trusted-host-registered exact actions, alongside its established payment route. `ptf_request_action` still proposes arbitrary actions for visibility, but unregistered actions cannot execute. When a privacy profile is configured, an action with no enforced trusted processing gate is denied. The synthetic email provider does not deliver real email. See [MCP contract]({{ '/mcp-contract/' | relative_url }}) and [known limits]({{ '/audit/limits/' | relative_url }}).
