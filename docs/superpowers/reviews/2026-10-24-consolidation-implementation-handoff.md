@@ -46,6 +46,7 @@ preserving its historical red-test and design evidence.
   recipient proof; their CI smoke gate checks exit code and secret sentinel.
 - Synthetic `/email/send` through `./hostkit` succeeds using the shipped
   package from an isolated `npm pack` installation. No real email is sent.
+- Installed-package `personal-trust-fabric/mcp` entry now exposes trusted host registration; a second clean-consumer probe imports `createPtfServer`, constructs and closes a host without relying on private deep imports. The default MCP binary remains payment-only unless an embedding host registers a generic action.
 - Generic MCP integration tests cover challenge/signature/redeem, receipt
   persistence, re-redeem idempotence, unknown-provider restart outcomes,
   agent A versus B grant separation, revocation/removal of A, malformed

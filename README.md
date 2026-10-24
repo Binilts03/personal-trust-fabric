@@ -126,7 +126,8 @@ published `./hostkit` interface. It uses recipient-signed, one-use
 proof and a fake provider; **no actual email is sent**. Optional privacy
 enforcement is host-composed, not a global compliance or interception
 feature. The reference MCP host now allows exact, trusted-host-registered
-generic actions through the shared protected-effect path. Other generic
+generic actions through the shared protected-effect path.
+Trusted Node applications can embed it through the supported `personal-trust-fabric/mcp` subpath (`createPtfServer` and `validateOpaqueEmailAction`). The default `ptf-mcp-server` executable does **not** enable additional actions by itself. Other generic
 requests remain proposal-only, and no live email delivery is implemented.
 
 ## Operator CLI
