@@ -12,7 +12,6 @@ import {
   FileAuditLog,
   RecipientRegistry,
   canonicalize,
-  executeWithJournal,
   executorAsProvider,
   issueAgentChallenge,
   leafCidHex,
@@ -35,6 +34,7 @@ import {
 import { readFileSync } from "node:fs";
 import { RegisteredActionExecutor } from "./mcp/registered-execution.js";
 import { registeredActionMap, type RegisteredAction } from "./mcp/registered-actions.js";
+import { createProtectedEffect, ProtectedEffectOutcomeUnknownError } from "./hostkit/index.js";
 import type { KeyObject } from "node:crypto";
 import { requestData, requestExecution } from "./profiles/data.js";
 import {
@@ -49,10 +49,7 @@ import {
   replayPaymentAttempt,
 } from "./privacy/mcp-host.js";
 import { discloseWithPrivacy } from "./privacy/vault.js";
-import {
-  executeProtectedActionWithPrivacy,
-  PrivacyPreEffectError,
-} from "./privacy/providers.js";
+import { PrivacyPreEffectError } from "./privacy/providers.js";
 import {
   PrivacyEventConflictError,
   PrivacyOutcomeUnknownError,
@@ -1355,92 +1352,75 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         markDenied(args.termsDigest);
         fail(`redeem failed: ${redeemed.reason}`);
       }
-      // The privacy wrapper precommits an attempt before ANY consumption or
-      // provider effect. Legacy mode executes this exact closure directly.
-      let consumedAuthorityId: string | undefined;
-      const consumeAndExecute = async (
-        markEffectStarted: () => void = () => {},
-        fence: () => void = () => {}
-      ) => {
-        const decision = auth.evaluate(op, ingress, {
-          consume: true,
-          nowSec: now(),
-        });
-        if (!decision.allow) {
-          markDenied(args.termsDigest);
-          throw new PrivacyPreEffectError(
-            `authority denied at redeem time: ${decision.reason}`
-          );
-        }
-        consumedAuthorityId = decision.citations[0]?.authorityId;
-        // Existing authority CAS and provider journal remain authoritative.
-        saveAuthority(opts.dir, auth);
-        // The privacy fence runs after the burn and before the effect: a
-        // withdrawal that lands in this window stops the payment instead of
-        // paying without a live basis.
-        fence();
-        return executeWithJournal({
-          dir: opts.dir,
-          provider: executorAsProvider(executor, "payment", now),
-          req: {
-            capabilityId: leafCidHex(challenge.cap),
-            termsDigest: args.termsDigest,
-            action: "/pay",
-            recipient,
-            resource,
-            purpose,
-            context: { amount, currency },
-          },
-          redemption: redeemed,
-          nowSec: now(),
-          at: now(),
-          onEffectStart: markEffectStarted,
-        });
-      };
-      let journaled: Awaited<ReturnType<typeof consumeAndExecute>>;
+      // The same Host Kit state machine now handles payment and registered
+      // generic effects: live authority consumption, optional privacy
+      // precommit/fence, CAS persistence, and the durable provider journal.
+      let processing;
       if (opts.privacy === undefined) {
-        journaled = await consumeAndExecute();
+        processing = { kind: "not-enforced" as const,
+          reason: "no-host-privacy-profile-configured" as const };
       } else {
         try {
-          const scoped = privacyForConfiguredOperation(
-            keys,
-            auth,
-            ingress,
-            demand
-          );
-          journaled = await executeProtectedActionWithPrivacy({
-            runtime: scoped.runtime,
-            gate: scoped.gate,
-            execute: (markEffectStarted, fence) =>
-              consumeAndExecute(markEffectStarted, fence),
-            attemptRef: args.termsDigest,
-          });
-        } catch (error) {
-          if (error instanceof PrivacyOutcomeUnknownError) {
-            return privacyOutcomeUnknownResult(args.termsDigest, "payment");
-          }
-          if (error instanceof PrivacyEventConflictError) {
-            return privacyEvidenceConflictResult(args.termsDigest, error.state);
-          }
-          // Never leak store paths, key ids, journal details or configuration
-          // detail to the agent-facing error surface. Reaching this branch
-          // means the wrapper proved the failure was pre-effect.
+          const scoped = privacyForConfiguredOperation(keys, auth, ingress, demand);
+          processing = { kind: "enforced" as const,
+            runtime: scoped.runtime, gate: scoped.gate };
+        } catch {
           markDenied(args.termsDigest);
           fail("privacy denied");
         }
+      }
+      let journaled;
+      try {
+        journaled = await createProtectedEffect({
+          dir: opts.dir,
+          auth, ingress, operation: op,
+          // Legacy payment capabilities sign amount/currency in args and
+          // sign recipient separately. The boundary reconstructs exactly
+          // the original operation context from those two signed fields.
+          authorizedContext: redeemed.operation.args,
+          now, processing,
+          effect: {
+            kind: "provider",
+            provider: executorAsProvider(executor, "payment", now),
+            redemption: redeemed
+          },
+          attemptRef: args.termsDigest
+        }).run();
+      } catch (error) {
+        if (error instanceof PrivacyOutcomeUnknownError ||
+            error instanceof ProtectedEffectOutcomeUnknownError) {
+          return paymentJournalUnsettledResult(args.termsDigest);
+        }
+        if (error instanceof PrivacyEventConflictError) {
+          return privacyEvidenceConflictResult(args.termsDigest, error.state);
+        }
+        if (opts.privacy !== undefined) {
+          markDenied(args.termsDigest);
+          fail("privacy denied");
+        }
+        throw error;
+      }
+      const consumedAuthorityId = journaled.authorityId;
+      const executedCapabilityId = journaled.capabilityId;
+      const executedTransaction = journaled.transaction;
+      if (executedCapabilityId === undefined ||
+          executedTransaction === undefined) {
+        // A completed effect with no complete receipt is an unknown outcome,
+        // never a reason to retry with a fresh payment.
+        return paymentJournalUnsettledResult(args.termsDigest);
       }
       // Project the /pay receipt shape from the journal receipt. Amount and
       // currency come from the exact authorized terms verified above
       // (authorizedTermsCover inside the journal) — never invented.
       const receipt = {
         receiptId: journaled.receiptId,
-        capabilityId: journaled.capabilityId,
-        recipient: journaled.recipient,
+        capabilityId: executedCapabilityId,
+        recipient,
         amount,
         currency,
         resource: journaled.resource,
         purpose: journaled.purpose,
-        transaction: journaled.transaction,
+        transaction: executedTransaction,
         at: journaled.at,
         termsDigest: journaled.termsDigest,
       };
