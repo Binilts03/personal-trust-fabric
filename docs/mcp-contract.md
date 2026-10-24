@@ -84,22 +84,36 @@ The stdio reference host accepts **operator-controlled** `PTF_MCP_PRIVACY_CONFIG
 
 In this reference host the privacy gate covers `ptf_request_data` and `ptf_present_data` disclosures, plus `ptf_propose:/pay` and `ptf_redeem:/pay` (including the journaled payment executor). Payment processing additionally requires an operator-defined `actionCategories["/pay"]` and a matching active processing activity/basis. The precommitted privacy event precedes payment authority consumption or provider execution. No agent-controlled legal-basis/controller/subject fields are added to tool schemas. Explicit mode fails closed when configuration or evidence is unavailable. Omitting the environment variable preserves the authority-only processing path; shared input validation still rejects malformed or pathological values. A startup stderr message reports enabled/disabled mode and its coverage without identifying subjects.
 
-**Limit:** Non-payment `ptf_request_action`, independently invoked adapter/provider paths and operator CLI actions are **not universally protected**. An integrator must explicitly wrap each personal-data processing path. A configured file is not proof that a running remote host actually uses it; `ptf privacy verify --mcp-config FILE` checks configuration and explicitly reports `runtimeAttested: false`.
+**Limit:** Registered non-payment actions are protected only when explicitly composed by the trusted embedding host. Independently invoked adapter/provider paths and operator CLI actions are **not universally protected**. An integrator must explicitly wrap each personal-data processing path. A configured file is not proof that a running remote host actually uses it; `ptf privacy verify --mcp-config FILE` checks configuration and explicitly reports `runtimeAttested: false`.
 
 
-## Generic action execution status — not yet supported
+## Host-registered generic execution (reference MCP host)
 
-The `./hostkit` package now supports synthetic non-payment protected
-execution by a **trusted host**. This is not an MCP capability claim.
-The reference stdio MCP server still only proposes arbitrary actions
-with `ptf_request_action` and still redeems `/pay` proposals
-through `ptf_redeem`. A caller must not infer that an allowed generic
-proposal is executable, and cannot choose an unregistered effect or
-privacy policy through tool parameters.
+A trusted application embedding `createPtfServer` may register an
+exact non-payment action through `registeredActions`. Registration
+supplies the provider, a strict effect-bearing input validator, and
+a trusted processing mode. The agent cannot register actions, select
+the provider, determine the privacy policy, or supply its own identity.
 
-Extending this interface requires exact-action host registration,
-verified actor and recipient proof, privacy fail-closed routing, and
-**journal-first outcome recovery before re-consuming authority**.
-Until all are proven through real MCP tests, new generic effects
-remain host-library-only. Existing payment/disclosure tools and their
-privacy coverage remain unchanged.
+For registered actions, `ptf_request_action` proposes exact terms
+and `ptf_redeem` requests recipient signature proof before using the
+same `createProtectedEffect` path used for payment. The execution
+journal is checked **before** evaluating already-spent live Authority
+on replay. A conclusive prior success is returned without resubmission;
+a corrupt or ambiguous journal is never treated as absence. If the
+provider succeeded but its Processing Event cannot be reconciled,
+the response preserves `status: "executed"` with
+`processingEvidence: "gap"`; investigate the evidence separately.
+
+Unknown action registrations still have no execution route. With
+privacy configured, unregistered action proposals fail closed.
+The operator's CLI, arbitrary independently invoked providers,
+remote ingress, and production email transports are not covered
+automatically. The shipped example and tests use a **fake** email
+provider: no real message is delivered.
+
+The embedding host must arrange durable authorized-use persistence,
+keys and proof verification, provider outcome reconciliation, and
+appropriate privacy basis checks. The reference server remains
+single-operator stdio; these tests do not certify a multi-tenant
+production deployment.
