@@ -27,8 +27,8 @@ export interface RegisteredHostState {
 }
 export interface RegisteredProofArgs {
   readonly termsDigest: string;
-  readonly recipientKeyHex?: string;
-  readonly recipientSigHex?: string;
+  readonly recipientKeyHex?: string | undefined;
+  readonly recipientSigHex?: string | undefined;
 }
 type TextResult = { content: { type: "text"; text: string }[] };
 function answer(payload: Readonly<Record<string, unknown>>): TextResult {
