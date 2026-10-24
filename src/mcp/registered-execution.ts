@@ -115,7 +115,7 @@ export class RegisteredActionExecutor {
     const registered = this.deps.actions.get(demand.action.name);
     if (registered === undefined) denied();
     const { operation, recipient } = snapshot(demand, ingress, args.termsDigest);
-    const processing = this.processing(registered, demand, ingress);
+    const processing = this.processing(registered, demand, ingress, state.auth);
     const journal = inspectExecutionJournal({
       dir: this.deps.dir,
       namespace: registered.provider.namespace ?? registered.provider.kind,
