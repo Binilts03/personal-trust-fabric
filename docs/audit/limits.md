@@ -446,9 +446,12 @@ See [DPDP profile](../privacy/dpdp.md) for a precisely scoped operator setup and
   identity/key custody and exact, independently authorized Authority
   context. Local `Capabilities` use is not a durable distributed proof
   ledger; Authority uses still require durable persistence.
-- The reference MCP server still uses its established payment-specific
-  consumption, journal replay and optional processing-event recovery
-  path. Generic `ptf_request_action` remains proposal-only.
+- The reference MCP server now routes registered generic effects and
+  payments through the shared protected-effect boundary, with journal-first
+  replay before attempting live use. Unregistered generic requests remain
+  non-executable. Conclusive execution with missing processing evidence is
+  reported as an evidence gap, never as an unknown provider outcome.
+  This is not a distributed exactly-once guarantee.
   `./hostkit` provider submission uses the existing journal but
   **does not independently guarantee journal-first replay before
   a spent Authority is checked**. A returned successful receipt is
