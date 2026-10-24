@@ -226,7 +226,8 @@ enforcing every other host's effects.
 
 **Limit:** this reusable SDK entry does not by itself make arbitrary
 actions redeemable through the current reference MCP server.
-`ptf_request_action` is still proposal-only, and `ptf_redeem` remains
-payment-only pending proven journal-first recovery and registered action
-execution. See the [MCP contract]({{ '/mcp-contract/' | relative_url }})
+trusted-host registrations now allow an exact, non-payment action to
+be proposed through `ptf_request_action` and redeemed with recipient proof
+through `ptf_redeem`. Unregistered actions remain non-executable; the
+reference email adapter performs no live delivery. See MCP contract. See the [MCP contract]({{ '/mcp-contract/' | relative_url }})
 and [known limits]({{ '/audit/limits/' | relative_url }}).
