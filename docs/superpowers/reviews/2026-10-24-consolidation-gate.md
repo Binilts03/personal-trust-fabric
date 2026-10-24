@@ -1,3 +1,5 @@
+> **Historical gate** — superseded by the verified implementation handoff at [2026-10-24-consolidation-implementation-handoff.md](2026-10-24-consolidation-implementation-handoff.md). Preserve this report as a dated snapshot of blockers prior to the later work; do not use it as the current branch verdict.
+
 # PTF architectural consolidation — implementation and review gate
 
 **Baseline:** `main@cb687c685ba19627d4aa59c7e4375b18ded92c1f`  
