@@ -1,5 +1,6 @@
 import type { Authority, AuthorityRequest, VerifiedIdentity } from "../core/authority.js";
-import type { FileAuditLog, RecipientRegistry } from "../core/execute.js";
+import type { RecipientRegistry } from "../core/identity.js";
+import type { FileAuditLog } from "../store/files.js";
 import { privateKeyFromPkcs8 } from "../core/crypto.js";
 import type { KeyResolver } from "../core/types.js";
 import { digestForOperation } from "../core/authority.js";
