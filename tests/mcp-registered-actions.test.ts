@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import {
   Authority, RecipientRegistry, generateEd25519Keypair, makeFakeProviders,
-  saveAuthority, saveRegistry, loadAuthority, sealKeystore, signBytes
+  saveAuthority, saveRegistry, loadAuthority, sealKeystore, signBytes,
+  PrivacyRuntime, type PrivacyEventRepository, type ProcessingEventRecord,
+  type ProcessingEventPrepare, type ProcessingEventFinalize, type PrivacySnapshot
 } from "../src/index.js";
 import { createPtfServer } from "../src/mcp-server.js";
 
@@ -278,6 +280,91 @@ describe("host-registered generic MCP effect",()=>{
       assert.notEqual(digests[0],digests[1],"agent identity must bind digest");
       assert.equal(provider.calls.length,2);
     }finally{rmSync(fx.dir,{recursive:true,force:true})}
+  });
+
+  it("executes a registered action under enforced privacy and finalizes evidence",async()=>{
+    const fx=seed();const provider=makeFakeProviders({nowSec:()=>NOW}).email;
+    const eventRows=new Map<string,ProcessingEventRecord>();
+    const events:PrivacyEventRepository={
+      prepare:(input:ProcessingEventPrepare)=>{
+        const row:ProcessingEventRecord={...input,eventId:"pev-email-mcp",idempotencyKey:"email-mcp",state:"PREPARED"};
+        if(eventRows.has(row.eventId))throw Error("duplicate event");
+        eventRows.set(row.eventId,row);return row;
+      },
+      load:(id)=>eventRows.get(id)??null,
+      transition:(id,to,patch:ProcessingEventFinalize)=>{
+        const prior=eventRows.get(id);if(prior===undefined)throw Error("missing event");
+        const next:ProcessingEventRecord={...prior,state:to,finalizedAt:patch.finalizedAt,
+          ...(patch.evidenceRef===undefined?{}:{evidenceRef:patch.evidenceRef})};
+        eventRows.set(id,next);return next;
+      },
+      findByKey:()=>[...eventRows.values()][0]??null,
+      listBySubject:(ref)=>[...eventRows.values()].filter(e=>e.dataPrincipalRef===ref),
+      recoverPrepared:()=>[]
+    };
+    const snapshot:PrivacySnapshot={
+      notices:[],consents:[],holds:[],revision:1,
+      bases:[{kind:"certain-legitimate-use",id:"basis-email",controllerId:"host",
+        purpose:"delegated-email",dataCategories:["email"],
+        provisionRef:"reference-only",evidenceRef:"operator:synthetic",
+        assertedBy:"host-test",active:true}],
+      activities:[{id:"activity-email",profileId:"synthetic-email",authorityPrincipal:P,
+        controllerId:"host",subjects:{kind:"exact",ref:"subject:opaque-email-1"},
+        action:"/email/send",resourceType:"email-message",purpose:"delegated-email",
+        dataCategories:["email"],recipients:[{id:M,role:"third-party"}],
+        basisId:"basis-email",active:true}]
+    };
+    const registration={
+      action:"/email/send" as const,provider,
+      validate:(d:{context:Readonly<Record<string,unknown>>})=>{
+        if(Object.keys(d.context).sort().join(",")!=="messageId,recipient")throw Error("unexpected fields");
+      },
+      processing:(d: {action:{name:`/${string}`};resource:{type:string;id:string};context:Readonly<Record<string,unknown>>;purpose?:string},
+                  ingress:{id:string;principal:string},auth:Authority)=>{
+        const runtime=new PrivacyRuntime({
+          loadPrivacy:()=>snapshot, events,
+          profile:{id:"synthetic-email",revision:"1",
+            validate:()=>({ok:true as const,controlRefs:["synthetic-test"]})},
+          nowSec:()=>NOW
+        });
+        return {kind:"enforced" as const,runtime,
+          gate:{authority:auth,ingress:{
+            id:ingress.id,principal:ingress.principal,
+            source:"local-registration" as const,proofRef:"test-verified"
+          },operation:{action:d.action,resource:d.resource,context:d.context,
+            ...(d.purpose===undefined?{}:{purpose:d.purpose})},
+            processing:{authorityPrincipal:P,actor:ingress.id,
+              dataPrincipalRef:"subject:opaque-email-1",controllerId:"host",
+              action:d.action.name,resource:d.resource,
+              purpose:d.purpose??"",dataCategories:["email"],
+              recipients:[{id:M,role:"third-party" as const}]}}
+        };
+      }
+    };
+    const server=createPtfServer({
+      dir:fx.dir,env:{PTF_PASSPHRASE:"pw"},principal:P,actor:A,now:()=>NOW,
+      privacy:{dataPrincipalRef:"subject:opaque-email-1",controllerId:"host",
+        recipientRoles:{[M]:"third-party"},actionCategories:{"/email/send":["email"]}},
+      registeredActions:[registration]
+    });
+    const wire=await connect(server);
+    try {
+      const p=decode(await wire.call("tools/call",{name:"ptf_request_action",arguments:demand}));
+      assert.equal(p.body["allowed"],true);
+      const digest=p.body["termsDigest"] as string;
+      const ch=decode(await wire.call("tools/call",{name:"ptf_redeem",arguments:{termsDigest:digest}}));
+      assert.equal(ch.body["needProof"],true);
+      const result=decode(await wire.call("tools/call",{name:"ptf_redeem",arguments:{
+        termsDigest:digest,
+        recipientKeyHex:Buffer.from(fx.recipient.publicKeyRaw).toString("hex"),
+        recipientSigHex:Buffer.from(signBytes(fx.recipient.privateKey,
+          Buffer.from(ch.body["cidHex"] as string,"hex"))).toString("hex")
+      }}));
+      assert.equal(result.error,false);
+      assert.equal(result.body["privacyEventId"],"pev-email-mcp");
+      assert.equal(eventRows.get("pev-email-mcp")?.state,"SUCCEEDED");
+      assert.equal(provider.calls.length,1);
+    }finally{await wire.close();rmSync(fx.dir,{recursive:true,force:true})}
   });
 
 });
