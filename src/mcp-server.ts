@@ -33,6 +33,8 @@ import {
   type AgentChallenge,
 } from "./index.js";
 import { readFileSync } from "node:fs";
+import { RegisteredActionExecutor } from "./mcp/registered-execution.js";
+import { registeredActionMap, type RegisteredAction } from "./mcp/registered-actions.js";
 import type { KeyObject } from "node:crypto";
 import { requestData, requestExecution } from "./profiles/data.js";
 import {
@@ -137,6 +139,8 @@ export interface PtfServerOptions {
   readonly executor?: PaymentExecutor;
   /** Operator-controlled context only; never provided by agent tool input. */
   readonly privacy?: McpPrivacyConfig;
+  /** Trusted host registrations, never JSON-RPC supplied. Empty by default. */
+  readonly registeredActions?: readonly RegisteredAction[];
 }
 
 interface Proposal {
@@ -362,6 +366,13 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     );
   }
   const executor = opts.executor ?? new FakePaymentExecutor();
+  const registeredActions = registeredActionMap(opts.registeredActions ?? []);
+  const registeredExecutor = new RegisteredActionExecutor({
+    dir: opts.dir, now,
+    privacyConfigured: opts.privacy !== undefined,
+    actions: registeredActions,
+    resolveKey: resolveKeyWithLocalFallback,
+  });
   // Fixed verified ingress: stdio is local-only (see module header).
   // In registry mode this is only the launcher-asserted fallback — every
   // evaluation re-resolves through resolveIngress() below.
@@ -663,14 +674,21 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     return journalView(digest, found.demand) ?? { status: found.status };
   };
 
-  const proposalStatusResult = (digest: string): McpTextResult => ({
-    content: [
+  const proposalStatusResult = (digest: string): McpTextResult => {
+    const found = readStored(digest);
+    if (found !== null) {
+      const ingress = resolveIngress();
+      if (found.demand.principal !== ingress.principal || found.demand.actor !== ingress.id) {
+        fail("proposal identity mismatch");
+      }
+    }
+    return { content: [
       {
         type: "text" as const,
         text: JSON.stringify(proposalStatusPayload(digest), null, 2),
       },
-    ],
-  });
+    ] };
+  };
 
   /**
    * The stored `/pay` demand for a proposal, re-asserted against the
@@ -1209,6 +1227,18 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     async (args) => {
       prunePending();
       const proposal = requireStored(args.termsDigest);
+      const ingress = resolveIngress();
+      if (proposal.demand.principal !== ingress.principal ||
+          proposal.demand.actor !== ingress.id) {
+        fail("proposal identity mismatch");
+      }
+      if (proposal.demand.action.name !== "/pay") {
+        if (!registeredActions.has(proposal.demand.action.name)) {
+          fail("redeem supports registered actions and /pay only");
+        }
+        const state = load();
+        return registeredExecutor.redeem(proposal, args, ingress, state);
+      }
       if (proposal.status === "executed") {
         // Idempotent re-redeem: the same terms already executed — return the
         // stored receipt instead of moving anything twice.
@@ -1222,7 +1252,6 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
         };
       }
       const { auth, reg, audit, keys } = load();
-      const ingress = resolveIngress();
       const {
         demand,
         op,
@@ -1740,11 +1769,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       }),
     },
     async (args) => {
-      // The reference host only enforces the pay/disclose privacy gates.
-      // An arbitrary action proposal cannot be gated safely here, so fail
-      // closed instead of reporting it as merely "uncovered".
-      if (opts.privacy !== undefined) {
-        fail("privacy mode: ptf_request_action is not supported");
+      // Unregistered actions remain proposal-only when privacy is absent.
+      // A configured privacy host denies unknown actions outright.
+      if (opts.privacy !== undefined && !registeredActions.has(args.cmd)) {
+        fail("privacy mode: unregistered action is not supported");
       }
       const { auth } = load();
       const ingress = resolveIngress();
@@ -1783,17 +1811,15 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           `request_action rejected: ${err instanceof Error ? err.message : String(err)}`
         );
       }
-      if (out.decision.allow) {
-        recordProposal(out.digest, out.demand, true);
-      } else {
-        recordProposal(out.digest, out.demand, false);
-      }
+      const allowed = out.decision.allow &&
+        registeredExecutor.proposalAllowed(out.demand, ingress, auth);
+      recordProposal(out.digest, out.demand, allowed);
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify(
-              out.decision.allow
+              allowed
                 ? {
                     allowed: true,
                     termsDigest: out.digest,
@@ -1801,7 +1827,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
                   }
                 : {
                     allowed: false,
-                    reason: out.decision.reason,
+                    reason: out.decision.allow ? "registered action denied" : out.decision.reason,
                     proposal: out.proposal,
                   },
               null,
