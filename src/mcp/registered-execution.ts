@@ -127,6 +127,7 @@ export class RegisteredActionExecutor {
       context: operation.context
     });
     if (journal.kind === "succeeded") {
+      let processingEvidence: "finalized" | "gap" = "finalized";
       if (processing.kind === "enforced") {
         try {
           processing.runtime.reconcileAttemptEvent(processing.gate, {
@@ -138,7 +139,11 @@ export class RegisteredActionExecutor {
             preparedAt: journal.record.createdAt,
             createIfMissing: true,
           });
-        } catch { return answer({ status: "outcome_unknown", termsDigest: args.termsDigest }); }
+        } catch {
+          // The journal conclusively proves external success; missing privacy
+          // evidence is an operator-visible gap, not an unknown provider outcome.
+          processingEvidence = "gap";
+        }
       }
       const receipt = { ...journal.receipt, action: operation.action.name };
       try {
@@ -152,7 +157,9 @@ export class RegisteredActionExecutor {
           registryRev: state.reg.loadedRevision(),
         });
       } catch { /* journal still proves the effect, and never retransmits */ }
-      return answer(receipt);
+      return answer(processingEvidence === "gap"
+        ? { ...receipt, status: "executed", processingEvidence: "gap" }
+        : receipt);
     }
     if (journal.kind === "unknown") {
       return answer({ status: "outcome_unknown", termsDigest: args.termsDigest });
