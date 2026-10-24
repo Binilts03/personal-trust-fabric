@@ -228,7 +228,12 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
   const persist = opts.persistAuthority ?? ((instance: Authority): void => saveAuthority(opts.dir, instance));
 
   function assertTermsBinding(): void {
-    if (!deepEqual(operation.context, authorizedContext)) {
+    // Recipient is an independent signed field in legacy payment demands,
+    // while newer generic demands may also include it in args. Normalize
+    // only from the already verified recipient binding, never from agent data.
+    const expected = redemption === undefined ? authorizedContext :
+      { ...authorizedContext, recipient: redemption.operation.recipient };
+    if (!deepEqual(operation.context, expected)) {
       throw new PrivacyPreEffectError("host boundary: the effect context differs from the authorized operation");
     }
   }
@@ -289,7 +294,7 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
         req: {
           capabilityId: r.chainId, termsDigest: op.termsDigest, action: op.cmd,
           recipient: op.recipient, resource: op.resource, purpose: op.purpose,
-          context: { ...operation.context }
+          context: { ...authorizedContext }
         },
         redemption: r, nowSec: now(), at: now(),
         onEffectStart: ctx.markEffectStarted,
@@ -329,7 +334,7 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
           recipient: opts.effect.redemption.operation.recipient,
           resource: operation.resource.id,
           purpose: operation.purpose ?? "",
-          context: operation.context
+          context: authorizedContext
         });
         if (journal.kind === "succeeded") {
           if (processing.kind === "enforced") {
