@@ -104,4 +104,104 @@ describe("host-registered generic MCP effect",()=>{
       assert.equal(provider.calls.length,1);
     }finally{await wire.close();rmSync(fx.dir,{recursive:true,force:true})}
   });
+  it("keeps generic action proposals non-executable without registration",async()=>{
+    const fx=seed();
+    const server=createPtfServer({dir:fx.dir,env:{PTF_PASSPHRASE:"pw"},principal:P,actor:A,now:()=>NOW});
+    const wire=await connect(server);
+    try {
+      const proposal=decode(await wire.call("tools/call",{name:"ptf_request_action",arguments:demand}));
+      assert.equal(proposal.body["allowed"],true);
+      const proof=decode(await wire.call("tools/call",{name:"ptf_redeem",
+        arguments:{termsDigest:proposal.body["termsDigest"]}}));
+      assert.equal(proof.error,true);
+    }finally{await wire.close();rmSync(fx.dir,{recursive:true,force:true})}
+  });
+  it("refuses extra email fields and an agent-selected processing mode",async()=>{
+    const fx=seed();
+    const provider=makeFakeProviders({nowSec:()=>NOW}).email;
+    const registration={
+      action:"/email/send" as const,provider,
+      processing:()=>({kind:"not-enforced" as const,reason:"no-host-privacy-profile-configured" as const}),
+      validate:(d:{context:Readonly<Record<string,unknown>>})=>{
+        if(Object.keys(d.context).sort().join(",")!=="messageId,recipient" ||
+            d.context["messageId"]!=="msg:1" || d.context["recipient"]!==M) throw Error("bad handles");
+      }
+    };
+    const server=createPtfServer({dir:fx.dir,env:{PTF_PASSPHRASE:"pw"},principal:P,actor:A,
+      now:()=>NOW,registeredActions:[registration]});
+    const wire=await connect(server);
+    try {
+      const malicious=decode(await wire.call("tools/call",{name:"ptf_request_action",
+        arguments:{...demand,context:{...demand.context,body:"private",processing:{kind:"not-enforced"}}}}));
+      assert.equal(malicious.body["allowed"],false);
+      assert.equal(provider.calls.length,0);
+    }finally{await wire.close();rmSync(fx.dir,{recursive:true,force:true})}
+  });
+  it("fails closed when a host privacy profile is configured but an action does not bind a gate",async()=>{
+    const fx=seed();const provider=makeFakeProviders({nowSec:()=>NOW}).email;
+    const server=createPtfServer({
+      dir:fx.dir,env:{PTF_PASSPHRASE:"pw"},principal:P,actor:A,now:()=>NOW,
+      privacy:{dataPrincipalRef:"subject:opaque-email-1",controllerId:"test",
+        recipientRoles:{[M]:"third-party"}},
+      registeredActions:[{
+        action:"/email/send",provider,
+        processing:()=>({kind:"not-enforced" as const,reason:"no-host-privacy-profile-configured" as const}),
+        validate:()=>{}
+      }]
+    });
+    const wire=await connect(server);
+    try{
+      const proposal=decode(await wire.call("tools/call",{name:"ptf_request_action",arguments:demand}));
+      assert.equal(proposal.body["allowed"],false);
+      assert.equal(provider.calls.length,0);
+    }finally{await wire.close();rmSync(fx.dir,{recursive:true,force:true})}
+  });
+  it("does not reveal another actor's stored proposal or receipt",async()=>{
+    const fx=seed();const provider=makeFakeProviders({nowSec:()=>NOW}).email;
+    const registration={
+      action:"/email/send" as const,provider,
+      processing:()=>({kind:"not-enforced" as const,reason:"no-host-privacy-profile-configured" as const}),
+      validate:()=>{}
+    };
+    const a=await connect(createPtfServer({
+      dir:fx.dir,env:{PTF_PASSPHRASE:"pw"},principal:P,actor:A,now:()=>NOW,registeredActions:[registration]
+    }));
+    let digest:string;
+    try {
+      const propose=decode(await a.call("tools/call",{name:"ptf_request_action",arguments:demand}));
+      digest=propose.body["termsDigest"] as string;
+      assert.equal(propose.body["allowed"],true);
+    }finally{await a.close()}
+    const b=await connect(createPtfServer({
+      dir:fx.dir,env:{PTF_PASSPHRASE:"pw"},principal:P,actor:B,now:()=>NOW,registeredActions:[registration]
+    }));
+    try {
+      for(const name of ["ptf_check","ptf_get_receipt","ptf_redeem"]) {
+        const response=decode(await b.call("tools/call",{name,arguments:{termsDigest:digest}}));
+        assert.equal(response.error,true,name+" must deny an unrelated actor");
+      }
+      assert.equal(provider.calls.length,0);
+    }finally{await b.close();rmSync(fx.dir,{recursive:true,force:true})}
+  });
+  it("rejects wildcard, duplicate and reserved trusted registrations",()=>{
+    const fx=seed();const provider=makeFakeProviders({nowSec:()=>NOW}).email;
+    const good={action:"/email/send" as const,provider,
+      processing:()=>({kind:"not-enforced" as const,reason:"synthetic-no-personal-data" as const}),
+      validate:()=>{}};
+    try {
+      assert.throws(()=>createPtfServer({
+        dir:fx.dir,env:{},principal:P,actor:A,
+        registeredActions:[good,good]
+      }),/registration/);
+      assert.throws(()=>createPtfServer({
+        dir:fx.dir,env:{},principal:P,actor:A,
+        registeredActions:[{...good,action:"/email/*" as const}]
+      }),/registration/);
+      assert.throws(()=>createPtfServer({
+        dir:fx.dir,env:{},principal:P,actor:A,
+        registeredActions:[{...good,action:"/pay" as const}]
+      }),/registration/);
+    }finally{rmSync(fx.dir,{recursive:true,force:true})}
+  });
+
 });
