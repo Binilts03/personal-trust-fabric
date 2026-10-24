@@ -59,8 +59,11 @@ async function connect(server: ReturnType<typeof createPtfServer>) {
 }
 function decode(response:Record<string,unknown>) {
   const result=response["result"] as { content?: Array<{text?:string}>,isError?:boolean } | undefined;
-  return {body:JSON.parse(result?.content?.[0]?.text ?? "{}") as Record<string,unknown>,
-    error:result?.isError===true || response["error"]!==undefined};
+  const text=result?.content?.[0]?.text ?? "{}";
+  let body:Record<string,unknown>;
+  try { body=JSON.parse(text) as Record<string,unknown>; }
+  catch { body={message:text}; }
+  return {body, error:result?.isError===true || response["error"]!==undefined};
 }
 const demand={
   cmd:"/email/send",purpose:"delegated-email",resource:"msg:1",
