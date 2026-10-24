@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import {
   Authority, RecipientRegistry, generateEd25519Keypair, makeFakeProviders,
-  saveAuthority, saveRegistry, sealKeystore, signBytes
+  saveAuthority, saveRegistry, loadAuthority, sealKeystore, signBytes
 } from "../src/index.js";
 import { createPtfServer } from "../src/mcp-server.js";
 
@@ -204,6 +204,79 @@ describe("host-registered generic MCP effect",()=>{
         dir:fx.dir,env:{},principal:P,actor:A,
         registeredActions:[{...good,action:"/pay" as const}]
       }),/registration/);
+    }finally{rmSync(fx.dir,{recursive:true,force:true})}
+  });
+
+  it("quarantines unknown external provider outcomes across an MCP server restart",async()=>{
+    const fx=seed();let submits=0;
+    const provider={
+      kind:"email" as const,namespace:"email",
+      submit:async():Promise<never>=>{submits++;throw Error("timed out after submit")},
+      verify:()=>({ok:true as const})
+    };
+    const registration={
+      action:"/email/send" as const,provider,
+      processing:()=>({kind:"not-enforced" as const,reason:"no-host-privacy-profile-configured" as const}),
+      validate:()=>{}
+    };
+    const make=()=>createPtfServer({
+      dir:fx.dir,env:{PTF_PASSPHRASE:"pw"},principal:P,actor:A,now:()=>NOW,registeredActions:[registration]
+    });
+    const first=await connect(make());let digest:string;
+    try{
+      const p=decode(await first.call("tools/call",{name:"ptf_request_action",arguments:demand}));
+      digest=p.body["termsDigest"] as string;
+      const ch=decode(await first.call("tools/call",{name:"ptf_redeem",arguments:{termsDigest:digest}}));
+      const cid=ch.body["cidHex"] as string;
+      const res=decode(await first.call("tools/call",{name:"ptf_redeem",arguments:{
+        termsDigest:digest,
+        recipientKeyHex:Buffer.from(fx.recipient.publicKeyRaw).toString("hex"),
+        recipientSigHex:Buffer.from(signBytes(fx.recipient.privateKey,Buffer.from(cid,"hex"))).toString("hex")
+      }}));
+      assert.equal(res.body["status"],"outcome_unknown");
+      assert.equal(submits,1);
+    }finally{await first.close()}
+    const resumed=await connect(make());
+    try {
+      const res=decode(await resumed.call("tools/call",{name:"ptf_redeem",arguments:{termsDigest:digest}}));
+      assert.equal(res.body["status"],"outcome_unknown");
+      assert.equal(submits,1,"unknown effect must not submit again");
+    }finally{await resumed.close();rmSync(fx.dir,{recursive:true,force:true})}
+  });
+  it("supports two independently authorized actors while keeping their digests isolated",async()=>{
+    const fx=seed();
+    const auth=loadAuthority(fx.dir,{nowSec:()=>NOW});
+    auth.addGrant({id:"email-b",principal:P,actor:{kind:"exact",id:B},
+      action:{name:"/email/send"},bounds:[],exp:NOW+300,maxUses:1});
+    saveAuthority(fx.dir,auth);
+    const provider=makeFakeProviders({nowSec:()=>NOW}).email;
+    const registration={action:"/email/send" as const,provider,
+      processing:()=>({kind:"not-enforced" as const,reason:"no-host-privacy-profile-configured" as const}),
+      validate:()=>{}};
+    const digests:string[]=[];
+    try{
+      for(const actor of [A,B]){
+        const wire=await connect(createPtfServer({
+          dir:fx.dir,env:{PTF_PASSPHRASE:"pw"},principal:P,actor,now:()=>NOW,
+          registeredActions:[registration]
+        }));
+        try{
+          const proposal=decode(await wire.call("tools/call",{name:"ptf_request_action",arguments:demand}));
+          assert.equal(proposal.body["allowed"],true);
+          const digest=proposal.body["termsDigest"] as string;
+          digests.push(digest);
+          const ch=decode(await wire.call("tools/call",{name:"ptf_redeem",arguments:{termsDigest:digest}}));
+          const out=decode(await wire.call("tools/call",{name:"ptf_redeem",arguments:{
+            termsDigest:digest,
+            recipientKeyHex:Buffer.from(fx.recipient.publicKeyRaw).toString("hex"),
+            recipientSigHex:Buffer.from(signBytes(fx.recipient.privateKey,Buffer.from(ch.body["cidHex"] as string,"hex"))).toString("hex")
+          }}));
+          assert.equal(out.error,false);
+          assert.equal(out.body["action"],"/email/send");
+        }finally{await wire.close()}
+      }
+      assert.notEqual(digests[0],digests[1],"agent identity must bind digest");
+      assert.equal(provider.calls.length,2);
     }finally{rmSync(fx.dir,{recursive:true,force:true})}
   });
 
