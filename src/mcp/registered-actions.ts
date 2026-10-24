@@ -1,4 +1,4 @@
-import type { AuthorityRequest, VerifiedIdentity } from "../core/authority.js";
+import type { Authority, AuthorityRequest, VerifiedIdentity } from "../core/authority.js";
 import type { ProtectedProvider } from "../adapters/providers.js";
 import type { ProcessingMode } from "../hostkit/boundary.js";
 
@@ -13,7 +13,8 @@ export interface RegisteredAction {
   readonly provider: ProtectedProvider;
   readonly processing: (
     demand: AuthorityRequest,
-    ingress: VerifiedIdentity
+    ingress: VerifiedIdentity,
+    auth: Authority
   ) => ProcessingMode;
   readonly validate: (demand: AuthorityRequest) => void;
 }
