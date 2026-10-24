@@ -51,6 +51,10 @@
     "./hostkit": {
       "types": "./dist/src/hostkit/index.d.ts",
       "default": "./dist/src/hostkit/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/src/mcp/index.d.ts",
+      "default": "./dist/src/mcp/index.js"
     }
   },
   "bin": {
