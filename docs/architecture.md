@@ -115,10 +115,10 @@ it wraps the **existing internal** capability format without exposing
 sealed capabilities on the wire.
 
 This is an SDK-level consolidation, not proof that all product entry
-points already use the same orchestrator. Existing MCP payment,
-disclosure, operator CLI protected-secret use, and direct adapter calls
-have their own historical host sequencing. In particular, MCP payment
-has a dedicated journal-first replay sequence that must be preserved
-before its execution can migrate to the canonical host boundary.
+points already use the same orchestrator. MCP payment and trusted-host registered generic effects now share the
+Host Kit protected-effect execution path; payment still has its specialized
+approval and presentation adapter. Disclosure, CLI protected-secret use
+and independently invoked adapters remain separate surfaces, so this
+is not universal interception or enforcement.
 See ADR-0026 and the limits register. DPDP remains an optional
 `PrivacyProfile` and may only narrow already verified Authority.
