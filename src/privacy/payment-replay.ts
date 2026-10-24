@@ -43,17 +43,7 @@ export function inspectPaymentJournal(
   switch (result.kind) {
     case "none": return result;
     case "failed_final": return result;
-    case "unknown": {
-      if (result.reason === "corrupt") {
-        return { kind: "unknown", reason: "corrupt", record: null };
-      }
-      // Preserve legacy record visibility for operator replay tools.
-      const record = journal.findByIdempotencyKey(
-        expected.dir,
-        "ptf-" + expected.termsDigest + "-payment"
-      );
-      return { ...result, record };
-    }
+    case "unknown": return result;
     case "succeeded": {
       const amount = result.record.context["amount"];
       const currency = result.record.context["currency"];
