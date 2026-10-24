@@ -96,6 +96,8 @@ const redeemed = caps.authorize(
     cmd: "/pay",
     args: { amount: 1790, currency: "INR" },
     recipient: ids.m,
+    resource: "invoice:inv-1",
+    purpose: "groceries",
     termsDigest: digest,
   },
   {
@@ -107,6 +109,7 @@ const redeemed = caps.authorize(
   }
 );
 if (!redeemed.ok) throw new Error(`redeem denied: ${redeemed.reason}`);
+if (!redeemed.consumed || !redeemed.proofVerified) throw new Error("proof not consumed");
 const receipt = await executeAndReceipt(
   new FakePaymentExecutor(),
   {
@@ -116,6 +119,7 @@ const receipt = await executeAndReceipt(
     currency: "INR",
     resource: "invoice:inv-1",
     purpose: "groceries",
+    termsDigest: digest,
   },
   redeemed,
   NOW

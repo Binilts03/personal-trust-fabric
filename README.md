@@ -57,7 +57,7 @@ This is a working, tested reference implementation on the road to peer review �
 
 **What CI proves on every merge:** strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning, and the docs site build. See `docs/audit/verify.md` to reproduce from scratch.
 
-**What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
+**What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (host-registered generic actions also redeem through the canonical effect boundary; other generic actions remain proposal-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
 
 **Optional extensions:** A host can opt into a privacy-enforcement and processing-evidence extension. India's DPDP framework is the first configured jurisdiction profile, one example application rather than PTF's product identity. The extension only narrows authority on paths integrated by a host; it does not make PTF a DPDP compliance platform or registered Consent Manager. HTTP provider transports are separate integrations; neither a local script nor an adapter proves a live production deployment.
 
@@ -75,10 +75,11 @@ cd personal-trust-fabric
 npm ci
 npm run build
 node examples/payment-disclosure.mjs
+node examples/generic-protected-action.mjs
 node dist/src/cli.js --help
 ```
 
-The script performs a fake bounded payment and a minimal disclosure: no
+The first script performs a fake bounded payment and a minimal disclosure: no
 funds move and no external credential is required. The CLI is a real
 operator interface, not only an SDK. For a complete first-run CLI setup
 (including passphrase creation, key registration, an agent grant, and a
@@ -119,6 +120,15 @@ const decision = authority.evaluate(
 if (!decision.allow) throw new Error("denied");
 // Every allow cites its grant: decision.citations[0].authorityId === "groceries"
 ```
+
+The second script demonstrates a scoped **synthetic email** action through the
+published `./hostkit` interface. It uses recipient-signed, one-use
+proof and a fake provider; **no actual email is sent**. Optional privacy
+enforcement is host-composed, not a global compliance or interception
+feature. The reference MCP host now allows exact, trusted-host-registered
+generic actions through the shared protected-effect path.
+Trusted Node applications can embed it through the supported `personal-trust-fabric/mcp` subpath (`createPtfServer` and `validateOpaqueEmailAction`). The default `ptf-mcp-server` executable does **not** enable additional actions by itself. Other generic
+requests remain proposal-only, and no live email delivery is implemented.
 
 ## Operator CLI
 
@@ -184,7 +194,7 @@ The server speaks for ONE fixed identity pinned at startup — tool schemas carr
 }
 ```
 
-Tools: `ptf_propose` (dry-run, exact terms + digest), `ptf_check` (status), `ptf_redeem` (`/pay` challenge→proof→receipt), `ptf_request_data` (propose a disclosure) → `ptf_present_data` (holder-signed presentation, nonce-bound, single-present, consumes one use), `ptf_request_action` (propose any `/-path` except `/disclose*`), `ptf_get_receipt`, `ptf_list_capabilities` (this identity's live grants only), `ptf_revoke` (request-only). There is deliberately **no approve tool**: humans approve in the CLI, or standing grants cover the demand. The server only ever spends what already exists. See `examples/mcp-client-config.json` and `examples/vault-protected-action.mjs` for the full loop.
+Tools: `ptf_propose` (dry-run, exact terms + digest), `ptf_check` (status), `ptf_redeem` (`/pay` or registered-action challenge→proof→receipt), `ptf_request_data` (propose a disclosure) → `ptf_present_data` (holder-signed presentation, nonce-bound, single-present, consumes one use), `ptf_request_action` (propose any `/-path` except `/disclose*`), `ptf_get_receipt`, `ptf_list_capabilities` (this identity's live grants only), `ptf_revoke` (request-only). There is deliberately **no approve tool**: humans approve in the CLI, or standing grants cover the demand. The server only ever spends what already exists. See `examples/mcp-client-config.json` and `examples/vault-protected-action.mjs` for the full loop.
 
 ## Security model
 

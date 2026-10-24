@@ -25,9 +25,10 @@ cd personal-trust-fabric
 npm ci
 npm run build
 node examples/payment-disclosure.mjs
+node examples/generic-protected-action.mjs
 ```
 
-The script exercises a bounded, synthetic payment using a fake executor and
+The first script exercises a bounded, synthetic payment using a fake executor and
 a minimal data disclosure. No passphrase, external credentials, real money or
 agent-host configuration is needed. See [use cases]({{ '/use-cases/' | relative_url }})
 for other *offline* examples.
@@ -143,3 +144,5 @@ secret-scanning gates.
 
 The optional DPDP-informed scenario remains an [offline use case]({{ '/use-cases/' | relative_url }}),
 **not** a complete compliance workflow or a live clinic/lab demonstration.
+
+**Generic SDK example:** `node examples/generic-protected-action.mjs` exercises an offline, bounded `/email/send` effect with a real local recipient-signature challenge and a fake provider. It does **not** send a message or enable arbitrary MCP execution.
