@@ -72,12 +72,13 @@ export class RegisteredActionExecutor {
   private processing(
     registered: RegisteredAction,
     demand: AuthorityRequest,
-    ingress: VerifiedIdentity
+    ingress: VerifiedIdentity,
+    auth: Authority
   ): ProcessingMode {
     let mode: ProcessingMode;
     try {
       registered.validate(demand);
-      mode = registered.processing(demand, ingress);
+      mode = registered.processing(demand, ingress, auth);
     } catch { return denied(); }
     if (mode === undefined ||
         (mode.kind !== "enforced" && mode.kind !== "not-enforced") ||
@@ -95,7 +96,7 @@ export class RegisteredActionExecutor {
     if (registered === undefined) return !this.deps.privacyConfigured;
     try {
       const { operation } = snapshot(demand, ingress, demand.termsDigest ?? "");
-      const mode = this.processing(registered, demand, ingress);
+      const mode = this.processing(registered, demand, ingress, auth);
       if (!auth.evaluate(operation, ingress, { nowSec: this.deps.now() }).allow) return false;
       if (mode.kind === "enforced") {
         return mode.runtime.preflight(mode.gate).allow;
