@@ -38,7 +38,10 @@ describe("journal-first canonical effect",()=>{
       assert.equal(f.auth.snapshot().used.length,1);
       assert.equal(f.provider.calls.length,1);
       const second=await f.make().run();
-      assert.deepEqual(second,first);
+      const { authorityId: _ephemeralCitation, ...durableReceipt } = first;
+      assert.ok(_ephemeralCitation);
+      assert.deepEqual(second, durableReceipt);
+      assert.equal("authorityId" in second, false, "do not fabricate lost authority citations");
       assert.equal(f.provider.calls.length,1);
     }finally{rmSync(f.dir,{recursive:true,force:true})}
   });
