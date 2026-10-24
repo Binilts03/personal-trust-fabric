@@ -171,7 +171,6 @@ describe("generic host processing with optional privacy profile",()=>{
       const options={
         dir:f.dir,auth:f.auth,ingress,runtime:f.runtime,gate:f.gate,
         now:()=>NOW,provider,redemption,authorizedContext:operation.context,
-        attemptRef:"attempt-reference",
         persistAuthority:()=>{}
       };
       const first=await createEffectBoundary(options).run();

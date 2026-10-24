@@ -342,15 +342,18 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
             // is reconciled. Missing/unverifiable evidence is an unknown,
             // not a silent downgrade to an unregulated successful receipt.
             try {
+              const attemptRef = opts.attemptRef ?? digest;
               processing.runtime.reconcileAttemptEvent(processing.gate, {
                 termsDigest: digest,
-                attemptRef: opts.attemptRef ?? digest,
+                attemptRef,
                 state: "SUCCEEDED",
                 finalizedAt: journal.receipt.at,
                 evidenceRef: "execution-receipt:" + journal.receipt.receiptId,
                 preparedAt: journal.record.createdAt,
                 createIfMissing: true
               });
+              const eventId = processing.runtime.reconciledEventId(processing.gate, digest, attemptRef);
+              return project(journal.receipt, digest, eventId, undefined);
             } catch (error) {
               throw new ProtectedEffectOutcomeUnknownError(error);
             }
@@ -367,8 +370,11 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
         }
       }
       if (!preview()) throw new Error("authority denied");
-      const attemptRef = opts.attemptRef ?? randomUUID();
       let digest = hostTermsDigest(operation, ingress);
+      // Provider retries are keyed by signed terms; callback attempts are
+      // independent and retain fresh identities unless supplied explicitly.
+      const attemptRef = opts.attemptRef ??
+        (opts.effect.kind === "provider" ? digest : randomUUID());
       let eventId: string | undefined;
       let fence = (): void => {};
       let finalize = (_state: "SUCCEEDED" | "FAILED_FINAL" | "OUTCOME_UNKNOWN"): void => {};

@@ -277,6 +277,19 @@ export class PrivacyRuntime {
   }
 
   /**
+   * Recover an event ID for legacy receipt projection only after journal
+   * reconciliation has succeeded. This exact-identity lookup never creates
+   * processing evidence or re-evaluates consumed Authority.
+   */
+  reconciledEventId(req: PrivacyGateRequest, termsDigest: string, attemptRef: string): string {
+    const event = this.locateAttemptEvent(req, { termsDigest, attemptRef });
+    if (event === null || event.state !== "SUCCEEDED") {
+      throw new Error("privacy runtime: reconciled event evidence unavailable");
+    }
+    return event.eventId;
+  }
+
+  /**
    * The single event that covers this exact attempt, or null when there is
    * none. More than one match is ambiguous evidence, never a choice.
    */
