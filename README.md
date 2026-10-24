@@ -125,9 +125,9 @@ The second script demonstrates a scoped **synthetic email** action through the
 published `./hostkit` interface. It uses recipient-signed, one-use
 proof and a fake provider; **no actual email is sent**. Optional privacy
 enforcement is host-composed, not a global compliance or interception
-feature. Currently `ptf_request_action` remains MCP proposal-only;
-`ptf_redeem` is payment-only until the existing journal-first replay
-can be shared with verified generic execution.
+feature. The reference MCP host now allows exact, trusted-host-registered
+generic actions through the shared protected-effect path. Other generic
+requests remain proposal-only, and no live email delivery is implemented.
 
 ## Operator CLI
 
