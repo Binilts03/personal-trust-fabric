@@ -7,7 +7,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/server";
 import {
   Authority, RecipientRegistry, generateEd25519Keypair, makeFakeProviders,
   saveAuthority, saveRegistry, loadAuthority, sealKeystore, signBytes,
-  PrivacyRuntime, type PrivacyEventRepository, type ProcessingEventRecord,
+  PrivacyRuntime, type AuthorityRequest, type VerifiedIdentity,
+  type PrivacyEventRepository, type ProcessingEventRecord,
   type ProcessingEventPrepare, type ProcessingEventFinalize, type PrivacySnapshot
 } from "../src/index.js";
 import { createPtfServer } from "../src/mcp-server.js";
@@ -319,8 +320,7 @@ describe("host-registered generic MCP effect",()=>{
       validate:(d:{context:Readonly<Record<string,unknown>>})=>{
         if(Object.keys(d.context).sort().join(",")!=="messageId,recipient")throw Error("unexpected fields");
       },
-      processing:(d: {action:{name:`/${string}`};resource:{type:string;id:string};context:Readonly<Record<string,unknown>>;purpose?:string},
-                  ingress:{id:string;principal:string},auth:Authority)=>{
+      processing:(d:AuthorityRequest,ingress:VerifiedIdentity,auth:Authority)=>{
         const runtime=new PrivacyRuntime({
           loadPrivacy:()=>snapshot, events,
           profile:{id:"synthetic-email",revision:"1",
@@ -328,10 +328,7 @@ describe("host-registered generic MCP effect",()=>{
           nowSec:()=>NOW
         });
         return {kind:"enforced" as const,runtime,
-          gate:{authority:auth,ingress:{
-            id:ingress.id,principal:ingress.principal,
-            source:"local-registration" as const,proofRef:"test-verified"
-          },operation:{action:d.action,resource:d.resource,context:d.context,
+          gate:{authority:auth,ingress,operation:{action:d.action,resource:d.resource,context:d.context,
             ...(d.purpose===undefined?{}:{purpose:d.purpose})},
             processing:{authorityPrincipal:P,actor:ingress.id,
               dataPrincipalRef:"subject:opaque-email-1",controllerId:"host",
