@@ -553,8 +553,14 @@ describe("MCP multi-agent ingress over stdio (phase 5)", () => {
         },
       });
       assert.equal(failed(reauth), true);
-      // Agent B authenticates: the SAME user-owned grant covers B.
-      // Authority was never copied anywhere — the grant file is untouched.
+      // Register B only AFTER A has been removed. The standing grant
+      // already selects both agent IDs, but no authority is copied or
+      // changed during onboarding.
+      const afterRemoval = loadAgents(store.dir);
+      assert.equal(afterRemoval.lookup(AGENT_B), undefined);
+      afterRemoval.register(AGENT_B, store.keyB.hex, Math.floor(Date.now() / 1000));
+      saveAgents(store.dir, afterRemoval);
+      // Authenticated B can now use the SAME user-owned grant.
       await authenticate(rpc, AGENT_B, store.keyB.privDer);
       assert.equal((await propose(rpc)).allowed, true);
     } finally {
