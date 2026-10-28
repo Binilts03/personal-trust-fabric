@@ -16,7 +16,7 @@ describe("README first-run example", () => {
       timeout: 10_000,
       maxBuffer: 1024 * 1024,
     });
-    assert.equal(child.error, undefined, child.error?.message);
+    assert.equal(child.error, undefined);
     assert.equal(child.status, 0, child.stderr);
     assert.match(child.stdout, /ALLOW: exact operation for agent-a/);
     assert.match(child.stdout, /DENY: other actor/);
