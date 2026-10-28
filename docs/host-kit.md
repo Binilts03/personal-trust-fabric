@@ -187,3 +187,41 @@ The honest limits live in [audit/limits.md](audit/limits.md).
   enforcement narrows Authority.
 - [ADR-0025](adr/0025-privacy-enforcement-is-per-host.md) — per-host,
   explicit enforcement at the effect boundary.
+
+
+## Domain-neutral host-controlled effects (consolidation work)
+
+The `./hostkit` library also exports `createProtectedEffect` and
+`createHostRedemptionChallenge`. An independent **synthetic**
+`/email/send` reference lives in
+[`examples/generic-protected-action.mjs`](https://github.com/Binilts03/personal-trust-fabric/blob/feat/ptf-domain-neutral-consolidation-20261024/examples/generic-protected-action.mjs).
+Run `npm run build && node examples/generic-protected-action.mjs` from
+this branch. It contacts **no** external email provider.
+
+A trusted host constructs the verified `ingress`, the complete
+`AuthorityOperation`, and the effect implementation. The agent cannot
+choose a callback, processing profile, recipient key, or principal signing
+key. Non-payment, non-disclosure effects use the existing locally signed
+capability proof through `createHostRedemptionChallenge`; its challenge
+returns a `cidHex` to the recipient signer and `redeem(proof)` returns
+a genuine, single-use, exact-terms redemption. The issuer private key
+remains inside the trusted host. This helper deliberately refuses
+`/pay*` and `/disclose*`.
+
+`createProtectedEffect` takes a **required** trusted-host `processing`
+discriminator. `{ kind: "enforced", runtime, gate }` composes the
+existing privacy preflight, recheck, durable evidence, fence and
+finalization. `{ kind: "not-enforced", reason: "synthetic-no-personal-data" }`
+is only a synthetic example; `"no-host-privacy-profile-configured"`
+is a host deployment assertion, **not** an agent-selectable bypass.
+Neither makes a regulated or personal-data-processing deployment exempt
+from applicable privacy obligations. No implicit or missing processing
+mode can silently disable privacy.
+
+The new `privacyEventId` receipt property is emitted only when privacy
+evidence actually exists. The older `createEffectBoundary` API still
+always requires privacy and retains its historical `eventId` receipt
+property for its consumers. Do not treat the older path as automatically
+enforcing every other host's effects.
+
+**Host integration limit:** The published `personal-trust-fabric/mcp` subpath exposes `createPtfServer` and the registration API to trusted Node embedding hosts. The reference MCP server can execute only trusted-host-registered exact actions, alongside its established payment route. `ptf_request_action` still proposes arbitrary actions for visibility, but unregistered actions cannot execute. When a privacy profile is configured, an action with no enforced trusted processing gate is denied. The synthetic email provider does not deliver real email. See [MCP contract]({{ '/mcp-contract/' | relative_url }}) and [known limits]({{ '/audit/limits/' | relative_url }}).

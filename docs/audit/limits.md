@@ -319,7 +319,7 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   fields and stay uncovered — keep them out of string-typed receipts).
   Raw record access (`VaultStore` internals) is host-only by construction —
   the embedding host already possesses the vault file; the enforced boundary
-  is MCP/CLI, which expose only evaluate-first reads and receipt-only use.
+  is MCP/CLI, which expose evaluate-first reads and receipt-only use. Registered generic MCP providers additionally require explicit host allowlisting and recipient-signed proof.
   Backup honesty: a whole-directory backup holds ciphertext AND the DEK
   (keystore lives in the store dir), so anyone holding a backup can decrypt
   it — protect backup media accordingly. For DEK/file separation (DEK in
@@ -343,7 +343,7 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   add grants/approvals, never consume uses, never revoke, never expose keys
   or envelopes. `ptf_list_capabilities` shows only grants matching the fixed
   server identity (principal + covering actor selector); revoked and
-  foreign-principal grants are excluded. `ptf_redeem` stays `/pay`-only
+  foreign-principal grants are excluded. By default `ptf_redeem` remains `/pay`-only; exact, trusted-host-registered generic actions can also redeem
   (other actions propose only) and accepts
   any `/pay` proposal in the shared store regardless of originating propose
   tool; disclosures deliver via `ptf_present_data`. Proposals are durable files now (ADR-0017, one per termsDigest =
@@ -429,3 +429,36 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
 - **Enforcement diagnostics:** `privacy verify` can verify local encrypted stores and configured reference-host input, and reports gated, denied and uncovered paths. It cannot attest that a running external process is executing the privacy wrapper. Operators must prove the actual tool/provider boundary with end-to-end tests and deployment logs.
 
 See [DPDP profile](../privacy/dpdp.md) for a precisely scoped operator setup and legal source links.
+
+
+## Domain-neutral Host Kit consolidation (branch candidate)
+
+- `createProtectedEffect` supports an explicit non-privacy reference
+  host and privacy-enforced processing; this is **not** a global interceptor.
+  A host using `not-enforced` asserts its own processing applicability.
+  The SDK cannot attest legal/organisational applicability, prevent a
+  malicious host from selecting the wrong mode, or secure host-owned
+  callbacks against exfiltration.
+- Generic `createHostRedemptionChallenge` issues a local, short-lived,
+  one-use signed capability **inside the trusted host**; it does not
+  prove external recipient registration or automatically enable MCP generic actions; trusted-host registration is mandatory. The SDK expects correct host
+  identity/key custody and exact, independently authorized Authority
+  context. Local `Capabilities` use is not a durable distributed proof
+  ledger; Authority uses still require durable persistence.
+- The reference MCP server now routes registered generic effects and
+  payments through the shared protected-effect boundary, with journal-first
+  replay before attempting live use. Unregistered generic requests remain
+  non-executable. Conclusive execution with missing processing evidence is
+  reported as an evidence gap, never as an unknown provider outcome.
+  This is not a distributed exactly-once guarantee.
+  `./hostkit` provider submission checks a previously completed or ambiguous exact-term journal entry before spending live Authority. This is **not** a distributed exactly-once guarantee: store single-writer assumptions, provider idempotency behavior, external query/reconciliation and a narrow gap between privacy fencing and external effects remain.
+  Never retry an unknown outcome without reconciling the effect.
+- Existing `/pay` amount/currency guardrails remain in
+  `src/core/authority.ts` and in local capability validation.
+  These are intentional compatibility protections. Deleting them
+  before all direct/restore/MCP/CLI call paths prove equivalent denial
+  would weaken security.
+- No live email/payment/DPDP integrations are attested by the new
+  synthetic examples, and no statement here certifies legal compliance.
+
+- **Registered MCP action limitations:** Only exact host-side registrations are executable. The built-in reference email provider and local stdio integrations are synthetic and single-operator. The host validator, private-body resolution, secret custody and regulatory processing classification remain trusted application responsibilities; a malicious trusted host can still leak values. The SDK is not a universal interceptor or a DPDP compliance certification. A completed journal entry is durable effect evidence even if an optional privacy event cannot be reconstructed; a `processingEvidence: "gap"` response must trigger a separate operator reconciliation. Audit rows may duplicate across journal-recovery retries; the effect must not repeat.

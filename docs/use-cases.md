@@ -18,7 +18,7 @@ optional privacy controls. No industry or jurisdiction defines the product.
 | --- | --- | --- | --- |
 | Bounded payment and minimal disclosure | [payment-disclosure.mjs](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/payment-disclosure.mjs) | Exact-terms grant, recipient proof, fake payment executor, claim subset disclosure | Real payment or production payment-provider adoption |
 | Vault-scoped disclosure and protected credential use | [vault-protected-action.mjs](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/vault-protected-action.mjs) | Purpose/agent-scoped reads, in-host secret use, dry-run proposals, fake provider receipt | Real external credential processing, production custody |
-| **DPDP-informed personal-data processing (optional)** | [Synthetic clinic-to-lab walkthrough]({{ '/verticals/dpdp-consent-gateway/' | relative_url }}) | Configured privacy basis and activity, Authority plus privacy checks, Processing Events, withdrawal checked before subsequent disclosure, subject-scoped PTF vault erasure | Actual clinic/lab systems, legally valid consent, statutory compliance, full privacy-program automation, or coverage of unintegrated host paths |
+| Synthetic delegated email | `examples/generic-protected-action.mjs` | Scoped `/email/send` grant, recipient-signed proof, fake external reference, optional privacy module | Live email, authenticated real-world email server, general MCP execution |\n| **DPDP-informed personal-data processing (optional)** | [Synthetic clinic-to-lab walkthrough]({{ '/verticals/dpdp-consent-gateway/' | relative_url }}) | Configured privacy basis and activity, Authority plus privacy checks, Processing Events, withdrawal checked before subsequent disclosure, subject-scoped PTF vault erasure | Actual clinic/lab systems, legally valid consent, statutory compliance, full privacy-program automation, or coverage of unintegrated host paths |
 
 Build and run the local flows from a checkout:
 
@@ -27,6 +27,7 @@ npm ci
 npm run build
 node examples/payment-disclosure.mjs
 node examples/vault-protected-action.mjs
+node examples/generic-protected-action.mjs
 node examples/dpdp-consent-gateway.mjs
 ```
 
@@ -64,3 +65,5 @@ applications of the same authority semantics. These are not presented as
 completed adapters, deployed integrations or validated product needs.
 Evidence from additional real host integrations, not the number of demo
 scripts, should determine which use cases merit expansion.
+
+**Registered MCP actions:** A trusted embedding host may also register a synthetic `/email/send` action for the reference MCP server. The existing `ptf_request_action` → `ptf_redeem` flow then uses a real recipient-signed proof, Host Kit protected effect, and journal-first replay. This behavior is exercised in `tests/mcp-registered-actions.test.ts`, not by a deployed email service. Without trusted-host registration the generic action remains proposal-only.
