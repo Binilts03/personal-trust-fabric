@@ -314,7 +314,7 @@ function failed(response: Record<string, unknown>): boolean {
   );
 }
 
-function seedRegistryStore(): {
+function seedRegistryStore(options: { readonly registerB?: boolean } = {}): {
   dir: string;
   keyA: { hex: string; privDer: Uint8Array };
   keyB: { hex: string; privDer: Uint8Array };
@@ -336,7 +336,7 @@ function seedRegistryStore(): {
   const keyB = keyHex();
   const agents = new AgentRegistry(() => liveNow);
   agents.register(AGENT_A, keyA.hex, liveNow);
-  agents.register(AGENT_B, keyB.hex, liveNow);
+  if (options.registerB !== false) agents.register(AGENT_B, keyB.hex, liveNow);
   saveAgents(dir, agents);
   return { dir, keyA, keyB };
 }
@@ -509,8 +509,8 @@ describe("MCP multi-agent ingress over stdio (phase 5)", () => {
     }
   });
 
-  it("removal takes effect immediately; Agent B inherits the same grant", async () => {
-    const store = seedRegistryStore();
+  it("removal takes effect immediately; Agent B can join afterward under the same grant", async () => {
+    const store = seedRegistryStore({ registerB: false });
     const rpc = connect({
       PTF_STORE_DIR: store.dir,
       PTF_MCP_PRINCIPAL: P,
@@ -553,8 +553,14 @@ describe("MCP multi-agent ingress over stdio (phase 5)", () => {
         },
       });
       assert.equal(failed(reauth), true);
-      // Agent B authenticates: the SAME user-owned grant covers B.
-      // Authority was never copied anywhere — the grant file is untouched.
+      // Register B only AFTER A has been removed. The standing grant
+      // already selects both agent IDs, but no authority is copied or
+      // changed during onboarding.
+      const afterRemoval = loadAgents(store.dir);
+      assert.equal(afterRemoval.get(AGENT_B), null);
+      afterRemoval.register(AGENT_B, store.keyB.hex, Math.floor(Date.now() / 1000));
+      saveAgents(store.dir, afterRemoval);
+      // Authenticated B can now use the SAME user-owned grant.
       await authenticate(rpc, AGENT_B, store.keyB.privDer);
       assert.equal((await propose(rpc)).allowed, true);
     } finally {
