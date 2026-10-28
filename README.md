@@ -85,7 +85,7 @@ CHECK only: no authority consumed, no external effect
 
 The demonstration uses the **curated public API**. One person grants one named agent permission to submit a particular synthetic task to one recipient. The same request from another agent or to a different recipient is refused. Nothing is executed: this is a **CHECK**, not a redeemed, externally performed effect.
 
-[Read the 40-line example](examples/authority-decision.mjs) · [Try the operator CLI next](docs/getting-started.md) · [Inspect the tests](tests/readme-example.test.ts)
+[Read the runnable example](examples/authority-decision.mjs) · [Try the operator CLI next](docs/getting-started.md) · [Inspect the tests](tests/readme-example.test.ts)
 
 ## Why the boundary matters
 
