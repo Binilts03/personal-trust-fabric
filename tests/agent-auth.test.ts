@@ -314,7 +314,7 @@ function failed(response: Record<string, unknown>): boolean {
   );
 }
 
-function seedRegistryStore(): {
+function seedRegistryStore(options: { readonly registerB?: boolean } = {}): {
   dir: string;
   keyA: { hex: string; privDer: Uint8Array };
   keyB: { hex: string; privDer: Uint8Array };
@@ -336,7 +336,7 @@ function seedRegistryStore(): {
   const keyB = keyHex();
   const agents = new AgentRegistry(() => liveNow);
   agents.register(AGENT_A, keyA.hex, liveNow);
-  agents.register(AGENT_B, keyB.hex, liveNow);
+  if (options.registerB !== false) agents.register(AGENT_B, keyB.hex, liveNow);
   saveAgents(dir, agents);
   return { dir, keyA, keyB };
 }
@@ -509,8 +509,8 @@ describe("MCP multi-agent ingress over stdio (phase 5)", () => {
     }
   });
 
-  it("removal takes effect immediately; Agent B inherits the same grant", async () => {
-    const store = seedRegistryStore();
+  it("removal takes effect immediately; Agent B can join afterward under the same grant", async () => {
+    const store = seedRegistryStore({ registerB: false });
     const rpc = connect({
       PTF_STORE_DIR: store.dir,
       PTF_MCP_PRINCIPAL: P,
