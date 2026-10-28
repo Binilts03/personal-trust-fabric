@@ -557,7 +557,7 @@ describe("MCP multi-agent ingress over stdio (phase 5)", () => {
       // already selects both agent IDs, but no authority is copied or
       // changed during onboarding.
       const afterRemoval = loadAgents(store.dir);
-      assert.equal(afterRemoval.lookup(AGENT_B), undefined);
+      assert.equal(afterRemoval.get(AGENT_B), null);
       afterRemoval.register(AGENT_B, store.keyB.hex, Math.floor(Date.now() / 1000));
       saveAgents(store.dir, afterRemoval);
       // Authenticated B can now use the SAME user-owned grant.
