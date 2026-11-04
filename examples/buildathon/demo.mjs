@@ -30,7 +30,7 @@ export async function runScenario({ mode = "offline", variant = "allowed" } = {}
     : { messageId: MESSAGE_ID, recipient: variant === "recipient" ? "provider:unapproved" : RECIPIENT };
   const ingress = {
     id: variant === "actor" ? "agent:unapproved" : ACTOR,
-    principal: PRINCIPAL, source: "synthetic-host-registration", proofRef: "synthetic-session"
+    principal: PRINCIPAL, source: "local-registration", proofRef: "synthetic-session"
   };
   const operation = {
     action: { name: "/email/send" },
