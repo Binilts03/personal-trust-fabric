@@ -11,7 +11,7 @@ function execute(args: string[]): Record<string, unknown> {
   const result = spawnSync(process.execPath, [demo, ...args], {
     cwd: root, encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024
   });
-  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.error, undefined, result.error?.message ?? "spawn failed");
   assert.equal(result.status, 0, result.stderr);
   assert.doesNotMatch(result.stdout + result.stderr, /BEGIN (?:EC |OPENSSH )?PRIVATE KEY/);
   return JSON.parse(result.stdout) as Record<string, unknown>;
@@ -47,7 +47,7 @@ describe("Google Buildathon synthetic integration", () => {
     const result = spawnSync(process.execPath, ["--test", join(root, "examples", "buildathon", "gemini.test.mjs")], {
       cwd: root, encoding: "utf8", timeout: 30_000
     });
-    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.error, undefined, result.error?.message ?? "spawn failed");
     assert.equal(result.status, 0, result.stdout + result.stderr);
   });
 });
