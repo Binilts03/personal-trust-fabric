@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Authority } from "personal-trust-fabric";
 import { requestExecution } from "personal-trust-fabric/profiles/data";
@@ -110,7 +110,7 @@ export async function runScenario({ mode = "offline", variant = "allowed" } = {}
 }
 
 const thisFile = fileURLToPath(import.meta.url);
-if (process.argv[1] && fileURLToPath(new URL("file://" + process.argv[1])) === thisFile) {
+if (process.argv[1] && resolve(process.argv[1]) === thisFile) {
   const flag = process.argv[2] ?? "--offline";
   const allowed = ["--offline", "--gemini", "--denied-recipient", "--denied-actor", "--replay"];
   if (process.argv.length > 3 || !allowed.includes(flag)) {
