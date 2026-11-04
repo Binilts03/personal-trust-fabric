@@ -1,0 +1,13 @@
+# Supply _IMAGE with a pre-created Artifact Registry location; requires
+# an authenticated GCP account, billing/quotas and repository permissions.
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "--file"
+      - "examples/buildathon/Dockerfile"
+      - "--tag"
+      - "${_IMAGE}"
+      - "."
+images:
+  - "${_IMAGE}"

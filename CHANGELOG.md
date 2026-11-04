@@ -6,6 +6,12 @@ release day. This project adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+### Buildathon candidate (2026-11-04; PR #124 depends on PR #121)
+
+- Added an **optional** Google Gemini function-calling proposal client, real PTF signed-challenge and protected-effect synthetic email demonstration, denial/replay acceptance tests, and a synthetic-only IAM-restricted Cloud Run presentation profile. No actual messages are delivered. Cloud credentials and a live Gemini execution remain operator-gated and unverified; the repo still makes no production custody or A2A/AP2 certification claim.
+- Added `docs/buildathon-2026/` application, runbook and readiness-gate documentation. This is candidate work only, not a new product definition or a published release.
+
+
 ### Documentation
 
 - Rewrote the repository README around domain-neutral Authority and protected-use rather than the payment profile: runnable synthetic non-payment example first, current package/host/MCP contracts, explicit trust boundaries, privacy composition, honest production limits, and independent-adoption proof still outstanding. Preserved Authority Manifest v1 unchanged.
