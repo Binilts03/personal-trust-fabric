@@ -10,6 +10,7 @@ import {
   type HostConformanceBoundaryFactory,
   type HostConformanceScenario,
   type HostEffectBoundary,
+  type HostEffectInspection,
   type HostEffectReceipt,
   type HostPrivacyConfig,
 } from "../src/hostkit/index.js";
@@ -151,6 +152,13 @@ const boundaryWithoutFence: HostConformanceBoundaryFactory = (
         at,
         eventId: event.eventId,
       };
+    },
+    async inspect(): Promise<HostEffectInspection> {
+      // The broken boundary cannot observe anything.
+      return { kind: "absent" };
+    },
+    async reconcile(): Promise<HostEffectReceipt> {
+      throw new Error("host boundary: reconcile requires a provider");
     },
   };
 };

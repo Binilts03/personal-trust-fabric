@@ -17,6 +17,7 @@ export type {
   HostEffectContext,
   HostEffectDecision,
   HostEffectDenialReason,
+  HostEffectInspection,
   HostEffectReceipt,
 } from "./boundary.js";
 

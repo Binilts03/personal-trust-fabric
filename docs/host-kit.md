@@ -139,6 +139,66 @@ A host callback that starts an external effect must call
 `ctx.markEffectStarted()` first. After that call the boundary treats any
 failure as an unknown outcome.
 
+## Recovering an interrupted attempt
+
+An attempt that ends `OUTCOME_UNKNOWN` has crossed the submit boundary: the
+provider may or may not have taken the effect. The journal knows more than the
+caller does, but the caller has to ask. Two operations do that, and they are
+deliberately different:
+
+| Operation     | Reads the journal | Asks the provider       | Writes | Finalizes an event |
+| ------------- | ----------------- | ----------------------- | ------ | ------------------ |
+| `inspect()`   | yes               | only for a live attempt | no     | no                 |
+| `reconcile()` | yes               | yes                     | yes    | yes                |
+
+`inspect()` is observation. It never submits, never writes a journal row and
+never finalizes an event, so it is safe to call from an operator console at any
+time. It answers with one of:
+
+| Result         | Meaning                                                              |
+| -------------- | -------------------------------------------------------------------- |
+| `succeeded`    | the journal proves the effect succeeded; the receipt is replayed     |
+| `absent`       | no journal record, or the provider confirms it never took the effect |
+| `failed_final` | the journal proves a terminal failure; new terms are required        |
+| `unsubmitted`  | the row never reached the submit boundary: provably no effect        |
+| `effected`     | the provider confirms the effect happened (observation only)         |
+| `unknown`      | ambiguous; the `reason` is a fixed vocabulary, never provider text   |
+
+`reconcile()` is the authorized resolver. It refuses unless the journal proves
+that an attempt exists for exactly these terms, and it hands the resolution to
+the journaled executor, which owns the provider attestation: an effected query
+adopts the existing reference without resubmitting, and an unknown query
+quarantines the attempt. It never starts a new effect.
+
+Both need a provider outcome query for the live case:
+
+```ts
+const boundary = createEffectBoundary({
+  // ...the usual composition
+  provider,
+  redemption,
+  query: {
+    async query({ idempotencyKey, capabilityId, termsDigest }) {
+      return await provider.lookup({
+        idempotencyKey,
+        capabilityId,
+        termsDigest,
+      });
+    },
+  },
+});
+
+const inspection = await boundary.inspect();
+if (inspection.kind === "effected") {
+  const receipt = await boundary.reconcile();
+}
+```
+
+The query is called with the attempt's journal idempotency key — the key the
+provider was called with — so a provider can find the record it was given.
+Callers that do not opt into recovery keep the existing behaviour: a retry of
+the same attempt still fails with `PrivacyEventConflictError`.
+
 ## Conformance
 
 The kit ships ten executable checks. Each one builds a real boundary against a

@@ -10,8 +10,14 @@ import type { ExecutionReceipt } from "../core/execute.js";
 import type { Redemption } from "../core/types.js";
 import {
   executeWithJournal,
+  type ExecutionQuery,
   type ProtectedProvider,
 } from "../adapters/providers.js";
+import {
+  deriveIdempotencyKey,
+  type ExecutionRecord,
+} from "../store/execution.js";
+import { FileExecutions } from "../store/repositories.js";
 import {
   PrivacyEventConflictError,
   PrivacyOutcomeUnknownError,
@@ -102,12 +108,35 @@ export interface HostEffectContext {
   markEffectStarted(): void;
 }
 
+/**
+ * The read-only view of one attempt's durable evidence. Observation never
+ * mutates: an absent record stays absent, a corrupt or ambiguous record is
+ * unknown, and an effected live attempt is reported as observed evidence.
+ */
+export type HostEffectInspection =
+  | { readonly kind: "succeeded"; readonly receipt: ExecutionReceipt }
+  | { readonly kind: "absent" }
+  | { readonly kind: "failed_final" }
+  | { readonly kind: "unsubmitted" }
+  | { readonly kind: "effected"; readonly externalRef: string }
+  | { readonly kind: "unknown"; readonly reason: string };
+
 /** The boundary a host composes. */
 export interface HostEffectBoundary {
   /** The dry-run decision. No effect, no event, no consumption. */
   check(): Promise<HostEffectDecision>;
   /** Run the effect under the ordering above. */
   run(): Promise<HostEffectReceipt>;
+  /**
+   * Observation only. Reads the journal and, for a live attempt, the
+   * provider-side query. Never submits, never writes, never finalizes.
+   */
+  inspect(): Promise<HostEffectInspection>;
+  /**
+   * Adopt an observed effect into the journal under authority. Never starts
+   * an effect when the journal has no record for these terms.
+   */
+  reconcile(): Promise<HostEffectReceipt>;
 }
 
 export interface HostEffectBoundaryOptions {
@@ -152,6 +181,12 @@ export interface HostEffectBoundaryOptions {
    * operation (a fresh authorization/redemption), never for a retry.
    */
   readonly attemptRef?: string;
+  /**
+   * Provider outcome query used only to reconcile an existing attempt. With
+   * it, a live attempt resolves to an observed effect, an absent outcome, or
+   * an unknown outcome; without it the live case is unobservable.
+   */
+  readonly query?: ExecutionQuery;
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {
@@ -188,6 +223,98 @@ function attemptRefOf(value: string | undefined, termsDigest: string): string {
     );
   }
   return ref;
+}
+
+/**
+ * The provider scope the journal key was derived with. The journaled executor
+ * derives the key from the provider's namespace (or its kind), so the reader
+ * and the writer must agree on it exactly.
+ */
+function providerScope(provider: ProtectedProvider): string {
+  return provider.namespace ?? provider.kind;
+}
+
+/** The journal idempotency key for one terms set in one provider scope. */
+function journalKeyOf(
+  provider: ProtectedProvider,
+  termsDigest: string
+): string {
+  return deriveIdempotencyKey(termsDigest, providerScope(provider));
+}
+
+/**
+ * The journal record for one attempt, read only. A record that cannot be read
+ * or parsed is `corrupt`, never `absent`: treating it as absent would let a
+ * caller conclude that no effect happened when the journal cannot say.
+ */
+function findAttempt(
+  dir: string,
+  provider: ProtectedProvider,
+  termsDigest: string
+):
+  | { readonly kind: "record"; readonly record: ExecutionRecord }
+  | { readonly kind: "absent" }
+  | { readonly kind: "corrupt" } {
+  let key: string;
+  try {
+    key = journalKeyOf(provider, termsDigest);
+  } catch {
+    return { kind: "corrupt" };
+  }
+  try {
+    const record = FileExecutions.findByIdempotencyKey(dir, key);
+    return record === null ? { kind: "absent" } : { kind: "record", record };
+  } catch {
+    return { kind: "corrupt" };
+  }
+}
+
+/**
+ * The record must describe the very operation the host is asking about. The
+ * key already binds the terms digest; the remaining fields are checked so a
+ * record that somehow carries other terms can never be adopted.
+ */
+function recordMatchesTerms(
+  record: ExecutionRecord,
+  op: {
+    readonly cmd: string;
+    readonly recipient: string;
+    readonly resource?: string;
+    readonly purpose?: string;
+    readonly termsDigest: string;
+  },
+  context: Readonly<Record<string, unknown>>
+): boolean {
+  return (
+    record.termsDigest === op.termsDigest &&
+    record.action === op.cmd &&
+    record.recipient === op.recipient &&
+    record.resource === (op.resource ?? "") &&
+    record.purpose === (op.purpose ?? "") &&
+    deepEqual(record.context, context)
+  );
+}
+
+/** The receipt of a succeeded journal row, when the row carries a complete one. */
+function receiptOf(record: ExecutionRecord): ExecutionReceipt | undefined {
+  if (
+    record.state !== "SUCCEEDED" ||
+    record.receiptId === undefined ||
+    record.receiptAt === undefined ||
+    record.externalRef === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    receiptId: record.receiptId,
+    capabilityId: record.capabilityId,
+    recipient: record.recipient,
+    resource: record.resource,
+    purpose: record.purpose,
+    transaction: record.externalRef,
+    at: record.receiptAt,
+    termsDigest: record.termsDigest,
+  };
 }
 
 /**
@@ -311,6 +438,7 @@ export function createEffectBoundary(
           context: { ...operation.context },
         },
         redemption: opts.redemption,
+        ...(opts.query !== undefined ? { query: opts.query } : {}),
         nowSec: now(),
         at: now(),
         onEffectStart: ctx.markEffectStarted,
@@ -511,6 +639,168 @@ export function createEffectBoundary(
         // leave a PREPARED event that a retry could mistake for a fresh
         // attempt; mark the ambiguity if the store will take it.
         finalize(event.eventId, "OUTCOME_UNKNOWN", { finalizedAt: now() });
+        throw new PrivacyOutcomeUnknownError(error);
+      }
+      return receipt;
+    },
+
+    async inspect(): Promise<HostEffectInspection> {
+      if (opts.provider === undefined || opts.redemption === undefined) {
+        // The callback path has no journal oracle, so it cannot be inspected.
+        // Report unknown rather than inventing an outcome.
+        return { kind: "unknown", reason: "unsupported-path" };
+      }
+      const op = opts.redemption.operation;
+      const found = findAttempt(opts.dir, opts.provider, op.termsDigest);
+      if (found.kind === "corrupt") {
+        // A journal scan that cannot be read is ambiguous evidence, never
+        // "no record".
+        return { kind: "unknown", reason: "corrupt" };
+      }
+      if (found.kind === "absent") {
+        return { kind: "absent" };
+      }
+      const record = found.record;
+      if (!recordMatchesTerms(record, op, operation.context)) {
+        return { kind: "unknown", reason: "mismatch" };
+      }
+      switch (record.state) {
+        case "SUCCEEDED": {
+          const receipt = receiptOf(record);
+          return receipt === undefined
+            ? { kind: "unknown", reason: "corrupt" }
+            : { kind: "succeeded", receipt };
+        }
+        case "FAILED_FINAL":
+          return { kind: "failed_final" };
+        case "RECONCILED":
+          return { kind: "unknown", reason: "reconciled" };
+        case "PREPARED":
+        case "AUTHORIZED":
+          // The row was written before the submit boundary: the provider was
+          // provably never called, so no effect happened.
+          return { kind: "unsubmitted" };
+        default: {
+          // SUBMITTING / SUBMITTED_UNKNOWN: the provider may or may not have
+          // been called. Only the provider can resolve it.
+          if (opts.query === undefined) {
+            return { kind: "unknown", reason: "query-missing" };
+          }
+          const outcome = await opts.query.query({
+            idempotencyKey: journalKeyOf(opts.provider, op.termsDigest),
+            capabilityId: opts.redemption.chainId,
+            termsDigest: op.termsDigest,
+          });
+          if (outcome.state === "effected") {
+            // Observation only: the reference is reported, never written.
+            return { kind: "effected", externalRef: outcome.externalRef };
+          }
+          if (outcome.state === "absent") {
+            return { kind: "absent" };
+          }
+          return { kind: "unknown", reason: "live" };
+        }
+      }
+    },
+
+    async reconcile(): Promise<HostEffectReceipt> {
+      if (opts.redemption === undefined) {
+        throw new Error("host boundary: reconcile requires a redemption");
+      }
+      if (opts.provider === undefined) {
+        throw new Error("host boundary: reconcile requires a provider");
+      }
+      const op = opts.redemption.operation;
+      const found = findAttempt(opts.dir, opts.provider, op.termsDigest);
+      if (found.kind === "corrupt") {
+        throw new Error(
+          "host boundary: cannot reconcile an unreadable journal record"
+        );
+      }
+      if (found.kind === "absent") {
+        // No journal record means the journaled path never crossed its create
+        // boundary, so no effect can be proven. Refuse without submitting.
+        throw new Error(
+          "host boundary: cannot reconcile an effect with no journal record"
+        );
+      }
+      const record = found.record;
+      if (!recordMatchesTerms(record, op, operation.context)) {
+        throw new Error(
+          "host boundary: cannot reconcile a journal record for other terms"
+        );
+      }
+      if (record.state === "FAILED_FINAL") {
+        throw new Error(
+          "host boundary: cannot reconcile a failed_final execution"
+        );
+      }
+      if (record.state === "PREPARED" || record.state === "AUTHORIZED") {
+        // The provider was provably never called: there is nothing to adopt,
+        // and the authority use for these terms is already spent.
+        throw new Error(
+          "host boundary: cannot reconcile an unsubmitted attempt"
+        );
+      }
+      if (record.state === "RECONCILED") {
+        throw new Error(
+          "host boundary: cannot reconcile a quarantined execution"
+        );
+      }
+      if (opts.query === undefined) {
+        throw new Error(
+          "host boundary: reconcile requires a provider outcome query"
+        );
+      }
+      // The journaled executor owns the reconciliation and the attestation: an
+      // effected query adopts the existing reference without resubmitting, and
+      // an unknown query quarantines. It never starts a new effect unless the
+      // provider confirms that it never took one.
+      const attemptRef = attemptRefOf(opts.attemptRef, op.termsDigest);
+      let effectStarted = false;
+      const ctx: HostEffectContext = {
+        operation,
+        termsDigest: op.termsDigest,
+        attemptRef,
+        idempotencyKey: attemptRef,
+        markEffectStarted: () => {
+          effectStarted = true;
+        },
+      };
+      let raw: ExecutionReceipt | void = undefined;
+      try {
+        raw = await performEffect(ctx);
+      } catch (error) {
+        if (effectStarted) {
+          // The effect may have happened; never report it as a pre-effect
+          // failure.
+          throw new PrivacyOutcomeUnknownError(error);
+        }
+        throw new PrivacyPreEffectError(
+          `host boundary: the reconcile failed before the effect boundary: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+      const receipt = project(
+        raw,
+        op.termsDigest,
+        attemptRef,
+        undefined,
+        opts.redemption.chainId
+      );
+      try {
+        opts.runtime.reconcileAttemptEvent(gate, {
+          termsDigest: op.termsDigest,
+          attemptRef,
+          state: "SUCCEEDED",
+          finalizedAt: receipt.at,
+          evidenceRef: `execution-receipt:${receipt.receiptId}`,
+          createIfMissing: true,
+        });
+      } catch (error) {
+        // The effect was adopted but the evidence could not be finalized: the
+        // attempt stays reconcilable rather than looking successful.
         throw new PrivacyOutcomeUnknownError(error);
       }
       return receipt;
