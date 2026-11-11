@@ -13,11 +13,16 @@ import {
   type HostEffectBoundary,
   type HostPrivacyConfig,
 } from "../src/hostkit/index.js";
-import type {
-  ExecutionQuery,
-  ProtectedProvider,
-} from "../src/adapters/providers.js";
-import { deriveIdempotencyKey } from "../src/store/execution.js";
+
+/** The provider outcome query the boundary accepts, taken from the public API. */
+type ExecutionQuery = NonNullable<
+  Parameters<typeof createEffectBoundary>[0]["query"]
+>;
+
+/** The provider shape the boundary accepts, taken from the public API. */
+type Provider = NonNullable<
+  Parameters<typeof createEffectBoundary>[0]["provider"]
+>;
 
 /**
  * The recovery seam of the host effect boundary.
@@ -70,16 +75,23 @@ function scenario(
 /**
  * A provider whose first submit takes effect and then loses the response:
  * the journal records `SUBMITTED_UNKNOWN` and the caller sees an ambiguous
- * outcome.
+ * outcome. The key the provider was called with is kept, so the test can
+ * prove that the query is asked with that same key.
  */
-function lossyProvider(subject: HostConformanceScenario): ProtectedProvider {
+function lossyProvider(subject: HostConformanceScenario): {
+  readonly provider: Provider;
+  readonly calls: string[];
+} {
   const inner = subject.provider;
+  const calls: string[] = [];
   let lose = true;
-  return {
+  const provider: Provider = {
     kind: inner.kind,
     ...(inner.namespace !== undefined ? { namespace: inner.namespace } : {}),
     async submit(req) {
       const outcome = await inner.submit(req);
+      const key = req.metadata?.["idempotencyKey"];
+      if (typeof key === "string") calls.push(key);
       if (lose) {
         lose = false;
         throw new Error("recovery: the provider response was lost");
@@ -88,23 +100,13 @@ function lossyProvider(subject: HostConformanceScenario): ProtectedProvider {
     },
     verify: (sub, expected) => inner.verify(sub, expected),
   };
-}
-
-/** The key the journal and the provider were called with. */
-function journalKeyOf(
-  subject: HostConformanceScenario,
-  provider: ProtectedProvider
-): string {
-  return deriveIdempotencyKey(
-    subject.redemption?.operation.termsDigest ?? "",
-    provider.namespace ?? provider.kind
-  );
+  return { provider, calls };
 }
 
 function boundaryFor(
   subject: HostConformanceScenario,
   options: {
-    readonly provider?: ProtectedProvider;
+    readonly provider?: Provider;
     readonly query?: ExecutionQuery;
     readonly callbackPath?: boolean;
     readonly attemptRef?: string;
@@ -140,7 +142,7 @@ describe("host effect boundary — recovery seam", () => {
   it("inspect() reports an observed effect without submitting anything", async () => {
     await withScratch(async (root) => {
       const subject = scenario(root, "inspect-effected");
-      const provider = lossyProvider(subject);
+      const { provider, calls } = lossyProvider(subject);
       const seen: string[] = [];
       const query: ExecutionQuery = {
         async query(input) {
@@ -162,7 +164,8 @@ describe("host effect boundary — recovery seam", () => {
         assert.equal(inspection.externalRef, "txn-conformance");
       }
       // The query is asked with the key the provider was called with.
-      assert.deepEqual(seen, [journalKeyOf(subject, provider)]);
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0], calls[0]);
       // Observation only: no new submit, and the journal is untouched.
       assert.equal(subject.observed.effectRuns, 1);
     });
@@ -203,7 +206,7 @@ describe("host effect boundary — recovery seam", () => {
   it("reconcile() adopts the observed effect without a second submit", async () => {
     await withScratch(async (root) => {
       const subject = scenario(root, "reconcile-effected");
-      const provider = lossyProvider(subject);
+      const { provider } = lossyProvider(subject);
       const query: ExecutionQuery = {
         async query() {
           return { state: "effected", externalRef: "txn-conformance" };
@@ -230,7 +233,7 @@ describe("host effect boundary — recovery seam", () => {
   it("reconcile() quarantines an unknown outcome instead of resubmitting", async () => {
     await withScratch(async (root) => {
       const subject = scenario(root, "reconcile-unknown");
-      const provider = lossyProvider(subject);
+      const { provider } = lossyProvider(subject);
       const query: ExecutionQuery = {
         async query() {
           return { state: "unknown" };
@@ -257,7 +260,7 @@ describe("host effect boundary — recovery seam", () => {
   it("reconcile() refuses without a query and without a journal record", async () => {
     await withScratch(async (root) => {
       const subject = scenario(root, "reconcile-refusals");
-      const provider = lossyProvider(subject);
+      const { provider } = lossyProvider(subject);
 
       // A live attempt: the effect crossed the submit boundary and the
       // response was lost.
