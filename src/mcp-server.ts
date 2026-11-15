@@ -1209,7 +1209,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_redeem",
     {
       description:
-        "Redeem a pending proposal. Without a proof this checks live authority (dry-run) and returns its id to sign (challenge); with a recipient proof it authorizes the capability first, then spends live authority, executes, and returns a receipt. Payment demands only. Accepts any /pay proposal in the shared store regardless of which propose tool created it; re-redeeming executed terms returns the stored receipt without re-executing. Fails closed on anything stale.",
+        "Redeem a pending /pay proposal or a trusted-host-registered generic action. Without recipient proof, checks live authority and returns a signing challenge; with valid proof, consumes authority and executes the journaled provider effect. Confirmed prior effects return stored receipts without resubmission; ambiguous outcomes require reconciliation. Stale or unregistered actions fail closed.",
       inputSchema: termsDigestInput.extend({
         recipientKeyHex: z
           .string()
@@ -1732,7 +1732,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     "ptf_request_action",
     {
       description:
-        "Propose any /-path action (dry-run, disclose tier excluded). Redeem stays /pay-only via ptf_redeem. Unavailable in privacy mode.",
+        "Propose a /-path action for an Authority dry run (disclosure tier excluded). Only exact trusted-host-registered generic actions may execute through ptf_redeem. Unregistered actions are proposal-only without configured privacy and are denied when privacy is configured.",
       inputSchema: z.object({
         cmd: z.string().min(2).max(200).regex(/^\//),
         purpose: z.string().min(1).max(500).optional(),
