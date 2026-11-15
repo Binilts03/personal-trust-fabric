@@ -122,7 +122,8 @@ and the external effect. That gap is not one atomic transaction.
 | Class                        | When                                                   |
 | ---------------------------- | ------------------------------------------------------ |
 | `PrivacyPreEffectError`      | proven before the effect boundary                      |
-| `PrivacyOutcomeUnknownError` | the effect may have happened                           |
+| `PrivacyOutcomeUnknownError` | privacy-enforced effect may have happened              |
+| `ProtectedEffectOutcomeUnknownError` | non-enforced effect may have happened; reconcile journal |
 | `PrivacyEventConflictError`  | an attempt already has evidence; reconcile, do not run |
 
 A host callback that starts an external effect must call
