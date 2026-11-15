@@ -38,6 +38,7 @@ export * from "./store/vault.js";
 export * from "./profiles/data.js";
 export * from "./adapters/providers.js";
 export * from "./adapters/http-provider.js";
+export * from "./adapters/github-issues.js";
 export * from "./adapters/x402-provider.js";
 
 // The privacy package owns its public, persistence-free contract.

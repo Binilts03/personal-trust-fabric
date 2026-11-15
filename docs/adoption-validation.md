@@ -31,6 +31,8 @@ security evaluation of an adopting system.
 
 ## The integration experiment
 
+An opt-in [GitHub Issues adapter]({{ '/adapters/github-issues/' | relative_url }}) now implements the actual REST request and conservative journal recovery. CI uses isolated HTTP stand-ins; real-provider UAT and independent adoption have not yet occurred.
+
 Build **one** separate, disposable host for a constrained operation, for
 example creating an issue in a test GitHub repository. A GitHub token and
 repo contents are hosted and used **only** by that trusted host. The agent
