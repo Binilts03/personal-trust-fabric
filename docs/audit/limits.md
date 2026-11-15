@@ -431,7 +431,7 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
 See [DPDP profile](../privacy/dpdp.md) for a precisely scoped operator setup and legal source links.
 
 
-## Domain-neutral Host Kit consolidation (branch candidate)
+## Domain-neutral Host Kit consolidation (merged reference implementation)
 
 - `createProtectedEffect` supports an explicit non-privacy reference
   host and privacy-enforced processing; this is **not** a global interceptor.
@@ -450,7 +450,6 @@ See [DPDP profile](../privacy/dpdp.md) for a precisely scoped operator setup and
   replay before attempting live use. Unregistered generic requests remain
   non-executable. Conclusive execution with missing processing evidence is
   reported as an evidence gap, never as an unknown provider outcome.
-  This is not a distributed exactly-once guarantee.
   `./hostkit` provider submission checks a previously completed or ambiguous exact-term journal entry before spending live Authority. This is **not** a distributed exactly-once guarantee: store single-writer assumptions, provider idempotency behavior, external query/reconciliation and a narrow gap between privacy fencing and external effects remain.
   Never retry an unknown outcome without reconciling the effect.
 - Existing `/pay` amount/currency guardrails remain in
