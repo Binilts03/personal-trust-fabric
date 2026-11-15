@@ -12,6 +12,8 @@ release day. This project adheres to Semantic Versioning.
 
 - **Effect-boundary assurance:** integrated host-registered GitHub Issues action execution with exact recipient binding, one-use proof and journal replay; bound trusted-callback receipts to the redeemed capability; removed retroactive privacy evidence reconstruction. Confirmed provider effects with missing original processing evidence now return a persistent explicit gap. Controlled HTTP tests pass; no live GitHub operation or independent deployment is claimed.
 
+- **Effect-boundary assurance (legacy adapter):** the `createEffectBoundary` reference adapter now surfaces a confirmed provider effect whose original Processing Event is missing as an explicit `processingEvidence: "gap"` receipt, in the same terms as the registered MCP paths and journal recovery, instead of failing with `host boundary: evidence missing`. The effect is never reclassified as unknown or resubmitted; the gap is for operator reconciliation. Regression-tested against the provider-effect privacy fixture.
+
 - Consolidated protected-effect orchestration across domain-neutral Host Kit and trusted registered MCP actions; incorporated current `main` with the GitHub Issues provider, preserving current onboarding. Reference-scope only; no live-provider acceptance or privacy certification.
 
 - **Integration:** opt-in GitHub Issues provider using actual REST POST, a fixed repository and host-held token. Strict response binding and conservative unknown-outcome quarantine; offline negative tests exercise the journal and network seam. No live GitHub issue or security certification is claimed.
