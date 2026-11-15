@@ -10,6 +10,7 @@ PTF is a user-owned authority and protected-use layer. Agents may reason about a
 - `src/profiles/` — domain conventions over the generic authority model.
 - `src/privacy/` - optional privacy enforcement and evidence extension, with an initial DPDP-informed jurisdiction profile. It can only narrow Authority on host-integrated routes; it is not the core product or a compliance platform. `mcp.ts` builds policy, `host.ts` wires encrypted stores, `mcp-host.ts` provides reference MCP wiring, and `runtime.ts` owns preflight/recheck/fence/prepare/finalize.
 - `src/hostkit/` - the adoption surface: one call that puts the gates around an effect in the required order, plus the conformance suite a host runs in CI.
+- `src/capabilities.ts` - the curated public subpath `./capabilities`: the redemption producer that the curated root's payment executors need (ADR-0028).
 - `tests/` — public-seam, abuse, and regression tests.
 - `docs/adr/` — architecture decisions.
 - `docs/audit/` — public architecture, limits, verification, operations, and threat evidence.

@@ -156,6 +156,42 @@ if (installCheck) {
     });
     if (!mcpOut.includes("mcp public import: ok"))
       fail("packed installed MCP module cannot be embedded");
+    // The payment path must be reachable from the INSTALLED package: the
+    // curated root's executors need a Redemption, and only the capability
+    // subpath can produce one. Exercised here so a consumer-side hole fails
+    // the package gate, not a user's project.
+    const paymentProbe = join(consumer, "payment-public-probe.mjs");
+    writeFileSync(
+      paymentProbe,
+      [
+        'import { Authority, digestForOperation, executeAndReceipt, paymentBounds } from "personal-trust-fabric";',
+        'import { Capabilities, generateEd25519Keypair, leafCidHex, signBytes } from "personal-trust-fabric/capabilities";',
+        'const NOW = 1800000000, P = "p", A = "a", R = "r";',
+        'const principal = generateEd25519Keypair();',
+        'const recipient = generateEd25519Keypair();',
+        'const keys = new Map([[P, principal.publicKeyRaw], [R, recipient.publicKeyRaw]]);',
+        'const authority = new Authority({ nowSec: () => NOW });',
+        'authority.addGrant({ id: "g1", principal: P, actor: { kind: "exact", id: A }, action: { name: "/pay" }, bounds: paymentBounds({ amountMax: 2000, currency: "INR" }), exp: NOW + 600 });',
+        'const ingress = { id: A, principal: P, source: "local-registration", proofRef: "probe" };',
+        'const operation = { action: { name: "/pay" }, resource: { type: "invoice", id: "inv-1" }, context: { amount: 100, currency: "INR" }, purpose: "personal" };',
+        'if (!authority.evaluate(operation, ingress, { nowSec: NOW }).allow) throw new Error("authority denied");',
+        'const digest = digestForOperation({ principal: P, actor: A, action: operation.action, resource: operation.resource, context: operation.context, purpose: "personal" });',
+        'const caps = new Capabilities({ resolveKey: (id) => keys.get(id) ?? null, nowSec: () => NOW });',
+        'const cap = caps.issue(null, { iss: P, aud: A, sub: P, cmd: "/pay", pol: [["<=", ".amount", 100]], purpose: "personal", resource: "invoice:inv-1", recipient: R, amountMax: 100, currency: "INR", exp: NOW + 300, maxUses: 1, termsDigest: digest }, principal.privateKey);',
+        'const demand = { cmd: "/pay", args: { amount: 100, currency: "INR" }, recipient: R, resource: "invoice:inv-1", purpose: "personal", termsDigest: digest };',
+        'const cid = leafCidHex(cap);',
+        'const redemption = caps.redeem([cap], demand, { proof: { key: recipient.publicKeyRaw, sig: signBytes(recipient.privateKey, new Uint8Array(Buffer.from(cid, "hex"))) } });',
+        'if (!redemption.ok) throw new Error("redeem denied");',
+        'const receipt = await executeAndReceipt({ async executePayment(i) { return { ok: true, transaction: `tx-${i.recipient}` }; } }, { capabilityId: cid, recipient: R, amount: 100, currency: "INR", resource: "invoice:inv-1", purpose: "personal", termsDigest: digest }, redemption, NOW);',
+        'if (receipt.transaction !== `tx-${R}`) throw new Error("unexpected receipt");',
+        'console.log("payment public path: ok");'
+      ].join("\n")
+    );
+    const paymentOut = execFileSync(process.execPath, [paymentProbe], {
+      cwd: consumer, encoding: "utf8",
+    });
+    if (!paymentOut.includes("payment public path: ok"))
+      fail("packed consumer cannot drive the payment path through the public surface");
     // Copy the real third-domain example INTO the fresh consumer. Executing
     // it from the source tree would accidentally resolve local dist instead
     // of the packed installation and invalidate this check.

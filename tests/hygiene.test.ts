@@ -85,6 +85,10 @@ describe("peer-review hygiene gate (ptf-v01/05)", () => {
     assert.ok(exports?.["./profiles/payment"]);
     assert.ok(exports?.["./privacy"]);
     assert.ok(exports?.["./hostkit"]);
+    // The payment executors at the root need a Redemption, and only this
+    // subpath can produce one (ADR-0028). If it disappears, the published
+    // payment path becomes unreachable again.
+    assert.ok(exports?.["./capabilities"]);
     assert.ok(
       ((pkg["files"] as string[]) ?? []).includes("dist"),
       "files must ship dist"

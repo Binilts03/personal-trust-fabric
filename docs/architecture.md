@@ -65,29 +65,30 @@ PTF separates **who may do what** from **who possesses the secret needed to do i
 
 ## Module Map
 
-| Path                          | Responsibility                                                                                                  |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `src/core/authority.ts`       | Grant store, evaluation, attenuation, citations                                                                 |
-| `src/core/capability.ts`      | Capability derivation, attenuation, redemption                                                                  |
-| `src/core/execute.ts`         | Protected execution, provider orchestration                                                                     |
-| `src/core/signing.ts`         | JWS/ED25519, receipt signing                                                                                    |
-| `src/core/types.ts`           | Core types, no deps                                                                                             |
-| `src/adapters/`               | Protocol translators (evidence → local types)                                                                   |
-| `src/store/vault.ts`          | Encrypted records, purpose-scoped access                                                                        |
-| `src/store/keystore.ts`       | Key management, DEK rotation                                                                                    |
-| `src/store/challenges.ts`     | Durable proposals via file CAS                                                                                  |
-| `src/store/files.ts`          | File-backed Authority/registry and hash-chained audit log                                                       |
-| `src/profiles/payment.ts`     | Payment-specific bounds, recipients                                                                             |
-| `src/profiles/data.ts`        | Data disclosure profiles                                                                                        |
+| Path                          | Responsibility                                                                                                               |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `src/core/authority.ts`       | Grant store, evaluation, attenuation, citations                                                                              |
+| `src/core/capability.ts`      | Capability derivation, attenuation, redemption                                                                               |
+| `src/capabilities.ts`         | Curated `./capabilities` subpath: the redemption producer the root's payment executors need                                  |
+| `src/core/execute.ts`         | Protected execution, provider orchestration                                                                                  |
+| `src/core/signing.ts`         | JWS/ED25519, receipt signing                                                                                                 |
+| `src/core/types.ts`           | Core types, no deps                                                                                                          |
+| `src/adapters/`               | Protocol translators (evidence → local types)                                                                                |
+| `src/store/vault.ts`          | Encrypted records, purpose-scoped access                                                                                     |
+| `src/store/keystore.ts`       | Key management, DEK rotation                                                                                                 |
+| `src/store/challenges.ts`     | Durable proposals via file CAS                                                                                               |
+| `src/store/files.ts`          | File-backed Authority/registry and hash-chained audit log                                                                    |
+| `src/profiles/payment.ts`     | Payment-specific bounds, recipients                                                                                          |
+| `src/profiles/data.ts`        | Data disclosure profiles                                                                                                     |
 | `src/privacy/`                | Optional privacy-control/evidence extension; initial DPDP-informed profile (`mcp.ts` policy, `mcp-host.ts` reference wiring) |
-| `src/hostkit/`                | Reusable host effect boundary and its conformance suite (see `docs/host-kit.md`)                                |
-| `src/store/privacy.ts`        | Encrypted privacy configuration (DEK-sealed)                                                                    |
-| `src/store/privacy-events.ts` | Encrypted Processing Event repository                                                                           |
-| `src/cli/privacy*.ts`         | Privacy operator CLI (router, evidence, rights)                                                                 |
+| `src/hostkit/`                | Reusable host effect boundary and its conformance suite (see `docs/host-kit.md`)                                             |
+| `src/store/privacy.ts`        | Encrypted privacy configuration (DEK-sealed)                                                                                 |
+| `src/store/privacy-events.ts` | Encrypted Processing Event repository                                                                                        |
+| `src/cli/privacy*.ts`         | Privacy operator CLI (router, evidence, rights)                                                                              |
 
 ## Public Seam
 
-The published public surface is the curated `src/api.ts` root plus explicit package export subpaths such as `./hostkit`, `./privacy` and `./providers`. `src/index.ts` is a broad internal/test barrel; do not rely on unpublished deep imports.
+The published public surface is the curated `src/api.ts` root plus explicit package export subpaths such as `./hostkit`, `./privacy`, `./providers` and `./capabilities`. `src/index.ts` is a broad internal/test barrel; do not rely on unpublished deep imports.
 
 ## Verification
 
@@ -100,7 +101,6 @@ bash scripts/harness.sh
 ```
 
 Architecture changes require an ADR in `docs/adr/`.
-
 
 ## Reusable protected-effect seam (proposed consolidation)
 

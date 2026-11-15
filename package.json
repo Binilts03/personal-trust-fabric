@@ -31,6 +31,10 @@
       "types": "./dist/src/adapters/providers.d.ts",
       "default": "./dist/src/adapters/providers.js"
     },
+    "./capabilities": {
+      "types": "./dist/src/capabilities.d.ts",
+      "default": "./dist/src/capabilities.js"
+    },
     "./adapters/http": {
       "types": "./dist/src/adapters/http-provider.d.ts",
       "default": "./dist/src/adapters/http-provider.js"
