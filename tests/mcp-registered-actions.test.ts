@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import {
-  Authority, RecipientRegistry, generateEd25519Keypair, makeFakeProviders,
+  Authority, RecipientRegistry, generateEd25519Keypair, makeFakeProviders, createGitHubIssueProvider,
   saveAuthority, saveRegistry, loadAuthority, sealKeystore, signBytes,
   AgentRegistry, saveAgents, loadAgents,
   PrivacyRuntime, type AuthorityRequest, type VerifiedIdentity,
@@ -451,6 +451,102 @@ describe("host-registered generic MCP effect",()=>{
       await b.close();
       rmSync(fx.dir,{recursive:true,force:true});
     }
+  });
+
+  it("executes the real GitHub Issues adapter through registered MCP authority, proof and journal", async () => {
+    const repo = "ptf-sandbox/ptf-integration", recipientId = "github:" + repo;
+    const title = "PTF integration probe", body = "Authorized test issue";
+    const dir = mkdtempSync(join(tmpdir(), "ptf-mcp-github-"));
+    const owner = generateEd25519Keypair(), recipient = generateEd25519Keypair();
+    const auth = new Authority({ nowSec: () => NOW });
+    auth.addGrant({
+      id: "github-once", principal: P, actor: { kind: "exact", id: A },
+      action: { name: "/github/issues/create" },
+      bounds: [
+        { path: ".resource.id", op: "==", value: repo },
+        { path: ".context.title", op: "==", value: title },
+        { path: ".context.body", op: "==", value: body },
+        { path: ".context.recipient", op: "==", value: recipientId },
+      ],
+      exp: NOW + 300, maxUses: 1,
+    });
+    saveAuthority(dir, auth);
+    const registry = new RecipientRegistry(() => NOW);
+    registry.register(P, owner.publicKeyRaw, NOW);
+    registry.register(recipientId, recipient.publicKeyRaw, NOW);
+    saveRegistry(dir, registry);
+    writeFileSync(join(dir, "keystore.json"), JSON.stringify(sealKeystore({
+      [P]: new Uint8Array(owner.privateKey.export({ format: "der", type: "pkcs8" })),
+    }, "pw")));
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const provider = createGitHubIssueProvider({
+      repository: repo, token: "host-only-test-token", nowSec: () => NOW,
+      fetchImpl: async (url, init) => {
+        calls.push({ url: String(url), init: init ?? {} });
+        return new Response(JSON.stringify({
+          id: 987, number: 23, title, body,
+          repository_url: "https://api.github.com/repos/" + repo,
+          url: "https://api.github.com/repos/" + repo + "/issues/23",
+          html_url: "https://github.com/" + repo + "/issues/23",
+        }), { status: 201, headers: { "content-type": "application/json" } });
+      },
+    });
+    const server = createPtfServer({
+      dir, principal: P, actor: A, now: () => NOW,
+      env: { PTF_PASSPHRASE: "pw" },
+      registeredActions: [{
+        action: "/github/issues/create", provider,
+        processing: () => ({ kind: "not-enforced", reason: "synthetic-no-personal-data" }),
+        validate: demand => {
+          if (demand.resource.type !== "repository" || demand.resource.id !== repo ||
+              Object.keys(demand.context).sort().join(",") !== "body,recipient,title" ||
+              demand.context["recipient"] !== recipientId ||
+              demand.context["title"] !== title || demand.context["body"] !== body) {
+            throw new Error("unapproved GitHub issue terms");
+          }
+        },
+      }],
+    });
+    const wire = await connect(server);
+    try {
+      const args = {
+        cmd: "/github/issues/create", resource: repo, resourceType: "repository",
+        purpose: "integration-test", context: { title, body, recipient: recipientId },
+      };
+      const altered = decode(await wire.call("tools/call", {
+        name: "ptf_request_action",
+        arguments: { ...args, context: { ...args.context, title: "attacker" } },
+      }));
+      assert.equal(altered.body["allowed"], false);
+      assert.equal(calls.length, 0);
+      const proposed = decode(await wire.call("tools/call", { name: "ptf_request_action", arguments: args }));
+      assert.equal(proposed.body["allowed"], true);
+      const digest = proposed.body["termsDigest"] as string;
+      const challenge = decode(await wire.call("tools/call", {
+        name: "ptf_redeem", arguments: { termsDigest: digest },
+      }));
+      assert.equal(challenge.body["needProof"], true);
+      const sig = signBytes(recipient.privateKey, Buffer.from(challenge.body["cidHex"] as string, "hex"));
+      const completed = decode(await wire.call("tools/call", {
+        name: "ptf_redeem", arguments: {
+          termsDigest: digest,
+          recipientKeyHex: Buffer.from(recipient.publicKeyRaw).toString("hex"),
+          recipientSigHex: Buffer.from(sig).toString("hex"),
+        },
+      }));
+      assert.equal(completed.error, false);
+      assert.equal(completed.body["action"], "/github/issues/create");
+      assert.equal(completed.body["transaction"], "github:" + repo + "#23");
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]!.url, "https://api.github.com/repos/" + repo + "/issues");
+      assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { title, body });
+      assert.equal(JSON.stringify(completed.body).includes("host-only-test-token"), false);
+      const replayed = decode(await wire.call("tools/call", {
+        name: "ptf_redeem", arguments: { termsDigest: digest },
+      }));
+      assert.equal(replayed.body["receiptId"], completed.body["receiptId"]);
+      assert.equal(calls.length, 1, "a completed request cannot create a second issue");
+    } finally { await wire.close(); rmSync(dir, { recursive: true, force: true }); }
   });
 
 });

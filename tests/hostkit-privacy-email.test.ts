@@ -9,7 +9,7 @@ import {
   type PrivacyEventRepository, type ProcessingEventPrepare,
   type ProcessingEventRecord, type ProcessingEventFinalize
 } from "../src/index.js";
-import { createProtectedEffect, createEffectBoundary, createHostRedemptionChallenge } from "../src/hostkit/index.js";
+import { createProtectedEffect, createEffectBoundary, createHostRedemptionChallenge, hostTermsDigest } from "../src/hostkit/index.js";
 
 const NOW = 1_800_000_000;
 const ingress = { id: "agent-email", principal: "owner", source: "local-registration" as const, proofRef: "host-registry" };
@@ -182,6 +182,50 @@ describe("generic host processing with optional privacy profile",()=>{
       assert.equal(provider.calls.length,1,"replay cannot execute a second provider effect");
       assert.equal(f.auth.snapshot().used.length,1);
     }finally{rmSync(f.dir,{recursive:true,force:true})}
+  });
+
+  it("never backdates a fabricated Processing Event from current privacy configuration", () => {
+    const f = fixture();
+    try {
+      const outcome = f.runtime.reconcileAttemptEvent(f.gate, {
+        termsDigest: hostTermsDigest(operation, ingress), attemptRef: "historical-attempt",
+        state: "SUCCEEDED", finalizedAt: NOW - 10, preparedAt: NOW - 20,
+        createIfMissing: true,
+      });
+      assert.equal(outcome, "absent");
+      assert.equal(f.events.entries.size, 0, "missing past evidence remains a gap");
+    } finally { rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
+  it("returns confirmed provider success with an explicit evidence gap, never a fabricated event", async () => {
+    const f = fixture();
+    try {
+      const owner = generateEd25519Keypair(), recipient = generateEd25519Keypair();
+      const keys = new Map([["owner", owner.publicKeyRaw], ["provider:email", recipient.publicKeyRaw]]);
+      const challenge = createHostRedemptionChallenge({
+        operation, ingress, recipient: "provider:email", principalPrivateKey: owner.privateKey,
+        resolveKey: id => keys.get(id) ?? null, nowSec: () => NOW,
+      });
+      const redemption = challenge.redeem({
+        key: recipient.publicKeyRaw,
+        sig: signBytes(recipient.privateKey, Buffer.from(challenge.cidHex, "hex")),
+      });
+      const provider = makeFakeProviders({ nowSec: () => NOW }).email;
+      const opts = {
+        dir: f.dir, auth: f.auth, ingress, operation, authorizedContext: operation.context,
+        now: () => NOW, processing: { kind: "enforced" as const, runtime: f.runtime, gate: f.gate },
+        effect: { kind: "provider" as const, provider, redemption }, persistAuthority: () => {},
+      };
+      const completed = await createProtectedEffect(opts).run();
+      assert.equal(provider.calls.length, 1);
+      f.events.entries.clear();
+      const replayed = await createProtectedEffect(opts).run();
+      assert.equal(replayed.receiptId, completed.receiptId);
+      assert.equal(replayed.processingEvidence, "gap");
+      assert.equal(replayed.privacyEventId, undefined);
+      assert.equal(f.events.entries.size, 0);
+      assert.equal(provider.calls.length, 1, "confirmed effect must never be resubmitted");
+    } finally { rmSync(f.dir, { recursive: true, force: true }); }
   });
 
 });

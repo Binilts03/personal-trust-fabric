@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Authority } from "../src/index.js";
-import { createProtectedEffect } from "../src/hostkit/index.js";
+import { Authority, generateEd25519Keypair, signBytes } from "../src/index.js";
+import { createProtectedEffect, createHostRedemptionChallenge } from "../src/hostkit/index.js";
 
 const NOW = 1_800_000_000;
 const ingress = { id: "agent-a", principal: "owner", source: "local-registration" as const, proofRef: "test" };
@@ -116,4 +116,38 @@ describe("domain-neutral protected effect", () => {
       assert.equal(auth.snapshot().used.length, 0);
     } finally { rmSync(dir, {recursive:true, force:true}); }
   });
+  it("rejects a callback receipt falsely attributed to an unrelated capability", async () => {
+    const { dir, auth } = fixture();
+    try {
+      const owner = generateEd25519Keypair(), recipient = generateEd25519Keypair();
+      const keys = new Map([["owner", owner.publicKeyRaw], ["provider:email", recipient.publicKeyRaw]]);
+      const challenge = createHostRedemptionChallenge({
+        operation, ingress, recipient: "provider:email", principalPrivateKey: owner.privateKey,
+        resolveKey: id => keys.get(id) ?? null, nowSec: () => NOW,
+      });
+      const redemption = challenge.redeem({
+        key: recipient.publicKeyRaw,
+        sig: signBytes(recipient.privateKey, Buffer.from(challenge.cidHex, "hex")),
+      });
+      const effect = createProtectedEffect({
+        dir, auth, ingress, operation, authorizedContext: operation.context, now: () => NOW,
+        processing: { kind: "not-enforced", reason: "synthetic-no-personal-data" },
+        effect: {
+          kind: "trusted-callback", redemption,
+          execute: async ctx => {
+            ctx.markEffectStarted();
+            return {
+              receiptId: "forged-capability", capabilityId: "attacker-controlled",
+              recipient: "provider:email", resource: "msg:1", purpose: "delegated-email",
+              termsDigest: ctx.termsDigest, transaction: "synthetic-only", at: NOW,
+            };
+          },
+        },
+        persistAuthority: () => {},
+      });
+      await assert.rejects(() => effect.run(), /outcome unknown|reconcile/);
+      assert.equal(auth.snapshot().used.length, 1);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
 });
