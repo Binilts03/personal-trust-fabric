@@ -8,6 +8,8 @@ release day. This project adheres to Semantic Versioning.
 
 ### Documentation
 
+- Aligned first-run documentation on the tested, effect-free Authority demo, added `npm run demo`, and documented a falsifiable host-integration/baseline/adoption validation protocol. No new security guarantees or live effects.
+
 - Reworked the default-branch README around the domain-neutral Authority and protected-use contract, with a tested fake-free CHECK demo, concise adoption boundaries, independent-review opportunities and practical contribution paths. Protected brand copy remains unchanged. Added `examples/authority-decision.mjs` and a smoke test to keep the public quickstart honest.
 
 - Repaired onboarding and documentation regressions: the first-run path now starts from a source checkout rather than an unpublished registry package, creates the keystore passphrase file before using the operator CLI, supplies tested-against-source CLI flags and examples for Bash and PowerShell, and corrects stale CLI/MCP/host-kit help and verification links.

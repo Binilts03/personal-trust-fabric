@@ -52,6 +52,18 @@ The transcript above is illustrative, not a claim that every domain adapter is p
 <!-- PTF-BRAND:END -->
 
 
+## Evaluate PTF before integrating it
+
+**Available today:** a reference Authority engine, local vault/CLI, and
+synthetic protected-use examples. The first demo shows one allowed operation
+and two denials. It does **not** execute an external action.
+
+**Not established:** independent adoption, a published npm installation,
+or production-grade protection of arbitrary agent host paths. A host must
+route each relevant effect through its configured boundary; PTF does not
+intercept calls made outside it. See the [adoption validation protocol](docs/adoption-validation.md)
+for a reproducible real-integration experiment and a conventional baseline.
+
 ## Build on authority, not trust in the agent
 
 A useful agent needs to do things, not just suggest them. But giving an agent a credential, card, or unrestricted API token means the *tool* can carry more power than the individual task requires. Changing the agent should not mean copying your secrets into a new runtime.
@@ -70,8 +82,7 @@ Requirements: Node.js 22+, npm 10+, Git. The package is **not yet published to n
 git clone https://github.com/Binilts03/personal-trust-fabric.git
 cd personal-trust-fabric
 npm ci
-npm run build
-node examples/authority-decision.mjs
+npm run demo
 ```
 
 Expected console output:
