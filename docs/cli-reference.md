@@ -25,30 +25,30 @@ self-contained **fake-payment** example.
 
 ## Store and keys
 
-| Command | What it does |
-| --- | --- |
-| `init` | Initialize a new store; refuses to overwrite an existing store |
-| `keygen --alias NAME` | Generate an Ed25519 keypair in the encrypted local keystore; prints its public key |
-| `recipient --alias NAME --key HEX` | Register a recipient's 32-byte public key (64 hexadecimal characters) |
-| `rekey` | Rotate the encrypted keystore passphrase |
-| `audit [--verify]` | Inspect or verify the audit chain |
-| `backup --to DIR` | Back up the store and a consistency checkpoint; stop writers first |
-| `restore --from DIR` | Restore a backup into a fresh store directory |
-| `agent --register ID [--key HEX]` | Register an agent identity |
-| `agent --remove ID` | Retire an agent identity |
-| `agent --rotate ID --key HEX` | Rotate an agent key |
-| `agent --list` | List registered agents |
+| Command                            | What it does                                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------------- |
+| `init`                             | Initialize a new store; refuses to overwrite an existing store                     |
+| `keygen --alias NAME`              | Generate an Ed25519 keypair in the encrypted local keystore; prints its public key |
+| `recipient --alias NAME --key HEX` | Register a recipient's 32-byte public key (64 hexadecimal characters)              |
+| `rekey`                            | Rotate the encrypted keystore passphrase                                           |
+| `audit [--verify]`                 | Inspect or verify the audit chain                                                  |
+| `backup --to DIR`                  | Back up the store and a consistency checkpoint; stop writers first                 |
+| `restore --from DIR`               | Restore a backup into a fresh store directory                                      |
+| `agent --register ID [--key HEX]`  | Register an agent identity                                                         |
+| `agent --remove ID`                | Retire an agent identity                                                           |
+| `agent --rotate ID --key HEX`      | Rotate an agent key                                                                |
+| `agent --list`                     | List registered agents                                                             |
 
 ## Grants and human decisions
 
-| Command | What it does |
-| --- | --- |
-| `grant --id ID --principal P --cmd /pay --agent A [--amount-max N] [--currency CCY] [--recipient R] [--exp-in SECONDS] [--max-uses N]` | Create an actor-bound standing grant |
-| `review [--digest HEX]` | List or inspect pending proposals |
-| `approve --digest HEX [--ttl-s SECONDS]` | Issue an exact-terms, one-use approval for a pending proposal |
-| `deny --digest HEX` | Deny a pending proposal |
-| `revoke --grant ID` | Revoke a standing grant |
-| `revoke --recipient ALIAS` | Revoke a recipient mapping |
+| Command                                                                                                                                | What it does                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `grant --id ID --principal P --cmd /pay --agent A [--amount-max N] [--currency CCY] [--recipient R] [--exp-in SECONDS] [--max-uses N]` | Create an actor-bound standing grant                          |
+| `review [--digest HEX]`                                                                                                                | List or inspect pending proposals                             |
+| `approve --digest HEX [--ttl-s SECONDS]`                                                                                               | Issue an exact-terms, one-use approval for a pending proposal |
+| `deny --digest HEX`                                                                                                                    | Deny a pending proposal                                       |
+| `revoke --grant ID`                                                                                                                    | Revoke a standing grant                                       |
+| `revoke --recipient ALIAS`                                                                                                             | Revoke a recipient mapping                                    |
 
 For `grant`, exactly **one** of `--agent A`, `--actor-set A,B`, or
 `--any-agent` is required; `--any-agent` is a deliberate broad wildcard.
@@ -59,14 +59,14 @@ use-limit flags are `--exp-in` and `--max-uses` (**not**
 
 ## Protected operations and vault
 
-| Command | What it does |
-| --- | --- |
-| `pay --principal P --agent A --recipient R --amount N --currency CCY --resource R [--purpose T] [--yes]` | Execute the built-in **fake** payment path and return a synthetic receipt |
-| `disclose --holder H --verifier V --claims a,b --credential JSON [--allowed a,b] [--yes]` | Run the CLI disclosure flow |
-| `vault-put` | Store a scoped, encrypted record; obtain value from `--value-file`, never argv |
-| `vault-read` | Request a scope-constrained disclosure from the vault |
-| `vault-migrate` | Migrate a legacy plaintext vault |
-| `vault-rekey` | Rotate the vault encryption key |
+| Command                                                                                                  | What it does                                                                   |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `pay --principal P --agent A --recipient R --amount N --currency CCY --resource R [--purpose T] [--yes]` | Execute the built-in **fake** payment path and return a synthetic receipt      |
+| `disclose --holder H --verifier V --claims a,b --credential JSON [--allowed a,b] [--yes]`                | Run the CLI disclosure flow                                                    |
+| `vault-put`                                                                                              | Store a scoped, encrypted record; obtain value from `--value-file`, never argv |
+| `vault-read`                                                                                             | Request a scope-constrained disclosure from the vault                          |
+| `vault-migrate`                                                                                          | Migrate a legacy plaintext vault                                               |
+| `vault-rekey`                                                                                            | Rotate the vault encryption key                                                |
 
 Run `node dist/src/cli.js --help` for the full `vault-put` and
 `vault-read` option lists. The operator CLI **does not implement**
@@ -80,10 +80,10 @@ transfers funds.
 
 ## Privacy and host integration (optional)
 
-| Command | What it does |
-| --- | --- |
-| `privacy <subcommand>` | Configure or examine consent/notice/basis/activity evidence, summaries, exact vault erasure and recovery |
-| `host-conformance --privacy-config FILE` | Run nine reference-boundary checks using scratch data, with no network effect |
+| Command                                                      | What it does                                                                                                                                                         |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `privacy <subcommand>`                                       | Configure or examine consent/notice/basis/activity evidence, summaries, exact vault erasure and recovery                                                             |
+| `host-conformance --privacy-config FILE [--boundary MODULE]` | Run nine boundary checks using scratch data, with no network effect. `--boundary` runs them against your own boundary composition instead of the kit's reference one |
 
 `privacy` uses positional subcommands such as `privacy init`,
 `privacy consent withdraw --id ID`, `privacy verify`, and
@@ -92,9 +92,12 @@ transfers funds.
 mutating privacy state.
 
 The `host-conformance` command requires an initialized store, a keystore,
-initialized privacy state and a valid host privacy-config JSON file. Its
-results cover the **reference boundary**, not a separately running MCP
-host or custom adopter implementation. See [Host Kit]({{ '/host-kit/' | relative_url }}).
+initialized privacy state and a valid host privacy-config JSON file. Without
+`--boundary` its results cover the **reference boundary**; with `--boundary
+MODULE` (a module exporting `boundary`) they cover the **adopter's own
+composition**, which is what makes the command usable as a CI gate. Either
+way it does not cover a separately running MCP host. See
+[Host Kit]({{ '/host-kit/' | relative_url }}).
 
 ## Environment and common options
 

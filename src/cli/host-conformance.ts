@@ -5,6 +5,7 @@ import { resolveMcpPrivacyConfig } from "../privacy/mcp.js";
 import { loadPrivacyStore } from "../store/privacy.js";
 import { runHostConformance } from "../hostkit/conformance.js";
 import { optional, readJson } from "./privacy-shared.js";
+import { loadHostBoundary } from "./load-host-boundary.js";
 
 /**
  * The `ptf host-conformance` operator command.
@@ -13,6 +14,12 @@ import { optional, readJson } from "./privacy-shared.js";
  * The checks need their own stores, so they run in a scratch directory: the
  * operator's store is read, never written. Nothing here reaches the
  * network.
+ *
+ * With `--boundary MODULE` the checks run against the ADOPTER's composition
+ * instead of the kit's reference one — that is what turns this command from
+ * a self-test of the kit into a gate a host can put in its own CI. The
+ * boundary under test is always named in the output, so a green run is
+ * attributable.
  */
 
 export interface HostConformanceCliContext {
@@ -49,9 +56,20 @@ export async function runHostConformanceCommand(
 
   const scratch = mkdtempSync(join(tmpdir(), "ptf-host-conformance-"));
   try {
+    const boundarySpec = optional(ctx.flags, "boundary");
+    const boundary =
+      boundarySpec === undefined
+        ? undefined
+        : await loadHostBoundary(boundarySpec);
+    ctx.io.print(
+      boundarySpec === undefined
+        ? "boundary: reference (the kit's own composition)"
+        : `boundary: host-supplied (${boundarySpec})`
+    );
     const results = await runHostConformance({
       config,
       tmpDir: scratch,
+      ...(boundary !== undefined ? { boundary } : {}),
     });
     for (const result of results) {
       const status = result.ok ? "PASS" : "FAIL";

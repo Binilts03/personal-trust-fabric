@@ -28,3 +28,5 @@
 | [0025](0025-privacy-enforcement-is-per-host.md)       | Privacy enforcement is per-host, explicit, and composed at the effect boundary                                 | accepted | 2026-10-21 |
 
 | [0026](0026-domain-neutral-effect-consolidation.md) | Domain-neutral protected-effect consolidation (implementation candidate; pending independent review) | proposed | 2026-10-24 |
+| [0027](0027-conformance-is-an-adoption-gate.md) | The host conformance suite is an adoption gate: `ptf host-conformance --boundary` runs the adopter's composition | accepted | 2026-11-15 |
+| [0028](0028-capability-subpath.md) | The `./capabilities` subpath makes the payment path reachable from the published surface (amends 0011) | accepted | 2026-11-15 |

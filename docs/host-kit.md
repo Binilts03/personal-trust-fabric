@@ -146,9 +146,66 @@ authority-first  PASS  ADR-0024 §4: an unauthorised caller is denied by the aut
 dry-run-has-no-effect  PASS  ADR-0018: CHECK != REDEEM != EXECUTE - a dry-run result ...
 ```
 
-The exit code is `0` only when every check passes. The **CLI tests a shipped reference boundary**, not an adopter's separately running host. The checks use a scratch directory: the operator's store is read, never written, and nothing reaches the network.
+The exit code is `0` only when every check passes. The checks use a scratch
+directory: the operator's store is read, never written, and nothing reaches
+the network.
 
-A host with its own boundary composition passes its own factory:
+Without `--boundary` the command tests the **shipped reference boundary** —
+the kit's own composition. That proves the kit still works; it says nothing
+about the adopter's code path.
+
+### Testing your own composition
+
+Point the command at the module that composes your boundary:
+
+```sh
+node dist/src/cli.js --dir ./ptf-store host-conformance \
+  --privacy-config ./privacy-config.json \
+  --boundary ./host-boundary.mjs
+```
+
+The module exports a factory — a named export `boundary`, or a default
+export that is a function:
+
+```js
+// host-boundary.mjs
+import { createEffectBoundary } from "personal-trust-fabric/hostkit";
+
+export function boundary(scenario) {
+  return createEffectBoundary({
+    dir: scenario.dir,
+    auth: scenario.auth,
+    ingress: scenario.ingress,
+    runtime: scenario.runtime,
+    gate: scenario.gate,
+    now: scenario.now,
+    authorizedContext: scenario.authorizedContext,
+    execute: scenario.effect,
+    persistAuthority: scenario.persistAuthority,
+  });
+}
+```
+
+Relative and absolute paths resolve against the working directory; a bare
+specifier resolves from the working directory's `node_modules`, so your
+module — not PTF's — owns the dependency. The boundary under test is always
+named in the output, so a green run is attributable:
+
+```text
+boundary: host-supplied (./host-boundary.mjs)
+authority-first  PASS  ADR-0024 §4: an unauthorised caller is denied by the authority ...
+```
+
+This is the adoption gate: put it in the host's CI. The specifier comes from
+your own command line and is never reachable from an agent-facing surface.
+
+The suite stays a **narrow** gate. It tests the boundary's ordering against
+nine rules; it does not attest the rest of the host — the proposal store, the
+MCP tools, the ingress model and your own provider are outside it. A green
+run is evidence, not certification.
+
+A host with its own boundary composition also passes its own factory
+in-process:
 
 ```ts
 const results = await runHostConformance({
@@ -187,7 +244,6 @@ The honest limits live in [audit/limits.md](audit/limits.md).
   enforcement narrows Authority.
 - [ADR-0025](adr/0025-privacy-enforcement-is-per-host.md) — per-host,
   explicit enforcement at the effect boundary.
-
 
 ## Domain-neutral host-controlled effects (consolidation work)
 

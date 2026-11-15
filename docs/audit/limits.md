@@ -430,7 +430,6 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
 
 See [DPDP profile](../privacy/dpdp.md) for a precisely scoped operator setup and legal source links.
 
-
 ## Domain-neutral Host Kit consolidation (branch candidate)
 
 - `createProtectedEffect` supports an explicit non-privacy reference
@@ -462,3 +461,10 @@ See [DPDP profile](../privacy/dpdp.md) for a precisely scoped operator setup and
   synthetic examples, and no statement here certifies legal compliance.
 
 - **Registered MCP action limitations:** Only exact host-side registrations are executable. The built-in reference email provider and local stdio integrations are synthetic and single-operator. The host validator, private-body resolution, secret custody and regulatory processing classification remain trusted application responsibilities; a malicious trusted host can still leak values. The SDK is not a universal interceptor or a DPDP compliance certification. A completed journal entry is durable effect evidence even if its original Processing Event is missing; it is never manufactured retroactively. A `processingEvidence: "gap"` response must trigger a separate operator reconciliation. Audit rows may duplicate across journal-recovery retries; the effect must not repeat.
+
+## Adoption surface (ADR-0027, ADR-0028)
+
+- **`ptf host-conformance --boundary` executes operator-named code.** The flag loads a module the operator names and runs the conformance checks against the boundary it composes. The specifier comes from the operator's own command line, never from an agent or an MCP caller, and the operator already holds the store — so it grants no privilege the CLI did not have. The module runs with the operator's privileges. This is a real capability, not a sandbox: a hostile module is the operator's own code.
+- **The conformance suite is a narrow gate.** With `--boundary` it now tests the adopter's _boundary composition_ against nine ordering rules. It still does not attest the rest of the host: the proposal store, the MCP tool surface, the ingress model, the host's own provider, and the host's key custody are outside it. A green run is evidence about the boundary, never a certification of the host.
+- **The `./capabilities` subpath ships the local capability envelope.** `ptf/cap@0.1` remains `@internal` and never a wire format (ADR-0009); the subpath makes the local redemption machinery reachable by package specifier because the curated root's payment executors require a `Redemption` that nothing else could produce. A host keeps the envelope in process and shows the agent only the `cidHex` it must sign. The Ed25519 helpers travel with it because the workflow is inert without a signer and a raw-key resolver; they expose no secret and no authority.
+- **The envelope is still the local receipt mechanism, not a portable capability.** It is not a standard, it is not interoperable across implementations, and ADR-0009's rule stands: interop goes through `adapters/authzen.ts`, `adapters/oauth-agent.ts` and `adapters/sd-jwt.ts`.
