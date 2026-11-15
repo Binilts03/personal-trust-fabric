@@ -6,6 +6,8 @@ release day. This project adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+- **Production dependency audit:** refreshed the lockfile to MCP server SDK `2.4.0` and Zod `4.6.7` and raised direct dependency floors to avoid previously audited high-severity ranges. The isolated resolver check reported zero production vulnerabilities; exact-head prerelease CI must confirm before release.
+
 - **npm developer-preview preparation (not a published release):** reconcile version to candidate `0.2.0-rc.1`, document first-publication and trusted-publisher gates, and update README/website/Host Kit and security documentation to the merged reference implementation. Live provider UAT and independent security certification remain outstanding.
 
 - **Effect-boundary assurance:** integrated host-registered GitHub Issues action execution with exact recipient binding, one-use proof and journal replay; bound trusted-callback receipts to the redeemed capability; removed retroactive privacy evidence reconstruction. Confirmed provider effects with missing original processing evidence now return a persistent explicit gap. Controlled HTTP tests pass; no live GitHub operation or independent deployment is claimed.

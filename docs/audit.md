@@ -29,7 +29,7 @@ npm run typecheck && npm test && npm run eval
 bash scripts/harness.sh
 ```
 
-All must pass. The gate proves: strict TypeScript, 297+ unit tests, 9 eval/property tests, brand check, zero-dep core check, public-seam test check, secret scanning.
+All must pass. Current exact-head CI is the source for test counts. It checks strict TypeScript, the unit/integration suite, example/evaluation tests, brand/zero-dependency/public-seam rules, packed consumer imports, dependency audit, documentation build and secret scanning. It does not prove live-provider security.
 
 ## Honest Limits Highlights
 

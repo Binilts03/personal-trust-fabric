@@ -7,17 +7,19 @@ below.
 
 ## Container image
 
+The tag `ptf:local` refers to a **locally built test image**, not an official published PTF container or npm package. Version strings shown by the PDP health endpoint must match the running package metadata.
+
 `Dockerfile` (multi-stage): build on `node:22-bookworm-slim` (`npm ci` +
 `npm run build`), runtime ships `dist/` + prod `node_modules` + `LICENSE` +
 `README.md` only. Runtime runs as the unprivileged `node` user; the
 filesystem is read-only except the store volume and `/tmp`:
 
 ```sh
-docker build -t ptf:0.1.0 .
-docker run --read-only -v ptf-store:/data ptf:0.1.0 dist/src/cli.js --dir /data audit --verify
+docker build -t ptf:local .
+docker run --read-only -v ptf-store:/data ptf:local dist/src/cli.js --dir /data audit --verify
 # MCP stdio server / PDP bin are the same image with another entry arg:
-docker run --read-only -v ptf-store:/data -e PTF_STORE_DIR=/data -e PTF_MCP_PRINCIPAL=did:op:o -e PTF_MCP_ACTOR=did:op:a -i ptf:0.1.0 dist/src/mcp-server.js
-docker run --read-only -v ptf-store:/data -v ptf-tls:/tls:ro -e PTF_PDP_STORE_DIR=/data -e PTF_PDP_KEYS_FILE=/data/pdp-keys.json -e PTF_PDP_TLS_KEY=/tls/key.pem -e PTF_PDP_TLS_CERT=/tls/cert.pem -p 127.0.0.1:3000:3000 ptf:0.1.0 dist/src/pdp-server.js
+docker run --read-only -v ptf-store:/data -e PTF_STORE_DIR=/data -e PTF_MCP_PRINCIPAL=did:op:o -e PTF_MCP_ACTOR=did:op:a -i ptf:local dist/src/mcp-server.js
+docker run --read-only -v ptf-store:/data -v ptf-tls:/tls:ro -e PTF_PDP_STORE_DIR=/data -e PTF_PDP_KEYS_FILE=/data/pdp-keys.json -e PTF_PDP_TLS_KEY=/tls/key.pem -e PTF_PDP_TLS_CERT=/tls/cert.pem -p 127.0.0.1:3000:3000 ptf:local dist/src/pdp-server.js
 ```
 
 Host-composed probes (no baked `HEALTHCHECK` — the CLI exits after one
