@@ -133,6 +133,8 @@ This repository contains running reference code, abuse tests, documented securit
 
 PTF does **not** settle payments, issue identities, provide a wallet, or run an agent's reasoning loop. It provides a reusable authority and protected-use layer that hosts can integrate.
 
+**Real REST adapter (opt-in):** [GitHub Issues](docs/adapters/github-issues.md) creates an exactly bound issue using a host-held token through the existing journaled provider seam. It has offline adversarial coverage but **no live-provider validation** or unattended-retry guarantee. The caller must still authenticate the agent and durably enforce authority.
+
 ## The next proof: reuse beyond payment
 
 The [domain-neutral consolidation, draft PR #121](https://github.com/Binilts03/personal-trust-fabric/pull/121), is deliberately separate from released `main`.

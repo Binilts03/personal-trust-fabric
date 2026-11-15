@@ -88,6 +88,7 @@ describe("GitHub Issues real REST provider / protected-effect seam", () => {
     assert.equal(headers["x-github-api-version"], "2022-11-28");
     assert.deepEqual(JSON.parse(String(sent.init.body)), { title: TITLE, body: BODY });
     assert.equal(String(sent.init.body).includes(TOKEN), false);
+    assert.equal(sub.kind, "task");
     assert.equal(sub.externalRef, "github:" + REPO + "#23");
     assert.equal(sub.termsDigest, request().termsDigest);
     assert.equal(p.verify(sub, {

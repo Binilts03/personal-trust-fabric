@@ -53,7 +53,7 @@ export function createGitHubIssueProvider(opts: GitHubIssueProviderOptions): Pro
   const api = `https://api.github.com/repos/${repository}`;
   const prefix = `github:${repository}#`;
   return {
-    kind: "github",
+    kind: "task",
     namespace: "github-issues",
     async submit(req: ProviderRequest): Promise<ProviderSubmission> {
       const issue = exactIssue(req, repository);
@@ -79,8 +79,9 @@ export function createGitHubIssueProvider(opts: GitHubIssueProviderOptions): Pro
         throw new Error("github-issues: submission outcome unverified");
       }
       const number = data["number"];
-      if (!Number.isSafeInteger(number) || (number as number) <= 0 ||
-          !Number.isSafeInteger(data["id"]) || (data["id"] as number) <= 0 ||
+      const id = data["id"];
+      if (typeof number !== "number" || !Number.isSafeInteger(number) || number <= 0 ||
+          typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0 ||
           data["title"] !== issue.title || data["body"] !== issue.body ||
           data["repository_url"] !== api ||
           data["url"] !== `${api}/issues/${number}` ||
@@ -89,13 +90,13 @@ export function createGitHubIssueProvider(opts: GitHubIssueProviderOptions): Pro
         throw new Error("github-issues: response attestation failed");
       }
       return {
-        kind: "github", capabilityId: req.capabilityId,
+        kind: "task", capabilityId: req.capabilityId,
         termsDigest: req.termsDigest, externalRef: `${prefix}${number}`,
         at: opts.nowSec?.() ?? Math.floor(Date.now() / 1000),
       };
     },
     verify(sub: ProviderSubmission, expected: { readonly capabilityId: string; readonly termsDigest: string }) {
-      if (sub === null || typeof sub !== "object" || sub.kind !== "github" ||
+      if (sub === null || typeof sub !== "object" || sub.kind !== "task" ||
           sub.capabilityId !== expected.capabilityId ||
           sub.termsDigest !== expected.termsDigest ||
           typeof sub.externalRef !== "string" || !sub.externalRef.startsWith(prefix) ||
