@@ -23,15 +23,16 @@ From a terminal:
 git clone https://github.com/Binilts03/personal-trust-fabric.git
 cd personal-trust-fabric
 npm ci
-npm run build
-node examples/payment-disclosure.mjs
-node examples/generic-protected-action.mjs
+npm run demo
 ```
 
-The first script exercises a bounded, synthetic payment using a fake executor and
-a minimal data disclosure. No passphrase, external credentials, real money or
-agent-host configuration is needed. See [use cases]({{ '/use-cases/' | relative_url }})
-for other *offline* examples.
+This tested first-run script checks one permitted operation and denies both
+another actor and a modified recipient. It performs no external action and
+consumes no authority. No credentials, passphrase, real money or agent-host
+configuration are needed. For separate *offline* synthetic payment/disclosure
+examples see [use cases]({{ '/use-cases/' | relative_url }}). The
+[adoption-validation protocol]({{ '/adoption-validation/' | relative_url }})
+explains the additional evidence required for a real host integration.
 
 The `ptf` **operator CLI** is also available from this checkout:
 
@@ -116,6 +117,11 @@ store encrypted with it, or intentionally create a separate passphrase and
 store. An existing `./ptf-store` is likewise intentionally not overwritten
 by `init`.
 
+**Optional unified-effect example:** after the first-run CHECK demo, run
+`npm run build && node examples/generic-protected-action.mjs` to exercise a
+local synthetic non-payment provider with the Host Kit. This does not send
+anything to GitHub or another external service.
+
 ## 3. Verify and continue
 
 To run the repository's checks:
@@ -144,5 +150,3 @@ secret-scanning gates.
 
 The optional DPDP-informed scenario remains an [offline use case]({{ '/use-cases/' | relative_url }}),
 **not** a complete compliance workflow or a live clinic/lab demonstration.
-
-**Generic SDK example:** `node examples/generic-protected-action.mjs` exercises an offline, bounded `/email/send` effect with a real local recipient-signature challenge and a fake provider. It does **not** send a message or enable arbitrary MCP execution.

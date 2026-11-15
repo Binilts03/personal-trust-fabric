@@ -6,9 +6,15 @@ release day. This project adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+- Consolidated protected-effect orchestration across domain-neutral Host Kit and trusted registered MCP actions; incorporated current `main` with the GitHub Issues provider, preserving current onboarding. Reference-scope only; no live-provider acceptance or privacy certification.
+
+- **Integration:** opt-in GitHub Issues provider using actual REST POST, a fixed repository and host-held token. Strict response binding and conservative unknown-outcome quarantine; offline negative tests exercise the journal and network seam. No live GitHub issue or security certification is claimed.
+
 ### Documentation
 
-- Rewrote the repository README around domain-neutral Authority and protected-use rather than the payment profile: runnable synthetic non-payment example first, current package/host/MCP contracts, explicit trust boundaries, privacy composition, honest production limits, and independent-adoption proof still outstanding. Preserved Authority Manifest v1 unchanged.
+- Aligned first-run documentation on the tested, effect-free Authority demo, added `npm run demo`, and documented a falsifiable host-integration/baseline/adoption validation protocol. No new security guarantees or live effects.
+
+- Reworked the default-branch README around the domain-neutral Authority and protected-use contract, with a tested fake-free CHECK demo, concise adoption boundaries, independent-review opportunities and practical contribution paths. Protected brand copy remains unchanged. Added `examples/authority-decision.mjs` and a smoke test to keep the public quickstart honest.
 
 - Repaired onboarding and documentation regressions: the first-run path now starts from a source checkout rather than an unpublished registry package, creates the keystore passphrase file before using the operator CLI, supplies tested-against-source CLI flags and examples for Bash and PowerShell, and corrects stale CLI/MCP/host-kit help and verification links.
 
@@ -20,8 +26,6 @@ release day. This project adheres to Semantic Versioning.
 > version cut reconciles tags + changelog after peer review.
 
 ### Added
-
-- Consolidation candidate: explicit `createProtectedEffect` Host Kit path with optional, host-composed processing enforcement and a compatibility adapter for the existing privacy-required `createEffectBoundary`. Added a trusted-host local recipient-proof helper and a synthetic `/email/send` reference; examples now execute under smoke-tested proofs. The `personal-trust-fabric/mcp` package subpath exposes `createPtfServer`, its registration types, and a strict synthetic-email handle validator; a clean-tarball consumer probe imports and constructs the host. Generic MCP effect redemption is now opt-in for exact trusted-host registrations through the existing `ptf_request_action`/`ptf_redeem` tools; unregistered actions remain non-executable. Payment and registered effects share Host Kit consumption and journal-first recovery, including explicit processing-evidence gaps. This is not a live-provider or distributed-production release.
 
 - The host kit: `createEffectBoundary` is the one call that puts the authority and privacy gates around an effect in the right order (authority first and non-consuming, then the privacy preflight and the live recheck, then the evidence precommit, then the authority consumption and its durable CAS, then the privacy fence at the effect boundary, then the effect, then the finalisation as `SUCCEEDED`, `FAILED_FINAL`, or `OUTCOME_UNKNOWN`). `runHostConformance` is nine checks, each one a rule, each one observed against a real encrypted store, so a host can prove in CI that its own agent paths enforce the controls. `ptf host-conformance` runs the same suite from the operator surface and exits non-zero when a check fails. The kit ships on the `./hostkit` subpath.
 - Two HTTP provider transports that speak real protocols: `createHttpProvider` signs a canonical JSON body and posts it to any REST endpoint (the credential stays in the host's `sign` callback), and `createX402Provider` speaks the x402 HTTP 402 flow at Protocol Version 2 (`PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE`). The x402 amount is in the asset's atomic units and the core spec does not define the decimals, so the host supplies the exact authorised amount and the adapter compares it for equality and never converts units. It refuses before settling anything when the challenge asks for more than the user authorised, or when the network, scheme, or signed value differs from the approved terms. Both ship on the `./adapters/http` and `./adapters/x402` subpaths and are tested against a real local HTTP server.

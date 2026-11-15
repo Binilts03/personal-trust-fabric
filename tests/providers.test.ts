@@ -62,6 +62,7 @@ describe("protected provider seam (P0 slice 3)", () => {
       "retail",
       "email",
       "identity",
+      "task",
     ] as const) {
       const provider = fakes[kind];
       assert.ok(provider instanceof FakeProvider);

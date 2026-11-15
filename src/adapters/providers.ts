@@ -48,7 +48,7 @@ import {
  */
 
 export type ProviderKind =
-  "payment" | "travel" | "retail" | "email" | "identity";
+  "payment" | "travel" | "retail" | "email" | "identity" | "task";
 
 export interface ProviderRequest {
   readonly capabilityId: string;
@@ -195,6 +195,7 @@ export function makeFakeProviders(
     retail: new FakeProvider("retail", opts),
     email: new FakeProvider("email", opts),
     identity: new FakeProvider("identity", opts),
+    task: new FakeProvider("task", opts),
   };
 }
 
