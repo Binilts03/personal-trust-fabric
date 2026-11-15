@@ -164,7 +164,7 @@ function statOf(
  * `tests/operations.test.ts` (healthz contract), so the sync is
  * test-enforced, not by hand.
  */
-const PTF_PDP_VERSION = "0.1.0";
+const PTF_PDP_VERSION = "0.2.0-rc.1";
 
 function loadKeysThrowing(file: string): readonly PdpKey[] {
   let raw: string;

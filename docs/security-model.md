@@ -48,8 +48,8 @@ Documented in [docs/audit/limits.md](audit/limits). Key ceilings:
 
 - Single-operator topology (no multi-tenant)
 - File keystore (no HSM/KMS)
-- Reference providers move nothing (no live rails)
-- No remote ingress / rate limiting
+- Synthetic providers move nothing; an opt-in GitHub Issues adapter supports real REST requests but has only controlled-HTTP acceptance tests
+- No production remote ingress or multi-tenant isolation (authenticated local registry mode exists)
 - No external audit anchoring
 - npm package not published
 
@@ -61,7 +61,8 @@ Documented in [docs/audit/limits.md](audit/limits). Key ceilings:
 npm run typecheck && npm test && npm run eval
 ```
 
-- 297+ unit tests (public seam only)
-- 9 eval/property tests (attack vectors, fuzzing)
+- Exact-head merged-PR CI: 602 unit/integration tests; obtain current counts from current CI
+- 3 example tests and 9 evaluation checks at that head; not proof of live-provider operation
 - Brand check, zero-dep core check, public-seam test check
-- Secret scanning (GitHub + TruffleHog)
+- Secret scanning and documentation gates; no independent external security certification
+- Journal-proven success is not resubmitted, ambiguous outcomes require reconciliation, and missing original privacy evidence remains an explicit gap

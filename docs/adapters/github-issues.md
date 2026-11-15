@@ -8,7 +8,7 @@ permalink: /adapters/github-issues/
 # GitHub Issues: an opt-in real REST integration
 
 This adapter uses the real GitHub `POST /repos/{owner}/{repo}/issues` API
-and the existing PTF `ProtectedProvider` and `executeWithJournal` seams.
+and PTF's `ProtectedProvider` and execution-journal seams. Registered MCP effects use the shared `createProtectedEffect` Host Kit; a direct journal call alone does not authorize an agent or apply privacy processing.
 The **trusted host** must authenticate the caller, validate a recipient proof,
 consume and persist bounded authorization **before** the effect, and retain
 the scoped GitHub token. The agent never receives the credential. For registered MCP operation tests,
@@ -20,31 +20,21 @@ A production host must explicitly determine who controls that recipient key.
 ## Integration in the trusted host
 
 ```ts
-import {
-  createGitHubIssueProvider,
-  githubIssueOutcomeQuery,
-} from "personal-trust-fabric/adapters/github-issues";
-import { executeWithJournal } from "personal-trust-fabric/providers";
+import { createGitHubIssueProvider } from "personal-trust-fabric/adapters/github-issues";
 
-// dir, req and proof-verified redemption come from your trusted host.
-// req.action = "/github/issues/create"
-// req.recipient = "github:OWNER/REPO"; req.resource = "OWNER/REPO"
-// req.context = { title: "Authorized title", body: "Authorized body" }
+// The repo and token are fixed by a trusted host, never selected by an agent.
 const provider = createGitHubIssueProvider({
   repository: "OWNER/REPO",
   token: process.env.PTF_GITHUB_TOKEN!, // trusted host only
 });
-const receipt = await executeWithJournal({
-  dir,
-  provider,
-  req,
-  redemption,
-  query: githubIssueOutcomeQuery,
-});
+
+// Supply this provider as part of an exact /github/issues/create registration
+// with an effect-bearing validator and trusted processing policy.
+// Create a trusted action registration and pass it to createPtfServer.
+// This example only constructs the provider; it does not submit an issue.
 ```
 
-This is **wiring**, not a full independently authenticated host: creating
-a `redemption` alone is not sufficient. Never call `provider.submit`
+This is **adapter wiring**, not an independently authenticated host. The embedding host must validate repository, recipient, action, title and body, configure applicable privacy processing, authenticate ingress, verify recipient proof and route execution through Host Kit. See `tests/mcp-registered-actions.test.ts` for the exercised controlled-HTTP path. Never call `provider.submit`
 directly from an agent. Use a disposable repository and short-lived
 fine-grained token with **Issues: write** on that repository. Never use
 production credentials or an agent-accessible environment. A change to

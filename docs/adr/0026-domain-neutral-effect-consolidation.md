@@ -1,7 +1,7 @@
 # ADR-0026: Domain-neutral protected-effect consolidation
 
 **Date:** 2026-10-24  
-**Status:** proposed (implementation and compatibility gates pending)  
+**Status:** accepted for reference integration (PR #121 merged 2026-11-15; production assurance separate)  
 **Scope:** Host Kit, trusted host operation registration, payment and privacy composition
 
 ## Context
@@ -27,10 +27,10 @@ Existing package subpaths, store formats, public payment semantics, backup/resto
 
 Reference stdio identity still depends on the launcher, file/CAS storage is not a distributed transaction system, and trusted host callbacks can leak material unless controlled by the host. Unknown external outcomes require reconciliation; never blindly retry. Stop the migration on any privacy downgrade, missing journal replay, incorrect actor binding, double effect, payment-guard regression, broken store compatibility or unverified secret exposure.
 
-Implements/extends ADR-0010 (domain-neutral Authority), ADR-0018 (exact operation), ADR-0024 (privacy narrows), and ADR-0025 (per-host effect enforcement). This ADR becomes accepted only after verified implementation and independent review.
+Implements/extends ADR-0010 (domain-neutral Authority), ADR-0018 (exact operation), ADR-0024 (privacy narrows), and ADR-0025 (per-host effect enforcement). The implementation passed exact-head CI and a maintainer source review before PR #121 merged. Independent external security review remains outstanding.
 
 ## Implementation evidence and remaining scope
 
-A branch candidate implements one Host Kit effect state machine, shared journal outcome classification, trusted-host registered non-payment MCP actions, and a compatibility adapter for the older privacy-required boundary. Reference MCP payment delegates its consumption, privacy precommit/fence and provider submission to Host Kit. The signed recipient proof, exact terms, stored actor binding and journal-first replay are covered by test suites. Core payment ceiling and currency guards intentionally remain in Authority and capabilities to protect direct callers.
+The implementation on `main` includes one Host Kit effect state machine, shared journal outcome classification, trusted-host registered non-payment MCP actions, and a compatibility adapter for the older privacy-required boundary. Reference MCP payment delegates its consumption, privacy precommit/fence and provider submission to Host Kit. The signed recipient proof, exact terms, stored actor binding and journal-first replay are covered by test suites. Core payment ceiling and currency guards intentionally remain in Authority and capabilities to protect direct callers.
 
-The physical file-backed reference, operator CLI presentation, protocol-specific validators and host-owned direct provider routes are **not** a globally intercepted unified runtime. Post-submission unknown outcomes still need provider reconciliation. Privacy-evidence gaps are separately visible when the journal proves an effect. This ADR remains proposed until current-head CI and independent reviewer approval, not merely passing examples.
+The physical file-backed reference, operator CLI presentation, protocol-specific validators and host-owned direct provider routes are **not** a globally intercepted unified runtime. Post-submission unknown outcomes still need provider reconciliation. Privacy-evidence gaps are separately visible when the journal proves an effect. The accepted reference design does not constitute live external-provider UAT, independent host integration, or a production-security certification.

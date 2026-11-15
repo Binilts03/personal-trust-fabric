@@ -30,6 +30,10 @@ jobs:
       # install of the tarball into a clean directory.
       - name: package surface (install the tarball, import the entry point)
         run: npm run verify:package -- --install
+      - name: prerelease tarball preview (read-only)
+        run: npm pack --dry-run --json > "$RUNNER_TEMP/ptf-pack.json"
+      - name: production dependency audit
+        run: npm audit --omit=dev
   docs:
     runs-on: ubuntu-latest
     permissions:

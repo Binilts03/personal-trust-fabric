@@ -1,4 +1,4 @@
-# Architecture brief (v0.1 + prod slice)
+# Architecture brief (reference implementation and production targets)
 
 PTF is a personal authority and protected-use layer for agentic systems:
 a secure vault, authority engine, selective-disclosure broker, and protected
