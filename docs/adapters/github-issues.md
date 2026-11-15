@@ -20,11 +20,7 @@ A production host must explicitly determine who controls that recipient key.
 ## Integration in the trusted host
 
 ```ts
-import {
-  createGitHubIssueProvider,
-  githubIssueOutcomeQuery,
-} from "personal-trust-fabric/adapters/github-issues";
-import { createPtfServer } from "personal-trust-fabric/mcp";
+import { createGitHubIssueProvider } from "personal-trust-fabric/adapters/github-issues";
 
 // The repo and token are fixed by a trusted host, never selected by an agent.
 const provider = createGitHubIssueProvider({
@@ -34,11 +30,8 @@ const provider = createGitHubIssueProvider({
 
 // Supply this provider as part of an exact /github/issues/create registration
 // with an effect-bearing validator and trusted processing policy.
-// createPtfServer({ ...hostOptions, registeredActions: [registration] })
-// is the MCP embedding seam. This snippet itself never sends an issue.
-void provider;
-void createPtfServer;
-void githubIssueOutcomeQuery;
+// Create a trusted action registration and pass it to createPtfServer.
+// This example only constructs the provider; it does not submit an issue.
 ```
 
 This is **adapter wiring**, not an independently authenticated host. The embedding host must validate repository, recipient, action, title and body, configure applicable privacy processing, authenticate ingress, verify recipient proof and route execution through Host Kit. See `tests/mcp-registered-actions.test.ts` for the exercised controlled-HTTP path. Never call `provider.submit`

@@ -33,9 +33,10 @@ re-exported from the curated root barrel.
 
 **Integration sketch, not a copy-paste quickstart.** This assumes the
 host has already constructed `storeDir`, `keys`, `auth`, verified
-`ingress`, `demand`, `config`, a provider and a redemption. It also
-assumes the host implements `runTheEffect` and routes **every relevant
-effect path** through this boundary. To try PTF without those
+`ingress`, `demand`, `config`, a provider and a proof-verified redemption.
+It assumes the host routes **every relevant effect path** through the
+boundary. The provider is executed through the journal; do not supply an
+additional callback that will be bypassed by the provider mode. To try PTF without those
 prerequisites, start with [Getting Started]({{ '/getting-started/' | relative_url }}).
 
 ```ts
@@ -62,13 +63,9 @@ const boundary = createEffectBoundary({
   runtime,
   gate,
   now: () => Math.floor(Date.now() / 1000),
-  authorizedContext: { amount: 100, currency: "INR", recipient: "shop" },
+  authorizedContext: redemption.operation.args,
   provider,
   redemption,
-  execute: async (ctx) => {
-    ctx.markEffectStarted();
-    return await runTheEffect(ctx.operation);
-  },
 });
 
 const decision = await boundary.check();
