@@ -278,4 +278,19 @@ describe("GitHub Issues real REST provider / protected-effect seam", () => {
       "RECONCILED"
     );
   });
+  it("accepts a separately verified, exactly bound recipient without sending it to GitHub", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const p = provider(successFetch(calls));
+    const bound = { ...request(), context: { title: TITLE, body: BODY, recipient: DEST } };
+    const result = await p.submit(bound);
+    assert.equal(result.externalRef, "github:" + REPO + "#23");
+    assert.equal(calls.length, 1);
+    assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { title: TITLE, body: BODY });
+    assert.equal(String(calls[0]!.init.body).includes(DEST), false);
+    await assert.rejects(() => p.submit({
+      ...bound, context: { title: TITLE, body: BODY, recipient: "github:other/repo" },
+    }), /github-issues/);
+    assert.equal(calls.length, 1, "wrong bound recipient must fail before HTTP");
+  });
+
 });

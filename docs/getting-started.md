@@ -117,6 +117,11 @@ store encrypted with it, or intentionally create a separate passphrase and
 store. An existing `./ptf-store` is likewise intentionally not overwritten
 by `init`.
 
+**Optional unified-effect example:** after the first-run CHECK demo, run
+`npm run build && node examples/generic-protected-action.mjs` to exercise a
+local synthetic non-payment provider with the Host Kit. This does not send
+anything to GitHub or another external service.
+
 ## 3. Verify and continue
 
 To run the repository's checks:

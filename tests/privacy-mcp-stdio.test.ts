@@ -644,7 +644,7 @@ describe("opt-in privacy disclosure over stdio", () => {
     assert.equal(events[0]?.evidenceRef, "journal:receipt-1");
   });
 
-  it("reconstructs missing processing evidence from a succeeded journal", async () => {
+  it("reports confirmed payment with missing historical privacy evidence", async () => {
     const { dir, configPath } = setup(true);
     let digest = "";
     await withRpc(
@@ -668,17 +668,17 @@ describe("opt-in privacy disclosure over stdio", () => {
         );
         digest = proposal.termsDigest;
         seedPaymentJournal(dir, digest);
-        // Deliberately no Processing Event: the journal proves the effect,
-        // and recovery must fill the missing evidence rather than deny.
+        // The journal proves the external effect but not historical processing.
+        // The status must be an explicit gap, never fabricated evidence.
         const paid = resultData(
           await call("ptf_redeem", { termsDigest: digest })
         );
         assert.equal(paid.receiptId, "receipt-1");
+        assert.equal(paid.processingEvidence, "gap");
       }
     );
     const events = paymentEventRepo(dir).findByAttempt(digest, digest);
-    assert.equal(events.length, 1);
-    assert.equal(events[0]?.state, "SUCCEEDED");
+    assert.equal(events.length, 0, "current privacy state cannot replace historical proof");
   });
 
   it("recovers a spent single-use payment without consuming again", async () => {

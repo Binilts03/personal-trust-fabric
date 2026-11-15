@@ -55,6 +55,10 @@
     "./hostkit": {
       "types": "./dist/src/hostkit/index.d.ts",
       "default": "./dist/src/hostkit/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/src/mcp/index.d.ts",
+      "default": "./dist/src/mcp/index.js"
     }
   },
   "bin": {
@@ -109,7 +113,8 @@
     "dev-local": "bash scripts/dev-local.sh up",
     "verify:package": "node scripts/verify-package.mjs",
     "prepare": "npm run build && npm run hooks",
-    "hooks": "husky || true"
+    "hooks": "husky || true",
+    "test:examples": "npm run build && node --test dist/tests/example-smoke.test.js"
   },
   "devDependencies": {
     "@types/node": "^26.5.0",

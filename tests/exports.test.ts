@@ -88,6 +88,8 @@ describe("packaged export surface (npm-consumer view)", () => {
 
     const hostkit = packaged("personal-trust-fabric/hostkit");
     callable(hostkit, "createEffectBoundary", "personal-trust-fabric/hostkit");
+    callable(hostkit, "createProtectedEffect", "personal-trust-fabric/hostkit");
+    callable(hostkit, "createHostRedemptionChallenge", "personal-trust-fabric/hostkit");
     callable(hostkit, "runHostConformance", "personal-trust-fabric/hostkit");
     callable(
       hostkit,

@@ -356,7 +356,7 @@ describe("privacy event journal reconciliation", () => {
     assert.equal(events.record.evidenceRef, "journal:receipt-1");
   });
 
-  it("reconstructs a missing event from the current privacy decision", () => {
+  it("does not fabricate historical privacy evidence from current configuration", () => {
     const terms = digestForOperation({
       principal: P,
       actor: A,
@@ -366,7 +366,7 @@ describe("privacy event journal reconciliation", () => {
       purpose: OPERATION.purpose,
     });
     const events = new ReplayEvents(eventRecord("OUTCOME_UNKNOWN", TERMS));
-    // Make the lookup miss, but let prepare return the reconstructed record.
+    // Historical evidence is absent, regardless of what current privacy permits.
     events.findByAttempt = () => [];
     const runtime = runtimeFor(events);
     const result = runtime.reconcileAttemptEvent(gate(), {
@@ -377,8 +377,8 @@ describe("privacy event journal reconciliation", () => {
       preparedAt: NOW - 5,
       createIfMissing: true,
     });
-    assert.equal(result, "finalized");
-    assert.equal(events.record.state, "SUCCEEDED");
+    assert.equal(result, "absent");
+    assert.equal(events.record.state, "OUTCOME_UNKNOWN");
   });
 
   it("reports terminal event conflicts instead of overwriting them", () => {

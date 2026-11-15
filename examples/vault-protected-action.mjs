@@ -21,8 +21,11 @@ import {
   useCredential,
 } from "../dist/src/api.js";
 import {
+  Capabilities,
   Disclose,
   generateEd25519Keypair,
+  leafCidHex,
+  signBytes,
 } from "../dist/src/index.js";
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -185,8 +188,68 @@ const payDigest = digestForOperation({
   context: { amount: 425, currency: "INR", recipient: M },
   purpose: "widgets",
 });
+// The provider may run only after a genuine capability redemption. The
+// challenge is signed by the recipient; a bare success-shaped object is not proof.
+const principalKey = generateEd25519Keypair();
+const merchantKey = generateEd25519Keypair();
+const caps = new Capabilities({
+  resolveKey: (id) =>
+    id === P ? principalKey.publicKeyRaw
+    : id === M ? merchantKey.publicKeyRaw
+    : null,
+  nowSec: () => NOW,
+});
+const cap = caps.issue(
+  null,
+  {
+    iss: P,
+    aud: A,
+    sub: P,
+    cmd: "/pay",
+    pol: [["<=", ".amount", 2000]],
+    purpose: "widgets",
+    resource: "order:7",
+    recipient: M,
+    amountMax: 2000,
+    currency: "INR",
+    exp: NOW + 300,
+    maxUses: 1,
+    termsDigest: payDigest,
+  },
+  principalKey.privateKey
+);
+const cid = leafCidHex(cap);
+const redeemed = caps.redeem(
+  [cap],
+  {
+    cmd: "/pay",
+    args: { amount: 425, currency: "INR" },
+    recipient: M,
+    resource: "order:7",
+    purpose: "widgets",
+    termsDigest: payDigest,
+  },
+  {
+    proof: {
+      key: merchantKey.publicKeyRaw,
+      sig: signBytes(merchantKey.privateKey, Buffer.from(cid, "hex")),
+    },
+  }
+);
+if (!redeemed.ok) throw new Error(`redemption denied: ${redeemed.reason}`);
+const executeDecision = auth.evaluate(
+  {
+    action: { name: "/pay" },
+    resource: { type: "ptf-resource", id: "order:7" },
+    context: { amount: 425, currency: "INR", recipient: M },
+    purpose: "widgets",
+  },
+  ingress,
+  { consume: true, nowSec: NOW }
+);
+if (!executeDecision.allow) throw new Error("payment authority denied");
 const req = {
-  capabilityId: "cid-demo-vault-1",
+  capabilityId: cid,
   termsDigest: payDigest,
   action: "/pay",
   recipient: M,
@@ -194,18 +257,8 @@ const req = {
   purpose: "widgets",
   context: { amount: 425, currency: "INR" },
 };
-const sub = await fakes.payment.submit(req);
-const pin = fakes.payment.verify(sub, {
-  capabilityId: req.capabilityId,
-  termsDigest: req.termsDigest,
-});
-if (!pin.ok) throw new Error(`provider verify denied: ${pin.reason}`);
-const receipt = await executeViaProvider(
-  fakes.payment,
-  req,
-  { ok: true, chainId: req.capabilityId },
-  NOW
-);
+const receipt = await executeViaProvider(fakes.payment, req, redeemed, NOW);
+if (fakes.payment.calls.length !== 1) throw new Error("expected one submit");
 console.log("provider receipt:", receipt.transaction, "->", receipt.recipient);
 
 // Deny case: over-limit pay dry-run fails closed (no authority created).

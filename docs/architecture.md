@@ -75,8 +75,8 @@ PTF separates **who may do what** from **who possesses the secret needed to do i
 | `src/adapters/`               | Protocol translators (evidence → local types)                                                                   |
 | `src/store/vault.ts`          | Encrypted records, purpose-scoped access                                                                        |
 | `src/store/keystore.ts`       | Key management, DEK rotation                                                                                    |
-| `src/store/proposals.ts`      | Durable proposals via file CAS                                                                                  |
-| `src/store/audit.ts`          | Hash-chained audit log                                                                                          |
+| `src/store/challenges.ts`     | Durable proposals via file CAS                                                                                  |
+| `src/store/files.ts`          | File-backed Authority/registry and hash-chained audit log                                                       |
 | `src/profiles/payment.ts`     | Payment-specific bounds, recipients                                                                             |
 | `src/profiles/data.ts`        | Data disclosure profiles                                                                                        |
 | `src/privacy/`                | Optional privacy-control/evidence extension; initial DPDP-informed profile (`mcp.ts` policy, `mcp-host.ts` reference wiring) |
@@ -87,7 +87,7 @@ PTF separates **who may do what** from **who possesses the secret needed to do i
 
 ## Public Seam
 
-All external consumption goes through `src/index.ts` — tests import only from there. Internal modules are not part of the public API.
+The published public surface is the curated `src/api.ts` root plus explicit package export subpaths such as `./hostkit`, `./privacy` and `./providers`. `src/index.ts` is a broad internal/test barrel; do not rely on unpublished deep imports.
 
 ## Verification
 
@@ -100,3 +100,29 @@ bash scripts/harness.sh
 ```
 
 Architecture changes require an ADR in `docs/adr/`.
+
+
+## Reusable protected-effect seam (proposed consolidation)
+
+`src/hostkit/boundary.ts` now exports one
+`createProtectedEffect` ordering implementation plus the compatibility
+`createEffectBoundary` adapter. The trusted host chooses a concrete
+provider or trusted callback, supplies verified actor identity and
+exact effect context, and explicitly selects whether configured privacy
+narrowing is enforced. The `./hostkit` public subpath also offers
+`createHostRedemptionChallenge` for recipient-signed generic operations;
+it wraps the **existing internal** capability format without exposing
+sealed capabilities on the wire.
+
+This is an SDK-level consolidation, not proof that all product entry
+points already use the same orchestrator. MCP payment and trusted-host registered generic effects now share the
+Host Kit protected-effect execution path; payment still has its specialized
+approval and presentation adapter. Disclosure, CLI protected-secret use
+and independently invoked adapters remain separate surfaces, so this
+is not universal interception or enforcement.
+See ADR-0026 and the limits register. DPDP remains an optional
+`PrivacyProfile` and may only narrow already verified Authority.
+
+### Canonical execution ownership
+
+`src/hostkit/boundary.ts` owns the effect ordering for reference MCP payments and trusted-host registered generic actions. `src/store/execution-replay.ts` owns shared read-only exact-term journal classification; `src/privacy/payment-replay.ts` projects payment-specific receipt fields from the same classification, rather than maintaining a separate outcome state machine. `src/mcp/registered-execution.ts` owns proposal validation, recipient-proof challenges, and agent response projection; it delegates actual consumption, privacy fencing, and provider submission to Host Kit. Legacy direct adapters, presentation and operator CLI have their own documented custody boundaries and are not claimed to be universally intercepted.

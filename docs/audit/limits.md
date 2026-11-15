@@ -319,7 +319,7 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   fields and stay uncovered — keep them out of string-typed receipts).
   Raw record access (`VaultStore` internals) is host-only by construction —
   the embedding host already possesses the vault file; the enforced boundary
-  is MCP/CLI, which expose only evaluate-first reads and receipt-only use.
+  is MCP/CLI, which expose evaluate-first reads and receipt-only use. Registered generic MCP providers additionally require explicit host allowlisting and recipient-signed proof.
   Backup honesty: a whole-directory backup holds ciphertext AND the DEK
   (keystore lives in the store dir), so anyone holding a backup can decrypt
   it — protect backup media accordingly. For DEK/file separation (DEK in
@@ -343,7 +343,7 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
   add grants/approvals, never consume uses, never revoke, never expose keys
   or envelopes. `ptf_list_capabilities` shows only grants matching the fixed
   server identity (principal + covering actor selector); revoked and
-  foreign-principal grants are excluded. `ptf_redeem` stays `/pay`-only
+  foreign-principal grants are excluded. By default `ptf_redeem` remains `/pay`-only; exact, trusted-host-registered generic actions can also redeem
   (other actions propose only) and accepts
   any `/pay` proposal in the shared store regardless of originating propose
   tool; disclosures deliver via `ptf_present_data`. Proposals are durable files now (ADR-0017, one per termsDigest =
@@ -411,7 +411,7 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
 - Operator-controlled privacy configuration and the keystore may be compromised; a compromised host can bypass the gate, fabricate evidence and access decrypted state. Local audit chaining cannot prove genuine external execution or independent legal review.
 - Processing Events track PTF-mediated attempts, not enterprise-wide or processor-side processing. An `OUTCOME_UNKNOWN` event cannot be counted as confirmed processing or confirmed non-processing. External systems, backups and independent audit logs need separate retention/erasure controls.
 - **Attempt identity:** `/pay` evidence binds the exact authorized terms digest (one proposal is one effect). `/use` gets a fresh UUID by default, or a caller-supplied retry reference; reusing a retry reference is how a host asks for the same attempt, not a new effect. `/disclose` hashes the verifier nonce into a bounded attempt reference. Correction evidence is derived from the request reference and record versions. A terminal event is never used to start a new external effect: the runtime refuses and directs the caller to journal reconciliation. A finalize failure after an effect leaves the event `PREPARED`/`OUTCOME_UNKNOWN` until a retry reconciles it from the execution journal, which remains the recovery oracle.
-- **Journal-first payment recovery (reference MCP host only):** a retry of the same exact `/pay` terms reads the execution journal before any authority preview, challenge, or consumption, so recovery spends no authority use, mints no second capability, and needs no fresh recipient proof. Limits: the path covers the reference host's `/pay` route only (other hosts must compose the same order themselves); a Processing Event reconstructed after the fact records no authority citation ids when the grant is already spent (the journal receipt is the effect evidence); an unsettled, corrupt, or field-mismatched journal is reported as `outcome_unknown` and needs operator/provider reconciliation; a journal row that was written but never submitted (`PREPARED`/`AUTHORIZED`) is reported as `not_submitted` — the provider was provably never called, so no money moved, but the authority use for that attempt was already spent and cannot be reused, so the attempt needs a new grant and new terms; and because replay reads history rather than authorizing, a later revocation of the grant stops new effects but does not unmake a recorded one. The audit log is append-only and hash-chained, so a replay that lands its audit line and then fails the proposal transition can leave a second `redeem` line for the same transaction (visible duplication, not chain corruption).
+- **Journal-first payment recovery (reference MCP host only):** a retry of the same exact `/pay` terms reads the execution journal before any authority preview, challenge, or consumption, so recovery spends no authority use, mints no second capability, and needs no fresh recipient proof. Limits: the path covers the reference host's `/pay` route only (other hosts must compose the same order themselves); a missing original Processing Event remains an explicit `processingEvidence: "gap"` (the journal receipt is proof of the external effect, not proof of a historical processing basis); an unsettled, corrupt, or field-mismatched journal is reported as `outcome_unknown` and needs operator/provider reconciliation; a journal row that was written but never submitted (`PREPARED`/`AUTHORIZED`) is reported as `not_submitted` — the provider was provably never called, so no money moved, but the authority use for that attempt was already spent and cannot be reused, so the attempt needs a new grant and new terms; and because replay reads history rather than authorizing, a later revocation of the grant stops new effects but does not unmake a recorded one. The audit log is append-only and hash-chained, so a replay that lands its audit line and then fails the proposal transition can leave a second `redeem` line for the same transaction (visible duplication, not chain corruption).
 - **Journal and event scan cost:** the journal replay resolves a record by an O(n) directory scan of `<storeDir>/executions` (every record is read, parsed, and validated), and the Processing Event lookup (`findByAttempt`) decrypts every event file. Both run on a `/pay` retry and on the read-only status tools for a non-terminal proposal; a terminal proposal short-circuits before the scan. The file event store has the same O(n) encrypted-scan shape (see the operational-capacity entry above). At the documented 5,000-record caps this is the dominant cost of those calls, so the status tools are not suitable for high-frequency polling; an indexed journal (key -> record) is a P4 item.
 
 - Retention holds are operator asserted and do not create processing authority. PTF does not infer legal retention periods or automatically delete external copies/backups. DSAR coverage, breach detection/notification, processor contracts, transfers, children's verification, grievance handling, DPIA/independent audit and registered statutory Consent Manager obligations remain outside this subsystem.
@@ -429,3 +429,36 @@ SUBMITTED_UNKNOWN / RECONCILED`) with proposal-anchored idempotency keys
 - **Enforcement diagnostics:** `privacy verify` can verify local encrypted stores and configured reference-host input, and reports gated, denied and uncovered paths. It cannot attest that a running external process is executing the privacy wrapper. Operators must prove the actual tool/provider boundary with end-to-end tests and deployment logs.
 
 See [DPDP profile](../privacy/dpdp.md) for a precisely scoped operator setup and legal source links.
+
+
+## Domain-neutral Host Kit consolidation (branch candidate)
+
+- `createProtectedEffect` supports an explicit non-privacy reference
+  host and privacy-enforced processing; this is **not** a global interceptor.
+  A host using `not-enforced` asserts its own processing applicability.
+  The SDK cannot attest legal/organisational applicability, prevent a
+  malicious host from selecting the wrong mode, or secure host-owned
+  callbacks against exfiltration.
+- Generic `createHostRedemptionChallenge` issues a local, short-lived,
+  one-use signed capability **inside the trusted host**; it does not
+  prove external recipient registration or automatically enable MCP generic actions; trusted-host registration is mandatory. The SDK expects correct host
+  identity/key custody and exact, independently authorized Authority
+  context. Local `Capabilities` use is not a durable distributed proof
+  ledger; Authority uses still require durable persistence.
+- The reference MCP server now routes registered generic effects and
+  payments through the shared protected-effect boundary, with journal-first
+  replay before attempting live use. Unregistered generic requests remain
+  non-executable. Conclusive execution with missing processing evidence is
+  reported as an evidence gap, never as an unknown provider outcome.
+  This is not a distributed exactly-once guarantee.
+  `./hostkit` provider submission checks a previously completed or ambiguous exact-term journal entry before spending live Authority. This is **not** a distributed exactly-once guarantee: store single-writer assumptions, provider idempotency behavior, external query/reconciliation and a narrow gap between privacy fencing and external effects remain.
+  Never retry an unknown outcome without reconciling the effect.
+- Existing `/pay` amount/currency guardrails remain in
+  `src/core/authority.ts` and in local capability validation.
+  These are intentional compatibility protections. Deleting them
+  before all direct/restore/MCP/CLI call paths prove equivalent denial
+  would weaken security.
+- No live email/payment/DPDP integrations are attested by the new
+  synthetic examples, and no statement here certifies legal compliance.
+
+- **Registered MCP action limitations:** Only exact host-side registrations are executable. The built-in reference email provider and local stdio integrations are synthetic and single-operator. The host validator, private-body resolution, secret custody and regulatory processing classification remain trusted application responsibilities; a malicious trusted host can still leak values. The SDK is not a universal interceptor or a DPDP compliance certification. A completed journal entry is durable effect evidence even if its original Processing Event is missing; it is never manufactured retroactively. A `processingEvidence: "gap"` response must trigger a separate operator reconciliation. Audit rows may duplicate across journal-recovery retries; the effect must not repeat.

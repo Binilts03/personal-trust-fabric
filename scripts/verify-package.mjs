@@ -141,6 +141,39 @@ if (installCheck) {
         `the installed package does not export the curated entry point: ${out.trim()}`
       );
     }
+    // Consumer must be able to embed the registered-action MCP server using
+    // an advertised public entry point, not a source/deep import.
+    const mcpProbe = join(consumer, "mcp-public-probe.mjs");
+    writeFileSync(mcpProbe, [
+      'import { createPtfServer, validateOpaqueEmailAction } from "personal-trust-fabric/mcp";',
+      'if (typeof createPtfServer !== "function" || typeof validateOpaqueEmailAction !== "function") process.exit(1);',
+      'const server = createPtfServer({ dir: "./scratch", env: {}, principal: "p", actor: "a" });',
+      'await server.close();',
+      'console.log("mcp public import: ok");'
+    ].join("\n"));
+    const mcpOut = execFileSync(process.execPath, [mcpProbe], {
+      cwd: consumer, encoding: "utf8",
+    });
+    if (!mcpOut.includes("mcp public import: ok"))
+      fail("packed installed MCP module cannot be embedded");
+    // Copy the real third-domain example INTO the fresh consumer. Executing
+    // it from the source tree would accidentally resolve local dist instead
+    // of the packed installation and invalidate this check.
+    const genericProbe = join(consumer, "generic-protected-action.mjs");
+    writeFileSync(
+      genericProbe,
+      readFileSync(join(root, "examples/generic-protected-action.mjs"), "utf8")
+    );
+    const genericOutput = execFileSync(process.execPath, [genericProbe], {
+      cwd: consumer,
+      encoding: "utf8",
+    });
+    if (!genericOutput.includes("email receipt:") ||
+        genericOutput.includes("PRIVATE KEY") ||
+        genericOutput.includes("PAN-SECRET")) {
+      fail("packed consumer generic protected action failed or leaked sensitive output");
+    }
+
   } catch (error) {
     fail(`the tarball does not install and import: ${error.message}`);
   } finally {

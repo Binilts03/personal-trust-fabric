@@ -21,6 +21,7 @@ jobs:
       - run: npm run check:brand
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:examples
       - run: npm run eval
       # One implementation shared with scripts/harness.sh: seam rules cannot drift.
       - name: seam + zero-dep checks (tests via public barrel; bins exempt)
