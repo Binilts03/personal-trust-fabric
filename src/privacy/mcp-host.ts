@@ -164,15 +164,14 @@ export function replayPaymentAttempt(opts: {
         config: opts.config,
         now: opts.now,
       });
-      scoped.runtime.reconcileAttemptEvent(scoped.gate, {
+      const status = scoped.runtime.reconcileAttemptEvent(scoped.gate, {
         termsDigest,
         attemptRef: termsDigest,
         state: "SUCCEEDED",
         finalizedAt: replay.receipt.at,
         evidenceRef: `journal:${replay.receipt.receiptId}`,
-        preparedAt: replay.record.createdAt,
-        createIfMissing: true,
       });
+      if (status === "absent") evidence = "gap";;
     } catch (error) {
       if (error instanceof PrivacyEventConflictError) {
         return { kind: "evidence_conflict", state: error.state };

@@ -891,7 +891,9 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     if (outcome.kind === "evidence_conflict") {
       return privacyEvidenceConflictResult(input.termsDigest, outcome.state);
     }
-    const receipt = outcome.receipt as unknown as Record<string, unknown>;
+    const receipt: Record<string, unknown> = outcome.evidence === "gap"
+      ? { ...outcome.receipt, processingEvidence: "gap" }
+      : { ...outcome.receipt };
     // Store-revision bindings keep the rollback detector honest in exactly
     // the window this recovery path exists for: the effect happened, so the
     // authority revision that covered it must stay referenced.
@@ -932,7 +934,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       recoverExecutedProposal(
         opts.dir,
         input.termsDigest,
-        outcome.receipt,
+        receipt,
         now()
       );
     } catch {
