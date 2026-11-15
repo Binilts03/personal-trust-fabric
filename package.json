@@ -35,6 +35,10 @@
       "types": "./dist/src/adapters/http-provider.d.ts",
       "default": "./dist/src/adapters/http-provider.js"
     },
+    "./adapters/github-issues": {
+      "types": "./dist/src/adapters/github-issues.d.ts",
+      "default": "./dist/src/adapters/github-issues.js"
+    },
     "./adapters/x402": {
       "types": "./dist/src/adapters/x402-provider.d.ts",
       "default": "./dist/src/adapters/x402-provider.js"

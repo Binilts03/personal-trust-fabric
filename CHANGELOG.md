@@ -6,6 +6,8 @@ release day. This project adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+- **Integration:** opt-in GitHub Issues provider using actual REST POST, a fixed repository and host-held token. Strict response binding and conservative unknown-outcome quarantine; offline negative tests exercise the journal and network seam. No live GitHub issue or security certification is claimed.
+
 ### Documentation
 
 - Aligned first-run documentation on the tested, effect-free Authority demo, added `npm run demo`, and documented a falsifiable host-integration/baseline/adoption validation protocol. No new security guarantees or live effects.
