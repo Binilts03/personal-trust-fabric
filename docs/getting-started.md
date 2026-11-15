@@ -23,14 +23,16 @@ From a terminal:
 git clone https://github.com/Binilts03/personal-trust-fabric.git
 cd personal-trust-fabric
 npm ci
-npm run build
-node examples/payment-disclosure.mjs
+npm run demo
 ```
 
-The script exercises a bounded, synthetic payment using a fake executor and
-a minimal data disclosure. No passphrase, external credentials, real money or
-agent-host configuration is needed. See [use cases]({{ '/use-cases/' | relative_url }})
-for other *offline* examples.
+This tested first-run script checks one permitted operation and denies both
+another actor and a modified recipient. It performs no external action and
+consumes no authority. No credentials, passphrase, real money or agent-host
+configuration are needed. For separate *offline* synthetic payment/disclosure
+examples see [use cases]({{ '/use-cases/' | relative_url }}). The
+[adoption-validation protocol]({{ '/adoption-validation/' | relative_url }})
+explains the additional evidence required for a real host integration.
 
 The `ptf` **operator CLI** is also available from this checkout:
 
