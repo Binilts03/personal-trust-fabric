@@ -219,7 +219,10 @@ from applicable privacy obligations. No implicit or missing processing
 mode can silently disable privacy.
 
 The new `privacyEventId` receipt property is emitted only when privacy
-evidence actually exists. The older `createEffectBoundary` API still
+evidence actually exists. A journal-confirmed effect with a missing original
+Processing Event is reported as `processingEvidence: "gap"`, not recreated
+using today's privacy configuration or submitted to the provider again.
+The trusted host must investigate the processing-evidence gap separately. The older `createEffectBoundary` API still
 always requires privacy and retains its historical `eventId` receipt
 property for its consumers. Do not treat the older path as automatically
 enforcing every other host's effects.

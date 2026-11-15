@@ -11,7 +11,11 @@ This adapter uses the real GitHub `POST /repos/{owner}/{repo}/issues` API
 and the existing PTF `ProtectedProvider` and `executeWithJournal` seams.
 The **trusted host** must authenticate the caller, validate a recipient proof,
 consume and persist bounded authorization **before** the effect, and retain
-the scoped GitHub token. The agent never receives the credential.
+the scoped GitHub token. The agent never receives the credential. For registered MCP operation tests,
+the `github:OWNER/REPO` recipient proof uses a **locally provisioned PTF key**.
+GitHub does not sign PTF recipient challenges; that proof establishes the
+host's local enrollment, not independent GitHub consent or attestation.
+A production host must explicitly determine who controls that recipient key.
 
 ## Integration in the trusted host
 
