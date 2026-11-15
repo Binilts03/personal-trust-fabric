@@ -117,10 +117,11 @@ store encrypted with it, or intentionally create a separate passphrase and
 store. An existing `./ptf-store` is likewise intentionally not overwritten
 by `init`.
 
-**Optional unified-effect example:** after the first-run CHECK demo, run
+**Unified-effect example on `main`:** after the first-run CHECK demo, run
 `npm run build && node examples/generic-protected-action.mjs` to exercise a
 local synthetic non-payment provider with the Host Kit. This does not send
-anything to GitHub or another external service.
+anything to GitHub or another external service. Registered MCP GitHub action
+tests use injected HTTP and do not establish independent live-provider UAT.
 
 ## 3. Verify and continue
 
