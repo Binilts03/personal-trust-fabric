@@ -130,15 +130,14 @@ export class RegisteredActionExecutor {
       let processingEvidence: "finalized" | "gap" = "finalized";
       if (processing.kind === "enforced") {
         try {
-          processing.runtime.reconcileAttemptEvent(processing.gate, {
+          const evidence = processing.runtime.reconcileAttemptEvent(processing.gate, {
             termsDigest: args.termsDigest,
             attemptRef: args.termsDigest,
             state: "SUCCEEDED",
             finalizedAt: journal.receipt.at,
             evidenceRef: "execution-receipt:" + journal.receipt.receiptId,
-            preparedAt: journal.record.createdAt,
-            createIfMissing: true,
           });
+          if (evidence === "absent") processingEvidence = "gap";
         } catch {
           // The journal conclusively proves external success; missing privacy
           // evidence is an operator-visible gap, not an unknown provider outcome.

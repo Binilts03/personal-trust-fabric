@@ -184,7 +184,11 @@ export interface ProtectedEffectOptions {
   readonly attemptRef?: string;
 }
 
-export type ProtectedEffectReceipt = Omit<HostEffectReceipt, "eventId"> & { readonly privacyEventId?: string };
+export type ProtectedEffectReceipt = Omit<HostEffectReceipt, "eventId"> & {
+  readonly privacyEventId?: string;
+  /** The effect was confirmed but original processing evidence is missing. */
+  readonly processingEvidence?: "gap";
+};
 export interface ProtectedEffect {
   check(): Promise<HostEffectDecision>;
   run(): Promise<ProtectedEffectReceipt>;
@@ -261,6 +265,7 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
       raw.resource !== operation.resource.id ||
       raw.purpose !== (operation.purpose ?? "") ||
       raw.termsDigest !== digest ||
+      (redemption !== undefined && raw.capabilityId !== redemption.chainId) ||
       (operation.context["recipient"] !== undefined &&
        raw.recipient !== operation.context["recipient"])
     )) {
@@ -277,7 +282,7 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
       termsDigest: digest,
       at: raw?.at ?? now(),
       ...(authorityId !== undefined ? { authorityId } : {}),
-      ...(redemption !== undefined ? { capabilityId: raw?.capabilityId ?? redemption.chainId } : {}),
+      ...(redemption !== undefined ? { capabilityId: redemption.chainId } : {}),
       ...(transaction !== undefined ? { transaction } : {}),
       ...(eventId !== undefined ? { privacyEventId: eventId } : {}),
     };
@@ -338,25 +343,26 @@ export function createProtectedEffect(opts: ProtectedEffectOptions): ProtectedEf
         });
         if (journal.kind === "succeeded") {
           if (processing.kind === "enforced") {
-            // A privacy-backed attempt cannot report success until its event
-            // is reconciled. Missing/unverifiable evidence is an unknown,
-            // not a silent downgrade to an unregulated successful receipt.
+            // An established external effect must not be reclassified as
+            // provider-unknown because its independent evidence is missing.
+            // Do not create a historical event from present-day privacy state.
+            const attemptRef = opts.attemptRef ?? digest;
             try {
-              const attemptRef = opts.attemptRef ?? digest;
-              processing.runtime.reconcileAttemptEvent(processing.gate, {
+              const evidence = processing.runtime.reconcileAttemptEvent(processing.gate, {
                 termsDigest: digest,
                 attemptRef,
                 state: "SUCCEEDED",
                 finalizedAt: journal.receipt.at,
                 evidenceRef: "execution-receipt:" + journal.receipt.receiptId,
-                preparedAt: journal.record.createdAt,
-                createIfMissing: true
               });
-              const eventId = processing.runtime.reconciledEventId(processing.gate, digest, attemptRef);
-              return project(journal.receipt, digest, eventId, undefined);
-            } catch (error) {
-              throw new ProtectedEffectOutcomeUnknownError(error);
+              if (evidence === "finalized") {
+                const eventId = processing.runtime.reconciledEventId(processing.gate, digest, attemptRef);
+                return project(journal.receipt, digest, eventId, undefined);
+              }
+            } catch {
+              // Confirmed provider outcome stays known; the evidence is a gap.
             }
+            return { ...project(journal.receipt, digest, undefined, undefined), processingEvidence: "gap" };
           }
           return project(journal.receipt, digest, undefined, undefined);
         }

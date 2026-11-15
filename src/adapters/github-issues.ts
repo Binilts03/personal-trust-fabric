@@ -22,7 +22,8 @@ function exactIssue(req: ProviderRequest, repository: string): { readonly title:
   }
   const c = req.context;
   if (
-    Object.keys(c).sort().join(",") !== "body,title" ||
+    !["body,title", "body,recipient,title"].includes(Object.keys(c).sort().join(",")) ||
+    ("recipient" in c && c["recipient"] !== req.recipient) ||
     typeof c["title"] !== "string" || c["title"].length === 0 || c["title"].length > 256 ||
     typeof c["body"] !== "string" || c["body"].length === 0 || c["body"].length > 4096
   ) {

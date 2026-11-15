@@ -48,7 +48,9 @@ repo, title, body, action or recipient requires new authorization.
 
 ## Effect and failure boundaries
 
-- Only `title` and `body` are sent as effect-bearing fields. The
+- Only `title` and `body` are sent as effect-bearing fields. A trusted
+  MCP host may also bind `context.recipient` to the exact `req.recipient`;
+  it is verified but never transmitted as an issue field. The
   repository is fixed by the trusted host. Labels, assignees, arbitrary
   URLs and extra arguments are rejected.
 - Redirects are refused, responses are capped, POSTs have a deadline, and
