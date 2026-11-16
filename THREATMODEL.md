@@ -210,10 +210,12 @@ to equal the proposal key.
 The server speaks for ONE fixed identity (`PTF_MCP_PRINCIPAL` /
 `PTF_MCP_ACTOR` → `source: "local-registration"`,
 `proofRef: "stdio:<storeDir>"`). Tool inputs carry NO identity fields
-(self-certification impossible). 9 tools: `ptf_propose`, `ptf_check`,
-`ptf_redeem` (/pay only), `ptf_request_data`, `ptf_present_data`,
-`ptf_request_action`, `ptf_get_receipt`, `ptf_list_capabilities`,
-`ptf_revoke`. There is deliberately NO approve tool: approval happens
+(self-certification impossible). 10 tools: `ptf_authenticate` (registry
+mode: challenge then signature-bound session; the fixed-identity server
+needs none), `ptf_propose`, `ptf_check`, `ptf_redeem` (pending `/pay`
+proposals and trusted-host-registered generic actions), `ptf_request_data`,
+`ptf_present_data`, `ptf_request_action`, `ptf_get_receipt`,
+`ptf_list_capabilities`, `ptf_revoke`. There is deliberately NO approve tool: approval happens
 human-side (CLI) or ahead of time (standing grants) — the server only spends
 what already exists. `ptf_revoke` is request-only (returns `requested:true` +
 the human command; authority untouched). `ptf_list_capabilities` shows only
