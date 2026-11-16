@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveMcpPrivacyConfig } from "../privacy/mcp.js";
-import { loadPrivacyStore } from "../store/privacy.js";
 import { runHostConformance } from "../hostkit/conformance.js";
 import { optional, readJson } from "./privacy-shared.js";
 import { loadHostBoundary } from "./load-host-boundary.js";
@@ -12,20 +11,26 @@ import { loadHostBoundary } from "./load-host-boundary.js";
  *
  * It runs the host kit's conformance checks and prints one line per check.
  * The checks need their own stores, so they run in a scratch directory: the
- * operator's store is read, never written. Nothing here reaches the
- * network.
+ * operator's store is not read at all, and nothing here reaches the network.
  *
  * With `--boundary MODULE` the checks run against the ADOPTER's composition
  * instead of the kit's reference one — that is what turns this command from
  * a self-test of the kit into a gate a host can put in its own CI. The
  * boundary under test is always named in the output, so a green run is
  * attributable.
+ *
+ * Trust: the module the operator names is executed in this process, so this
+ * process must not hold anything the checks do not need. The checks seed
+ * their own encrypted stores in a scratch directory with their own key, so
+ * the command deliberately does NOT open the operator's keystore and does NOT
+ * decrypt the operator's privacy state. The adoption gate can therefore run in
+ * CI without the operator's passphrase, and an adopter's module never runs
+ * beside decrypted operator material.
  */
 
 export interface HostConformanceCliContext {
   readonly dir: string;
   readonly flags: Record<string, string | boolean>;
-  readonly keys: Record<string, Uint8Array>;
   readonly io: {
     readonly now: () => number;
     readonly print: (line: string) => void;
@@ -41,14 +46,8 @@ export async function runHostConformanceCommand(
   }
   const config = resolveMcpPrivacyConfig(readJson(configPath));
 
-  // The kit needs a place to keep the evidence: the store must be readable
-  // and its privacy state must decrypt before any check is meaningful.
-  const store = loadPrivacyStore(ctx.dir, {
-    keys: ctx.keys,
-    nowSec: ctx.io.now,
-  });
   ctx.io.print(
-    `store: ${ctx.dir} (privacy state loaded, revision ${store.loadedRevision()})`
+    "store: not read (the checks use their own encrypted scratch stores; your keystore and privacy state are never decrypted here)"
   );
   ctx.io.print(
     `operator configuration: valid (recipient roles: ${Object.keys(config.recipientRoles).length}, /pay categories: ${(config.actionCategories?.["/pay"] ?? []).length})`

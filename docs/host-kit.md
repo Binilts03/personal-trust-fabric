@@ -147,8 +147,9 @@ dry-run-has-no-effect  PASS  ADR-0018: CHECK != REDEEM != EXECUTE - a dry-run re
 ```
 
 The exit code is `0` only when every check passes. The checks use a scratch
-directory: the operator's store is read, never written, and nothing reaches
-the network.
+directory: the operator's store is not read at all, their keystore is never
+decrypted and nothing reaches the network. The command needs no passphrase,
+so the gate runs in CI without an operator secret.
 
 Without `--boundary` the command tests the **shipped reference boundary** —
 the kit's own composition. That proves the kit still works; it says nothing

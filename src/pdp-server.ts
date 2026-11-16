@@ -88,6 +88,7 @@ import type { VerifiedIdentity } from "./core/authority.js";
 import { AUTHORITY_DENY_REASONS } from "./core/authority.js";
 import { loadAuthority } from "./store/files.js";
 import { isTerminal, listExecutions } from "./store/execution.js";
+import { packageVersion } from "./version.js";
 
 interface PdpKey {
   readonly id: string;
@@ -160,11 +161,14 @@ function statOf(
 }
 
 /**
- * Bin version for `GET /healthz`. Drift against `package.json` fails
- * `tests/operations.test.ts` (healthz contract), so the sync is
- * test-enforced, not by hand.
+ * Bin version for `GET /healthz`. It is the package's own metadata, read at
+ * runtime, so the health endpoint cannot drift from the package that serves
+ * it. `tests/operations.test.ts` (healthz contract) and
+ * `tests/version.test.ts` pin it against `package.json`.
  */
-const PTF_PDP_VERSION = "0.2.0-rc.1";
+function pdpVersion(): string {
+  return packageVersion();
+}
 
 function loadKeysThrowing(file: string): readonly PdpKey[] {
   let raw: string;
@@ -425,7 +429,7 @@ function main(): void {
         sendJson(res, 405, { error: "method not allowed" }, rid);
         return;
       }
-      sendJson(res, 200, { ok: true, version: PTF_PDP_VERSION }, rid);
+      sendJson(res, 200, { ok: true, version: pdpVersion() }, rid);
       return;
     }
     if (path === "/readyz") {

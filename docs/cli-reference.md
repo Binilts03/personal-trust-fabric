@@ -91,8 +91,10 @@ transfers funds.
 [DPDP privacy profile]({{ '/privacy/dpdp/' | relative_url }}) before
 mutating privacy state.
 
-The `host-conformance` command requires an initialized store, a keystore,
-initialized privacy state and a valid host privacy-config JSON file. Without
+The `host-conformance` command requires only a valid host privacy-config JSON
+file: the checks seed their own encrypted scratch stores, so the command does
+not open your store, does not decrypt your keystore and does not need a
+passphrase — the gate can run in CI without any operator secret. Without
 `--boundary` its results cover the **reference boundary**; with `--boundary
 MODULE` (a module exporting `boundary`) they cover the **adopter's own
 composition**, which is what makes the command usable as a CI gate. Either

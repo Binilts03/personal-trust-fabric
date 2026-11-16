@@ -1,6 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -392,6 +398,59 @@ describe("host-conformance --boundary (the adopter is the thing under test)", ()
       assert.match(text, /9\/9 checks passed/);
     } finally {
       process.chdir(originalCwd);
+      rmSync(h.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs without the operator's store, keystore or passphrase", async () => {
+    // Trust exposure: the module the operator names is executed in this
+    // process, so the process must not hold anything the checks do not need.
+    // The checks seed their own encrypted scratch stores, so the operator's
+    // keystore is never opened and their privacy state is never decrypted.
+    const h = harness();
+    try {
+      const cfg = join(h.dir, "privacy-config.json");
+      writeFileSync(cfg, JSON.stringify(CONFIG));
+
+      const code = await run(
+        [
+          "--dir",
+          join(h.dir, "no-store-here"),
+          "host-conformance",
+          "--privacy-config",
+          cfg,
+        ],
+        h.io,
+        {}
+      );
+      const text = h.out.join("\n");
+      assert.equal(code, 0, `expected a passing run; output was:\n${text}`);
+      assert.match(text, /9\/9 checks passed/);
+      assert.match(text, /store: not read/);
+      // Nothing was created in the operator's store directory.
+      assert.equal(existsSync(join(h.dir, "no-store-here")), false);
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not decrypt the operator's keystore to run the checks", async () => {
+    // A store that exists but whose keystore cannot be opened (no
+    // passphrase) must not stop the gate: the checks never use it.
+    const h = harness();
+    try {
+      const dir = await initScratch(h);
+      const cfg = configFile(dir);
+
+      const code = await run(
+        ["--dir", dir, "host-conformance", "--privacy-config", cfg],
+        h.io,
+        {}
+      );
+      const text = h.out.join("\n");
+      assert.equal(code, 0, `expected a passing run; output was:\n${text}`);
+      assert.match(text, /9\/9 checks passed/);
+    } finally {
       rmSync(h.dir, { recursive: true, force: true });
     }
   });

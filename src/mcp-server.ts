@@ -33,8 +33,14 @@ import {
 } from "./index.js";
 import { readFileSync } from "node:fs";
 import { RegisteredActionExecutor } from "./mcp/registered-execution.js";
-import { registeredActionMap, type RegisteredAction } from "./mcp/registered-actions.js";
-import { createProtectedEffect, ProtectedEffectOutcomeUnknownError } from "./hostkit/index.js";
+import {
+  registeredActionMap,
+  type RegisteredAction,
+} from "./mcp/registered-actions.js";
+import {
+  createProtectedEffect,
+  ProtectedEffectOutcomeUnknownError,
+} from "./hostkit/index.js";
 import type { KeyObject } from "node:crypto";
 import { requestData, requestExecution } from "./profiles/data.js";
 import {
@@ -71,6 +77,7 @@ import type {
   SealedCapability,
   VerifiedIdentity,
 } from "./index.js";
+import { packageVersion } from "./version.js";
 
 /**
  * PTF MCP server (prod-04): the LLM-facing side of the harness (ADR-0007).
@@ -365,7 +372,8 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
   const executor = opts.executor ?? new FakePaymentExecutor();
   const registeredActions = registeredActionMap(opts.registeredActions ?? []);
   const registeredExecutor = new RegisteredActionExecutor({
-    dir: opts.dir, now,
+    dir: opts.dir,
+    now,
     privacyConfigured: opts.privacy !== undefined,
     actions: registeredActions,
     resolveKey: resolveKeyWithLocalFallback,
@@ -482,7 +490,9 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
 
   const server = new McpServer({
     name: "personal-trust-fabric",
-    version: "0.1.0",
+    // The package's own metadata, so the server cannot advertise a version
+    // the package does not carry.
+    version: packageVersion(),
   });
 
   /** One routing hook; policy construction lives in privacy/mcp-host.ts. */
@@ -675,16 +685,21 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     const found = readStored(digest);
     if (found !== null) {
       const ingress = resolveIngress();
-      if (found.demand.principal !== ingress.principal || found.demand.actor !== ingress.id) {
+      if (
+        found.demand.principal !== ingress.principal ||
+        found.demand.actor !== ingress.id
+      ) {
         fail("proposal identity mismatch");
       }
     }
-    return { content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(proposalStatusPayload(digest), null, 2),
-      },
-    ] };
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(proposalStatusPayload(digest), null, 2),
+        },
+      ],
+    };
   };
 
   /**
@@ -891,9 +906,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
     if (outcome.kind === "evidence_conflict") {
       return privacyEvidenceConflictResult(input.termsDigest, outcome.state);
     }
-    const receipt: Record<string, unknown> = outcome.evidence === "gap"
-      ? { ...outcome.receipt, processingEvidence: "gap" }
-      : { ...outcome.receipt };
+    const receipt: Record<string, unknown> =
+      outcome.evidence === "gap"
+        ? { ...outcome.receipt, processingEvidence: "gap" }
+        : { ...outcome.receipt };
     // Store-revision bindings keep the rollback detector honest in exactly
     // the window this recovery path exists for: the effect happened, so the
     // authority revision that covered it must stay referenced.
@@ -931,12 +947,7 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           ? { stateRevisions: { privacy: revision } }
           : {}),
       });
-      recoverExecutedProposal(
-        opts.dir,
-        input.termsDigest,
-        receipt,
-        now()
-      );
+      recoverExecutedProposal(opts.dir, input.termsDigest, receipt, now());
     } catch {
       // The journal still proves the effect; leave the proposal pending for
       // another idempotent replay instead of reporting a denial.
@@ -1227,8 +1238,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       prunePending();
       const proposal = requireStored(args.termsDigest);
       const ingress = resolveIngress();
-      if (proposal.demand.principal !== ingress.principal ||
-          proposal.demand.actor !== ingress.id) {
+      if (
+        proposal.demand.principal !== ingress.principal ||
+        proposal.demand.actor !== ingress.id
+      ) {
         fail("proposal identity mismatch");
       }
       if (proposal.demand.action.name !== "/pay") {
@@ -1359,13 +1372,23 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       // precommit/fence, CAS persistence, and the durable provider journal.
       let processing;
       if (opts.privacy === undefined) {
-        processing = { kind: "not-enforced" as const,
-          reason: "no-host-privacy-profile-configured" as const };
+        processing = {
+          kind: "not-enforced" as const,
+          reason: "no-host-privacy-profile-configured" as const,
+        };
       } else {
         try {
-          const scoped = privacyForConfiguredOperation(keys, auth, ingress, demand);
-          processing = { kind: "enforced" as const,
-            runtime: scoped.runtime, gate: scoped.gate };
+          const scoped = privacyForConfiguredOperation(
+            keys,
+            auth,
+            ingress,
+            demand
+          );
+          processing = {
+            kind: "enforced" as const,
+            runtime: scoped.runtime,
+            gate: scoped.gate,
+          };
         } catch {
           markDenied(args.termsDigest);
           fail("privacy denied");
@@ -1375,22 +1398,27 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       try {
         journaled = await createProtectedEffect({
           dir: opts.dir,
-          auth, ingress, operation: op,
+          auth,
+          ingress,
+          operation: op,
           // Legacy payment capabilities sign amount/currency in args and
           // sign recipient separately. The boundary reconstructs exactly
           // the original operation context from those two signed fields.
           authorizedContext: redeemed.operation.args,
-          now, processing,
+          now,
+          processing,
           effect: {
             kind: "provider",
             provider: executorAsProvider(executor, "payment", now),
-            redemption: redeemed
+            redemption: redeemed,
           },
-          attemptRef: args.termsDigest
+          attemptRef: args.termsDigest,
         }).run();
       } catch (error) {
-        if (error instanceof PrivacyOutcomeUnknownError ||
-            error instanceof ProtectedEffectOutcomeUnknownError) {
+        if (
+          error instanceof PrivacyOutcomeUnknownError ||
+          error instanceof ProtectedEffectOutcomeUnknownError
+        ) {
           return paymentJournalUnsettledResult(args.termsDigest);
         }
         if (error instanceof PrivacyEventConflictError) {
@@ -1405,8 +1433,10 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
       const consumedAuthorityId = journaled.authorityId;
       const executedCapabilityId = journaled.capabilityId;
       const executedTransaction = journaled.transaction;
-      if (executedCapabilityId === undefined ||
-          executedTransaction === undefined) {
+      if (
+        executedCapabilityId === undefined ||
+        executedTransaction === undefined
+      ) {
         // A completed effect with no complete receipt is an unknown outcome,
         // never a reason to retry with a fresh payment.
         return paymentJournalUnsettledResult(args.termsDigest);
@@ -1793,7 +1823,8 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
           `request_action rejected: ${err instanceof Error ? err.message : String(err)}`
         );
       }
-      const allowed = out.decision.allow &&
+      const allowed =
+        out.decision.allow &&
         registeredExecutor.proposalAllowed(out.demand, ingress, auth);
       recordProposal(out.digest, out.demand, allowed);
       return {
@@ -1809,7 +1840,9 @@ export function createPtfServer(opts: PtfServerOptions): McpServer {
                   }
                 : {
                     allowed: false,
-                    reason: out.decision.allow ? "registered action denied" : out.decision.reason,
+                    reason: out.decision.allow
+                      ? "registered action denied"
+                      : out.decision.reason,
                     proposal: out.proposal,
                   },
               null,

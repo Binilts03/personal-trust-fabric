@@ -63,6 +63,7 @@ import type {
 import type { KeyObject } from "node:crypto";
 import { runPrivacyCommand } from "./cli/privacy.js";
 import { runHostConformanceCommand } from "./cli/host-conformance.js";
+import { packageVersion } from "./version.js";
 
 /**
  * The operator module resolution used by `ptf host-conformance --boundary`.
@@ -177,7 +178,19 @@ const BOOLEAN_FLAGS = new Set([
   "any-agent",
 ]);
 
-export const PTF_VERSION = "0.1.0";
+/**
+ * The operator CLI's version. Read from the package's own metadata, so the
+ * CLI can never report a version the package does not carry.
+ */
+export function ptfVersion(): string {
+  return packageVersion();
+}
+
+/**
+ * The package version, read from the package's own metadata. Exported from
+ * the CLI seam so the version contract can be tested where the CLI lives.
+ */
+export { packageVersion };
 
 export function helpText(): string {
   return [
@@ -544,7 +557,7 @@ export async function run(
     return 0;
   }
   if (command === "version") {
-    io.print(`ptf ${PTF_VERSION}`);
+    io.print(`ptf ${ptfVersion()}`);
     return 0;
   }
 
@@ -686,6 +699,19 @@ export async function run(
     return 0;
   }
 
+  // The conformance gate runs before the store is opened. It needs nothing
+  // from the operator's store: the checks seed their own encrypted scratch
+  // stores. Keeping it out of `loadCtx` means the operator's keystore is
+  // never decrypted and their audit log is never opened in the process that
+  // executes the module the operator named.
+  if (command === "host-conformance") {
+    return runHostConformanceCommand({
+      dir,
+      flags,
+      io,
+    });
+  }
+
   // Passphrase demand per command. Vault commands need the keystore: reads
   // and rekeys open it; puts and migrates load-or-create it (missing keys
   // are sealed below once the DEK exists). Audit opens it only when a vault
@@ -704,8 +730,7 @@ export async function run(
       (command === "audit" &&
         (existsSync(join(dir, "personal-state.json")) ||
           existsSync(join(dir, "privacy-state.json")))) ||
-      (command === "privacy" && (keystoreExists || flags["path"] !== "init")) ||
-      command === "host-conformance",
+      (command === "privacy" && (keystoreExists || flags["path"] !== "init")),
     prompt
   );
 
@@ -729,15 +754,6 @@ export async function run(
       keys: ctx.keys,
       io,
       persistKeys: () => persistKeys(dir, env, ctx.keys, prompt),
-    });
-  }
-
-  if (command === "host-conformance") {
-    return runHostConformanceCommand({
-      dir,
-      flags,
-      keys: ctx.keys,
-      io,
     });
   }
 

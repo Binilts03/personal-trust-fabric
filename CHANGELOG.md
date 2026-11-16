@@ -14,6 +14,10 @@ release day. This project adheres to Semantic Versioning.
 
 - **Adoption gate:** `ptf host-conformance --boundary MODULE` runs the host kit's nine conformance checks against the **adopter's** boundary composition instead of the kit's reference one. The library seam (`runHostConformance({ boundary })`) already existed and was already proven by a meta-test, but the shipped command never reached it: a host running `ptf host-conformance` in its own CI got a green run that said nothing about its own code path. The module must export `boundary` (or a default export that is a function); the boundary under test is always named in the output, so a green run is attributable. The specifier is operator-supplied on the command line and is never reachable from an agent-facing surface. The suite remains a narrow gate over the boundary's ordering — it is not an attestation of the host's whole surface. (ADR-0027)
 
+- **One version, one source:** the CLI, the PDP health endpoint and the MCP server each carried their own copy of the version string, and they had drifted — the package metadata moved to the `0.2.0-rc.1` candidate while `ptf --version` and the MCP handshake still reported `0.1.0`. All three now read the package's own `package.json` at runtime, so a published tarball reports its own version and no surface can advertise a version the package does not carry. The contract is pinned by a test that compares the CLI output, the MCP `serverInfo` and the runtime reader against the metadata; nothing hardcodes a version any more.
+
+- **Conformance trust exposure:** `ptf host-conformance` opened the operator's keystore and decrypted the operator's privacy state before it ran the checks — in the same process that then executes the module the operator named. The checks never needed any of it: they seed their own encrypted scratch stores with their own key. The command now runs before the store is opened at all, so it holds no operator secret, needs no passphrase, and works in CI without one. The operator's privacy-config file is still read: it names the controller, the opaque subject reference and the recipient roles the checks run against.
+
 - **ESM module resolution:** `ptf host-conformance --boundary` could not load a host kit published as an ESM-only package. The bare specifier was resolved with the CommonJS resolver, which applies the `require` condition and therefore refuses an `exports` map that offers only `import` (`ERR_PACKAGE_PATH_NOT_EXPORTED`) — even though `import()` of the same specifier works. The alternative, `import.meta.resolve(specifier, parent)`, ignores the parent argument on Node 22.18 and would resolve the operator's module against PTF's own `node_modules`. The specifier is now resolved with the ESM algorithm anchored at the operator's working directory: the `exports` map with the `node`, `import` and `default` conditions, subpath maps, `*` patterns, and a `main`/`index.js` fallback. The rules are pinned by tests rather than left to the runtime.
 
 - **Effect-boundary assurance:** integrated host-registered GitHub Issues action execution with exact recipient binding, one-use proof and journal replay; bound trusted-callback receipts to the redeemed capability; removed retroactive privacy evidence reconstruction. Confirmed provider effects with missing original processing evidence now return a persistent explicit gap. Controlled HTTP tests pass; no live GitHub operation or independent deployment is claimed.
@@ -35,8 +39,10 @@ release day. This project adheres to Semantic Versioning.
 - Clarified that DPDP-informed processing is an optional PTF use case, not the product's identity. Added cross-domain use-case navigation; labelled reference scripts as synthetic and host CLI conformance as reference-only; removed stale launch-post navigation. No runtime or API change.
 
 > Release state (honest): the `v0.1.0` tag (2026-09-12) predates
-> `v0.1.0-rc.1` (2026-09-14); `main` is ahead of both and unpublished
-> (npm returns 404). Everything below ships on `main` only. The next
+> `v0.1.0-rc.1` (2026-09-14); both predate the merged protected-effect/MCP
+> interfaces. The candidate package version is `0.2.0-rc.1`, and **no registry
+> prerelease is published or authorized** — npm still returns 404 for this
+> package. Everything above ships on the candidate branch only. The next
 > version cut reconciles tags + changelog after peer review.
 
 ### Added
