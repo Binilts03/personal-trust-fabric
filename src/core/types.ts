@@ -1,9 +1,18 @@
 /**
  * PTF capability types — decision 01 (`ptf/cap@0.1`).
- * @internal Local decision receipt only (ADR-0009). Do NOT use as wire:
- * use `adapters/authzen.ts` (AuthZEN SARC) and `adapters/oauth-agent.ts`
- * (RFC8693 attenuation) for interop. Retained so existing tests and local
- * redemption keep working without forking a standard.
+ *
+ * LOCAL ONLY, NOT A WIRE FORMAT (ADR-0009). Do NOT use as wire: use
+ * `adapters/authzen.ts` (AuthZEN SARC) and `adapters/oauth-agent.ts`
+ * (RFC8693 attenuation) for interop. The envelope is local receipt
+ * machinery, published on the `./capabilities` subpath so a host can produce
+ * the `Redemption` the curated payment executors require (ADR-0028); it is
+ * never a protocol.
+ *
+ * The declarations here carry no internal-only marker: the published
+ * declarations reference them (`SealedCapability`, `Redemption`, `KeyId`),
+ * and a stripped declaration makes the published types fail to compile for
+ * every consumer. The public surface is decided by packaging (ADR-0011).
+ *
  * UCAN-delegation semantics over canonical-JSON bytes (not DAG-CBOR byte-compatible).
  * Key ids are opaque strings (`did:key:…`, `did:jwk:…`, `did:web:…`, or test ids).
  * Core never resolves DIDs — callers supply keys via KeyResolver (Identity Binding lives outside core).

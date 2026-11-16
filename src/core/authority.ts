@@ -29,10 +29,16 @@ import { resolveSelector } from "./policy.js";
 const SKEW_SEC = CLOCK_SKEW_SEC;
 
 /**
- * @internal INTERNAL bound form: an operation + ingress identity + derived
- * digest, assembled by the engine (or by translators from verified ingress)
- * for citations/snapshots. Never construct by hand from caller-supplied
+ * The BOUND form: an operation + ingress identity + derived digest,
+ * assembled by the engine (or by translators from verified ingress) for
+ * citations/snapshots. Never construct by hand from caller-supplied
  * identity — call `evaluate(operation, ingress)` and let the engine bind.
+ *
+ * The declaration carries no internal-only marker: the curated root
+ * publishes this type as part of the public vocabulary, and the published
+ * declarations reference it. A stripped declaration makes the published
+ * types fail to compile for every consumer (the public surface is decided by
+ * packaging, ADR-0011).
  */
 export interface AuthorityRequest {
   readonly principal: string;

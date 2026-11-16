@@ -106,8 +106,16 @@ export class MapUseLedger implements UseLedger {
  * Deep capability module: small interface (`issue` / `authorize` / `revoke`)
  * hiding canonicalization, Ed25519 chains, narrowing, revocation cascade,
  * replay ledger, and recipient proof checks.
- * @internal Local-only per ADR-0009. New integrations must use the
- * AuthZEN/OAuth translators; do not emit this envelope across systems.
+ *
+ * LOCAL ONLY per ADR-0009: new integrations must use the AuthZEN/OAuth
+ * translators; do not emit this envelope across systems. It is published on
+ * the `./capabilities` subpath because it is the only producer of the
+ * `Redemption` the curated payment executors require (ADR-0028) — a local
+ * receipt mechanism, never a wire format.
+ *
+ * The declaration carries no internal-only marker: the published
+ * `./capabilities` declarations export it, and a stripped declaration makes
+ * the published types fail to compile for every consumer.
  */
 export class Capabilities {
   private readonly resolveKey: KeyResolver;

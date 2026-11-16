@@ -14,6 +14,38 @@ bash scripts/harness.sh
 npm pack --dry-run
 ```
 
+## Verify the package as a consumer receives it
+
+The tarball is the published surface, so the tarball is what gets verified.
+This installs the packed tarball into a clean directory and, from there:
+
+- imports the curated entry point and the published subpaths;
+- **compiles a TypeScript consumer** against the installed package and runs
+  the compiled output — the `types` entries the export map advertises must
+  resolve for a real consumer;
+- **proves the published types constrain the consumer**: a file that
+  misuses the API must not compile;
+- drives a **persisted protected effect journey** through the published CLI
+  and library: the CLI creates the store and the grant, the library performs
+  the effect with a durable consumption, the store on disk shows the consumed
+  use, and a replay is refused without a second external effect.
+
+```sh
+npm run verify:package -- --install
+```
+
+## Dependency audit at the exact head
+
+```sh
+npm audit --omit=dev   # production dependencies (what a consumer installs)
+npm audit              # including the development toolchain
+```
+
+Both must report zero vulnerabilities before a release. The CI `gate` job runs
+the production audit on every push; the numbers are a property of the exact
+commit, so they are recorded in the pull request, not in a document that goes
+stale.
+
 Docs changes must also keep the site build green (same steps as the
 required `docs` CI job; needs Ruby 3.3 + bundler):
 

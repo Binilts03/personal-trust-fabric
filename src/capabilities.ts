@@ -26,9 +26,9 @@
  *
  * ## LOCAL ONLY — never wire
  *
- * The `ptf/cap@0.1` envelope is `@internal` and never a wire format
- * (ADR-0009). A host keeps it in process and shows the agent only the
- * `cidHex` it must sign (see `createHostRedemptionChallenge` on
+ * The `ptf/cap@0.1` envelope is an internal-only local format and never a
+ * wire format (ADR-0009). A host keeps it in process and shows the agent
+ * only the `cidHex` it must sign (see `createHostRedemptionChallenge` on
  * `./hostkit`). Nothing here is a protocol; it is the local receipt
  * machinery that lets a host hold a secret-bearing right without handing it
  * to the agent.
