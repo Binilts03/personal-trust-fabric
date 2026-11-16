@@ -4,7 +4,7 @@ All notable changes to this project are documented here, Keep-a-Changelog
 flow: land work under `## [Unreleased]`, move it to a versioned section on
 release day. This project adheres to Semantic Versioning.
 
-## [Unreleased]
+## [0.2.0-rc.1] - 2026-11-16
 
 - **npm developer-preview preparation (not a published release):** reconcile version to candidate `0.2.0-rc.1`, document first-publication and trusted-publisher gates, and update README/website/Host Kit and security documentation to the merged reference implementation. Live provider UAT and independent security certification remain outstanding.
 
@@ -336,5 +336,6 @@ for the agentic web (PTF v0.1).
   `docs/audit/` (auditor entry). Report vulnerabilities privately via the
   GitHub Security tab, never in a public issue.
 
-[Unreleased]: https://github.com/Binilts03/personal-trust-fabric/compare/v0.1.0-rc.1...HEAD
+[Unreleased]: https://github.com/Binilts03/personal-trust-fabric/compare/v0.2.0-rc.1...HEAD
+[0.2.0-rc.1]: https://github.com/Binilts03/personal-trust-fabric/releases/tag/v0.2.0-rc.1
 [0.1.0-rc.1]: https://github.com/Binilts03/personal-trust-fabric/releases/tag/v0.1.0-rc.1
