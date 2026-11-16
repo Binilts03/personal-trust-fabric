@@ -1,7 +1,5 @@
-import { createRequire } from "node:module";
-import { isAbsolute, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import type { HostConformanceBoundaryFactory } from "../hostkit/index.js";
+import { resolveOperatorModuleUrl } from "./resolve-module.js";
 
 /**
  * Load the host's own boundary composition for `ptf host-conformance
@@ -24,26 +22,13 @@ import type { HostConformanceBoundaryFactory } from "../hostkit/index.js";
  * - a bare specifier (`my-host-kit`) resolves from the working directory's
  *   `node_modules`, so the host's module — not PTF's — owns the dependency
  *   and the module's own `import "personal-trust-fabric/hostkit"` resolves
- *   from the host's project.
+ *   from the host's project;
+ * - the `exports` map is applied with the ESM conditions, so a host kit
+ *   published as an ESM-only package loads. See `resolve-module.ts`.
  */
 
 /** The named export a boundary module must provide. */
 export const HOST_BOUNDARY_EXPORT = "boundary";
-
-function resolveModuleUrl(specifier: string): string {
-  if (specifier.startsWith(".") || isAbsolute(specifier)) {
-    return pathToFileURL(resolve(process.cwd(), specifier)).href;
-  }
-  // Bare specifier: anchor a require resolver at a synthetic module inside
-  // the working directory and hand back a file URL for the ESM loader. That
-  // puts the operator's `node_modules` on the lookup path, so the module the
-  // operator named is the one that loads — not whatever PTF happens to provide.
-  const requireFromCwd = createRequire(
-    pathToFileURL(join(process.cwd(), "ptf-boundary-resolver.cjs")).href
-  );
-  const resolvedPath = requireFromCwd.resolve(specifier);
-  return pathToFileURL(resolvedPath).href;
-}
 
 /**
  * Load the host's boundary factory. Throws with an actionable message when
@@ -54,7 +39,7 @@ export async function loadHostBoundary(
 ): Promise<HostConformanceBoundaryFactory> {
   let loaded: Record<string, unknown>;
   try {
-    loaded = (await import(resolveModuleUrl(specifier))) as Record<
+    loaded = (await import(resolveOperatorModuleUrl(specifier))) as Record<
       string,
       unknown
     >;

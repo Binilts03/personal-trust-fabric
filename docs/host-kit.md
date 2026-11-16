@@ -188,8 +188,11 @@ export function boundary(scenario) {
 
 Relative and absolute paths resolve against the working directory; a bare
 specifier resolves from the working directory's `node_modules`, so your
-module — not PTF's — owns the dependency. The boundary under test is always
-named in the output, so a green run is attributable:
+module — not PTF's — owns the dependency. The package's `exports` map is
+applied with the ESM conditions (`node`, `import`, `default`), so a host kit
+published as an **ESM-only** package — one that exports only an `import`
+condition — loads; the CommonJS resolver would refuse it. The boundary under
+test is always named in the output, so a green run is attributable:
 
 ```text
 boundary: host-supplied (./host-boundary.mjs)

@@ -349,6 +349,53 @@ describe("host-conformance --boundary (the adopter is the thing under test)", ()
     }
   });
 
+  it("loads a host kit published as an ESM-only package", async () => {
+    // A host kit published with only an "import" condition is the normal
+    // shape of a modern package. The CommonJS resolver refuses it, so the
+    // gate used to fail on a module that `import()` loads fine.
+    const h = harness();
+    const originalCwd = process.cwd();
+    try {
+      const dir = await initScratch(h);
+      const cfg = configFile(dir);
+
+      const pkgDir = join(dir, "node_modules", "esm-only-kit");
+      mkdirSync(pkgDir, { recursive: true });
+      writeFileSync(
+        join(pkgDir, "package.json"),
+        JSON.stringify({
+          name: "esm-only-kit",
+          version: "1.0.0",
+          type: "module",
+          exports: { ".": { types: "./index.d.ts", import: "./index.js" } },
+        })
+      );
+      writeFileSync(join(pkgDir, "index.js"), BOUNDARY_REFERENCE);
+
+      process.chdir(dir);
+      const code = await run(
+        [
+          "--dir",
+          dir,
+          "host-conformance",
+          "--privacy-config",
+          cfg,
+          "--boundary",
+          "esm-only-kit",
+        ],
+        h.io,
+        h.env
+      );
+      const text = h.out.join("\n");
+      assert.equal(code, 0, `expected a passing run; output was:\n${text}`);
+      assert.match(text, /boundary: host-supplied \(esm-only-kit\)/);
+      assert.match(text, /9\/9 checks passed/);
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(h.dir, { recursive: true, force: true });
+    }
+  });
+
   it("defaults to the kit's own reference boundary when no flag is given", async () => {
     // The reference default is itself part of the contract: without the flag
     // the operator gets the kit's composition, and the output must say so.

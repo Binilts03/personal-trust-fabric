@@ -65,6 +65,16 @@ import { runPrivacyCommand } from "./cli/privacy.js";
 import { runHostConformanceCommand } from "./cli/host-conformance.js";
 
 /**
+ * The operator module resolution used by `ptf host-conformance --boundary`.
+ * Exported from the CLI seam so the resolution rules can be tested directly
+ * (they decide whether an adopter's host kit is loadable at all).
+ */
+export {
+  resolveOperatorModuleUrl,
+  OperatorModuleResolutionError,
+} from "./cli/resolve-module.js";
+
+/**
  * Minimal operator CLI (prod-03). Manual argv, stdin/stdout only, no framework.
  * Every flow reuses the tested modules verbatim — this file is wiring, not logic.
  * Secrets: the keystore passphrase comes from PTF_PASSPHRASE only, never argv.
