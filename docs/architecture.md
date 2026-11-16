@@ -88,7 +88,7 @@ PTF separates **who may do what** from **who possesses the secret needed to do i
 
 ## Public Seam
 
-The published public surface is the curated `src/api.ts` root plus explicit package export subpaths such as `./hostkit`, `./privacy`, `./providers` and `./capabilities`. `src/index.ts` is a broad internal/test barrel; do not rely on unpublished deep imports.
+The package-exported public surface (npm publication is a separate release gate) is the curated `src/api.ts` root plus explicit package export subpaths such as `./hostkit`, `./privacy`, `./providers` and `./capabilities`. `src/index.ts` is a broad internal/test barrel; do not rely on unpublished deep imports.
 
 ## Verification
 
@@ -102,7 +102,7 @@ bash scripts/harness.sh
 
 Architecture changes require an ADR in `docs/adr/`.
 
-## Reusable protected-effect seam (proposed consolidation)
+## Reusable protected-effect seam (merged in PR #121)
 
 `src/hostkit/boundary.ts` now exports one
 `createProtectedEffect` ordering implementation plus the compatibility

@@ -16,7 +16,7 @@ effects through it is uncovered, not compliant — see
 
 ## The surface
 
-The kit ships as the `./hostkit` subpath:
+New non-payment hosts should evaluate `createProtectedEffect`; `createEffectBoundary` is the privacy-required compatibility interface. The kit ships as the `./hostkit` subpath:
 
 ```ts
 import {
@@ -33,9 +33,10 @@ re-exported from the curated root barrel.
 
 **Integration sketch, not a copy-paste quickstart.** This assumes the
 host has already constructed `storeDir`, `keys`, `auth`, verified
-`ingress`, `demand`, `config`, a provider and a redemption. It also
-assumes the host implements `runTheEffect` and routes **every relevant
-effect path** through this boundary. To try PTF without those
+`ingress`, `demand`, `config`, a provider and a proof-verified redemption.
+It assumes the host routes **every relevant effect path** through the
+boundary. The provider is executed through the journal; do not supply an
+additional callback that will be bypassed by the provider mode. To try PTF without those
 prerequisites, start with [Getting Started]({{ '/getting-started/' | relative_url }}).
 
 ```ts
@@ -62,13 +63,9 @@ const boundary = createEffectBoundary({
   runtime,
   gate,
   now: () => Math.floor(Date.now() / 1000),
-  authorizedContext: { amount: 100, currency: "INR", recipient: "shop" },
+  authorizedContext: redemption.operation.args,
   provider,
   redemption,
-  execute: async (ctx) => {
-    ctx.markEffectStarted();
-    return await runTheEffect(ctx.operation);
-  },
 });
 
 const decision = await boundary.check();
@@ -93,7 +90,9 @@ controller or the data categories.
 
 ## The ordering
 
-The boundary runs nine steps, in this order:
+For a new privacy-enforced effect, the boundary follows the nine steps below. For an exact provider replay, the shared journal is checked first: confirmed prior success does not reconsume Authority or resend the effect; ambiguous outcomes remain quarantined. A trusted non-enforced mode omits privacy-specific steps and does not establish legal compliance.
+
+The boundary runs nine steps for a new privacy-enforced attempt:
 
 | #   | Step                    | What it proves                                                           |
 | --- | ----------------------- | ------------------------------------------------------------------------ |
@@ -120,11 +119,12 @@ and the external effect. That gap is not one atomic transaction.
 
 ## Failure classes
 
-| Class                        | When                                                   |
-| ---------------------------- | ------------------------------------------------------ |
-| `PrivacyPreEffectError`      | proven before the effect boundary                      |
-| `PrivacyOutcomeUnknownError` | the effect may have happened                           |
-| `PrivacyEventConflictError`  | an attempt already has evidence; reconcile, do not run |
+| Class                                | When                                                     |
+| ------------------------------------ | -------------------------------------------------------- |
+| `PrivacyPreEffectError`              | proven before the effect boundary                        |
+| `PrivacyOutcomeUnknownError`         | privacy-enforced effect may have happened                |
+| `ProtectedEffectOutcomeUnknownError` | non-enforced effect may have happened; reconcile journal |
+| `PrivacyEventConflictError`          | an attempt already has evidence; reconcile, do not run   |
 
 A host callback that starts an external effect must call
 `ctx.markEffectStarted()` first. After that call the boundary treats any
@@ -245,14 +245,14 @@ The honest limits live in [audit/limits.md](audit/limits.md).
 - [ADR-0025](adr/0025-privacy-enforcement-is-per-host.md) — per-host,
   explicit enforcement at the effect boundary.
 
-## Domain-neutral host-controlled effects (consolidation work)
+## Domain-neutral host-controlled effects (implemented on `main`)
 
 The `./hostkit` library also exports `createProtectedEffect` and
 `createHostRedemptionChallenge`. An independent **synthetic**
 `/email/send` reference lives in
-[`examples/generic-protected-action.mjs`](https://github.com/Binilts03/personal-trust-fabric/blob/feat/ptf-domain-neutral-consolidation-20261024/examples/generic-protected-action.mjs).
+[`examples/generic-protected-action.mjs`](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/generic-protected-action.mjs).
 Run `npm run build && node examples/generic-protected-action.mjs` from
-this branch. It contacts **no** external email provider.
+a current source checkout. It contacts **no** external email provider.
 
 A trusted host constructs the verified `ingress`, the complete
 `AuthorityOperation`, and the effect implementation. The agent cannot
@@ -283,4 +283,4 @@ always requires privacy and retains its historical `eventId` receipt
 property for its consumers. Do not treat the older path as automatically
 enforcing every other host's effects.
 
-**Host integration limit:** The published `personal-trust-fabric/mcp` subpath exposes `createPtfServer` and the registration API to trusted Node embedding hosts. The reference MCP server can execute only trusted-host-registered exact actions, alongside its established payment route. `ptf_request_action` still proposes arbitrary actions for visibility, but unregistered actions cannot execute. When a privacy profile is configured, an action with no enforced trusted processing gate is denied. The synthetic email provider does not deliver real email. See [MCP contract]({{ '/mcp-contract/' | relative_url }}) and [known limits]({{ '/audit/limits/' | relative_url }}).
+**Host integration limit:** The package-exported `personal-trust-fabric/mcp` subpath (registry publication not yet verified) exposes `createPtfServer` and the registration API to trusted Node embedding hosts. The reference MCP server can execute only trusted-host-registered exact actions, alongside its established payment route. `ptf_request_action` still proposes arbitrary actions for visibility, but unregistered actions cannot execute. When a privacy profile is configured, an action with no enforced trusted processing gate is denied. The synthetic email provider does not deliver real email. See [MCP contract]({{ '/mcp-contract/' | relative_url }}) and [known limits]({{ '/audit/limits/' | relative_url }}).

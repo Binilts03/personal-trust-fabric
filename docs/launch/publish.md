@@ -1,77 +1,78 @@
-# Publishing to npm
+# npm developer prerelease — release procedure (not yet executed)
 
-PTF is publish-ready: `npm pack` produces a 236 kB tarball with the compiled
-`dist`, the curated `exports` map, the `ptf` / `ptf-mcp-server` /
-`ptf-pdp-server` binaries, the README and the LICENSE. The npm name
-`personal-trust-fabric` is unclaimed (verified with `npm view`, which returns
-404 for an unclaimed name).
+**Status:** This repository currently has a candidate package surface, but **no registry prerelease is claimed or authorized by these preparations**. The candidate version is `0.2.0-rc.1`, conditional on checking current npm registry ownership and versions. The historical GitHub tags `v0.1.0` and `v0.1.0-rc.1` predate the merged protected-effect/MCP interfaces; do not reuse them.
 
-This runbook is the last mile. It needs one human with an npm account.
+A GitHub release, a successful `npm pack`, and local installed-tarball tests are **not** an npm registry release. This is a review checklist; publishing, staging, tagging or deploying requires separate maintainer authorization.
 
-## Before you publish
+## What the package contains
 
-1. The working tree is clean and `main` is green:
+The `personal-trust-fabric` package declares Node.js 22+ and exports the curated root Authority entry point plus `./hostkit`, `./mcp`, `./providers`, `./privacy` and adapter subpaths (including `./adapters/github-issues`). CLI bins include `ptf`, `ptf-mcp-server` and `ptf-pdp-server`.
 
-   ```sh
-   npm run typecheck && npm test && npm run eval
-   node scripts/check-seams.mjs
-   bash scripts/harness.sh
-   ```
+CI packs and installs a tarball into an isolated consumer for its public entry points. No live provider operation, independent host deployment or production-security certification follows from this check.
 
-2. The CHANGELOG has an entry for everything in the release, and the version
-   in `package.json` matches the release you intend to cut.
+## Gate 1 — validate name, ownership and version
 
-3. The tarball is what you think it is:
-
-   ```sh
-   npm pack --dry-run
-   ```
-
-   Read the file list. `dist/tests/**` and the source maps are excluded on
-   purpose.
-
-## Publish
+From a connected environment, check registry state and your account authorization:
 
 ```sh
-npm login            # or: npm token create --registry=https://registry.npmjs.org
-npm publish          # publishConfig in package.json sets access=public + provenance
+npm view personal-trust-fabric versions dist-tags --json
+npm whoami
 ```
 
-`publishConfig.provenance` is already set, so npm will attach a provenance
-statement if the publish runs from a CI job with the npm provenance
-credentials. From a laptop, npm publishes without provenance. If you want the
-statement, publish from GitHub Actions with `NODE_AUTH_TOKEN` and
-`id-token: write`.
+A historical 404 does **not** reserve a package name. If another owner controls the name, stop and choose an authorized package name. If the package already has a version, reconcile SemVer before changing or publishing anything. Match the package version and package-lock root entry; ensure that the historical GitHub tags do not claim the new implementation.
 
-## Verify the published package
+The current repository contains an automatic **GitHub release asset workflow triggered by `v*` tag pushes**. Do not push a tag for this preparation task.
 
-From a clean directory, not the repo:
+## Gate 2 — test the exact source and tarball
+
+On a clean checkout pinned to the intended release commit:
 
 ```sh
-mkdir ptf-consumer && cd ptf-consumer
+npm ci
+npm run check:brand
+npm run typecheck
+npm test
+npm run test:examples
+npm run eval
+node scripts/check-seams.mjs
+npm run verify:package -- --install
+npm pack --dry-run
+npm audit --omit=dev
+```
+
+Inspect the actual file list, binary targets, public exports, license, dependencies and any accidental secrets or fixtures. Record the exact commit and test outcomes. The historical 236 kB tarball measurement is not evidence of current contents. Check the CycloneDX SBOM created by the existing GitHub tagged-release workflow. Release gates must be evaluated on the actual candidate; do not extrapolate an earlier green CI run.
+
+## Gate 3 — first publication requires an owner-controlled bootstrap
+
+**npm trusted publishing requires the package to already exist on the registry.** Do not create a GitHub OIDC publishing job and assume it can claim an unregistered package name.
+
+After explicit owner approval and tarball review, an npm account holder with two-factor authentication may initialize the first public prerelease using a controlled manual `npm publish --access public --tag next`. npm also supports `npm stage publish` (npm CLI 11.15+), which creates a placeholder for a new package and requires an explicit 2FA approval to release the staged version. Check npm's live requirements before choosing a bootstrap path.
+
+Neither action is performed automatically or by this runbook. **Never store a long-lived npm publishing token in this repository or a GitHub Actions secret as a shortcut.**
+
+## Gate 4 — set up trusted publishing for subsequent versions
+
+Once the package exists, configure npm Trusted Publishing for the exact owner, repository and approved workflow. GitHub-hosted runners require `id-token: write` and least-privilege read permissions. npm OIDC trusted publishing requires Node >=22.14 and npm CLI >=11.5.1; staged publishing and dist-tag management have additional CLI requirements.
+
+Use a restricted release workflow and explicit maintainer approvals. Prefer publishing a prerelease under a nondefault dist-tag such as `next`; do not change `latest`. After verified OIDC publishing, restrict traditional token-based publishing access. npm provenance attests source/workflow origin, **not** package safety or live integration.
+
+Official references: [Trusted publishing](https://docs.npmjs.com/trusted-publishers/) · [Staged publishing](https://docs.npmjs.com/staged-publishing/) · [Provenance](https://docs.npmjs.com/generating-provenance-statements/).
+
+## Gate 5 — external consumer verification after publication
+
+From a fresh project **outside this repository**:
+
+```sh
 npm init -y
-npm install personal-trust-fabric
+npm install personal-trust-fabric@next
 node -e "import('personal-trust-fabric').then(m => console.log(typeof m.Authority))"
-npx ptf --help
+node -e "import('personal-trust-fabric/mcp').then(m => console.log(typeof m.createPtfServer))"
 ```
 
-`npx ptf` works because npm resolves a bin by the name you type, as long as
-the package is installed in the project. The package also ships a
-`personal-trust-fabric` bin that is the same CLI, so
-`npx personal-trust-fabric` works from a bare shell.
+Verify `./hostkit` and `./adapters/github-issues` imports, package integrity and provenance, and a public synthetic flow that makes **no real provider call**. Record the actual registry version, dist-tag, hash and resolved source commit. Only then put `npm install personal-trust-fabric@next` into the README and operator onboarding guide.
 
-## After publishing
-
-- Tag the release: `git tag -a v0.1.0 -m "..." && git push origin v0.1.0`.
-- Add the install line to the README status section (it currently says
-  "npm pending" for the first release only).
-- Publish announcements only after independently verifying the factual claims and any demonstrations they reference.
+A prerelease can invite developer feedback **without** asserting live provider acceptance, distributed exactly-once execution, independently audited security, multi-tenant custody or comprehensive privacy compliance.
 
 ## Version policy
 
-- `0.1.x`: the current reference surface. Patch releases fix behaviour;
-  minors add a curated surface.
-- A new curated export (a new symbol on a curated surface, a new subpath)
-  is a minor release and needs an explicit public-surface decision in
-  `docs/adr/0011-public-surface.md`.
-- A breaking change to a curated surface is `1.0.0`, and it needs an ADR.
+`0.2.0-rc.1` is the candidate for the newer package-exported Host Kit and MCP interfaces. It is not a published version merely because `package.json` carries the number. Retain the planned changes in `CHANGELOG.md` under `Unreleased` until the owner approves an actual release.

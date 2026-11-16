@@ -9,154 +9,55 @@ permalink: /
 
 > **Authority should travel. Secrets should not.**
 
-PTF is a user-owned authority and protected-use layer for interchangeable AI agents. An agent can act with precisely bounded authority without receiving the underlying credential, payment instrument, signing key, or unrestricted token.
+PTF lets interchangeable agents request narrowly authorized operations **without putting the owner's raw credentials, signing keys or unrestricted tokens into the agent's context**. A trusted host checks the exact operation, uses protected state when allowed, and returns a bounded result. It does not automatically intercept tools outside that host.
 
-```text
-                    authority
-person  --------------------------------+
-                                         \
-agent A  -------------------------------> [ PTF ] ---> protected action
-agent B  -------------------------------> [     ] ---> disclosure
-local    -------------------------------> [     ] ---> signature
-                                             |
-personal state -------------------------->  |
-                                      secrets stop here
-                                             |
-                                             v
-                                          receipt
-```
+## Why use it?
 
-Default deny. Exact terms. Use without possession. External messages are evidence, never authority.
+- **Switch agents without duplicating secrets:** keep authorization and personal state separate from an agent platform. The replacement agent must still be authenticated and allowed to request the operation.
+- **Delegate specific actions:** bind an operation to the actor, resource, recipient and effect-bearing fields rather than exposing a broadly privileged API key.
+- **Release only what is allowed:** a trusted host can perform protected credential use or disclose a permitted subset of information, not hand the vault to a model.
 
----
+The [README](https://github.com/Binilts03/personal-trust-fabric#readme) provides concrete scenarios, runnable examples and explicit boundaries.
 
-## Quick Links
+## Current reference implementation
 
-| Area                               | Description                                                                |
-| ---------------------------------- | -------------------------------------------------------------------------- |
-| [Getting Started](getting-started) | Run PTF locally in 60 seconds                                              |
-| [Architecture](architecture)       | Four planes: Personal State, Authority, Protected Execution, Protocol Edge |
-| [Security Model](security-model)   | Default-deny, attenuation, receipt-only secret use                         |
-| [MCP Contract](mcp-contract)       | Agent-facing tools: propose, check, redeem, present                        |
-| [CLI Reference](cli-reference)     | `ptf` command: init, keygen, grant, pay, audit, backup                     |
-| [Use cases](use-cases)             | Reference flows and optional DPDP-informed processing                     |
-| [ADRs](adr)                        | Architecture Decision Records                                              |
-| [Audit Docs](audit)                | Limits, operations, verification, threats                                  |
+| Layer | Present in the repository | Outside current proof |
+| --- | --- | --- |
+| Authority | Default-deny grants, one-time approvals, exact terms, recipient-bound proof and durable consumption | Host identity enrollment and deployment |
+| Personal State | AES-256-GCM local vault, scoped reads and protected-use interfaces | HSM/KMS custody and multi-tenant service |
+| Execution | Shared `createProtectedEffect` Host Kit for reference payment and host-registered non-payment actions; journal-first replay | Distributed exactly-once effect guarantees |
+| MCP | Fixed or local registry identity; payment, data presentation and exact host-registered generic action execution | Global agent-tool interception or general remote deployment |
+| Adapters | Opt-in GitHub Issues REST provider, reference email/payment paths | Live third-party acceptance and independent host adoption |
+| Privacy | Optional host-composed processing controls, evidence and synthetic DPDP-informed profile | Statutory compliance or unintegrated host paths |
 
----
+**Generic action execution is merged into `main`** via [PR #121](https://github.com/Binilts03/personal-trust-fabric/pull/121). The stock stdio launcher still registers **no generic executable actions**: a trusted embedding host must supply the registration, validation, provider and applicable processing controls.
 
-## Status
+## Try it from a source checkout
 
-This is a working, tested reference implementation on the road to peer review — not a finished product.
-
-**What CI proves on every merge:** strict TypeScript, the full unit suite, attack/property evaluations, public-seam and zero-dependency hygiene, secret scanning.
-
-**What it is today:** a strong local authority engine, an encrypted personal-state vault, a propose→present/redeem→receipt agent loop for disclosure and payment (general actions propose-only), a domain-neutral provider seam with payment as one profile, and hash-chained audit — all tested including abuse cases. PTF will not become a PSP, wallet, settlement service, or rail.
-
-**What it is not yet:** a live execution platform (reference providers move nothing), a multi-user service (single-operator topology), an HSM-backed custodian (file keystore reference), or a published package (npm pending). Every ceiling is documented in [docs/audit/limits.md](audit/limits) — the file lists what PTF _cannot_ do more carefully than what it can.
-
----
-
-## Use cases, not product silos
-
-PTF's primary abstraction is bounded, user-owned authority for interchangeable agents. The implemented local examples cover payment, disclosure and protected credential use. The DPDP-informed profile is **an optional host-integrated privacy restriction**, illustrated through an offline fictional clinic-to-lab scenario, not a deployed service or compliance demonstration.
-
-See the [use-case catalog](use-cases) for exactly what is exercised.
-
----
-
-## Try it in 60 seconds
-
-Requires Node 22+.
+Requires Node.js 22+, npm and Git.
 
 ```sh
-npm install
-npm run typecheck && npm test && npm run eval
+git clone https://github.com/Binilts03/personal-trust-fabric.git
+cd personal-trust-fabric
+npm ci
+npm run demo
 ```
 
----
+The example checks one permitted request and two denials without calling a provider. Use [Getting started]({{ '/getting-started/' | relative_url }}) for operator setup and the synthetic protected-effect examples.
 
-## Architecture (four planes)
+## Further reading
 
-| Plane                   | Location                                           | Responsibility                                                            |
-| ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
-| **Personal State**      | `src/store/vault.ts`                               | Encrypted, purpose/agent/expiry/sensitivity-scoped records                |
-| **Authority**           | `src/core/`                                        | Zero-dependency deterministic: grants + digest-bound approvals            |
-| **Protected Execution** | `src/core/execute.ts`, `src/adapters/providers.ts` | Credentials used inside PTF; outward go sanitized instructions + receipts |
-| **Protocol Edge**       | `src/adapters/`                                    | AP2, x402, OAuth-agent, OpenID4VP/SD-JWT, MCP/WebMCP, A2A, AuthZEN PDP    |
+| Start | What to verify |
+| --- | --- |
+| [Host Kit]({{ '/host-kit/' | relative_url }}) | Trusted execution and privacy-composition contract |
+| [MCP contract]({{ '/mcp-contract/' | relative_url }}) | Registered non-payment actions and authenticated local agent ingress |
+| [GitHub Issues]({{ '/adapters/github-issues/' | relative_url }}) | Real REST adapter with injected-HTTP tests (no live GitHub UAT) |
+| [Use cases]({{ '/use-cases/' | relative_url }}) | Scope of reference payment, disclosure, credential and privacy flows |
+| [Architecture]({{ '/architecture/' | relative_url }}) | Authority, Personal State, execution and protocol separation |
+| [Adoption validation]({{ '/adoption-validation/' | relative_url }}) | How to test a second host independently |
+| [Security model]({{ '/security-model/' | relative_url }}) · [known limits]({{ '/audit/limits/' | relative_url }}) | What is enforced and what remains a host obligation |
+| [Production roadmap]({{ '/roadmap/production-v1/' | relative_url }}) | Remaining custody, reliability, deployment and audit work |
 
-Three flows cover everything: **disclose** (agent asks, PTF returns the minimal approved claim), **execute** (agent asks, PTF acts internally, agent gets a receipt), **approve** (agent proposes exact terms, the person approves or denies, any change needs a new approval).
+The current package is being prepared for an **experimental npm prerelease**. Local package checks and historical GitHub release tags are not evidence that these interfaces are published or production-approved.
 
----
-
-## MCP contract
-
-The server speaks for ONE fixed identity pinned at startup — tool schemas carry no identity fields, so callers can never self-certify.
-
-```json
-{
-  "mcpServers": {
-    "personal-trust-fabric": {
-      "command": "node",
-      "args": ["./dist/src/mcp-server.js"],
-      "cwd": "/path/to/personal-trust-fabric",
-      "env": {
-        "PTF_STORE_DIR": "./ptf-store",
-        "PTF_PASSPHRASE": "",
-        "PTF_MCP_PRINCIPAL": "did:example:you",
-        "PTF_MCP_ACTOR": "did:example:agent"
-      }
-    }
-  }
-}
-```
-
-Tools: `ptf_propose` (dry-run, exact terms + digest), `ptf_check` (status), `ptf_redeem` (`/pay` challenge→proof→receipt), `ptf_request_data` → `ptf_present_data` (holder-signed presentation, nonce-bound, single-present), `ptf_request_action` (propose any `/-path` except `/disclose*`), `ptf_get_receipt`, `ptf_list_capabilities` (this identity's live grants only), `ptf_revoke` (request-only). There is deliberately **no approve tool**: humans approve in the CLI, or standing grants cover the demand.
-
----
-
-## Security model
-
-Default-deny with citations: every allow names the grant or approval consumed. Policies narrow; learning never mints power. Capabilities attenuate monotonically, bind recipient + terms digest + expiry + uses, and redeem only against a live recipient key proof. Disclosure is `requested ∩ available ∩ allowed`, holder-bound. The vault is AES-256-GCM under a keystore DEK with freshness binding; the audit is hash-chained (optionally HMAC-keyed) and never carries secrets. External protocol messages are untrusted evidence re-validated locally.
-
-Full model, threats, and honest limits: [THREATMODEL.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/THREATMODEL.md), [SECURITY.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/SECURITY.md), [docs/audit/](audit).
-
----
-
-## Roadmap
-
-### Phase 1 — Make it reviewable
-
-- [x] **M1 — Authority kernel.** Default-deny engine, attenuation, exact-term approvals, receipts, audit.
-- [x] **M2 — Personal vault.** Encrypted durable state, purpose/agent scoping, evaluate-first reads, receipt-only secret use.
-- [x] **M3 — Agent loop.** Propose→present/redeem→receipt for disclosure and payment over MCP.
-- [x] **M4 — Operability.** Backup/restore commands, rotation, health signals, container image.
-- [ ] **M5 — Normative spec.** Implementation-agnostic `docs/spec/` (RFC-2119 MUST/SHOULD/MAY). Highest-leverage remaining work.
-- [ ] **M6 — Conformance suite.** Frozen vectors and fixtures for independent implementations.
-- [ ] **M7 — One more domain.** Travel or email over the generic `ExecutionReceipt` — proves generality beyond payment.
-
-### Phase 2 — Make it credible
-
-- [ ] **M8 — Independent audit.** Third-party review against public threat model.
-- [ ] **M9 — Publish.** npm Trusted Publisher release, installable package.
-
-### Phase 3 — Make it production-ready (after peer review)
-
-- [ ] **M10 — HSM/KMS custody.** Replace file keystore behind existing `KeyProvider` seam.
-- [ ] **M11 — Remote ingress + multi-tenant.** Per-caller auth, tenant isolation, rate limiting.
-- [ ] **M12 — External anchoring.** Witness/remote append-only audit export.
-- [ ] **M13 — Governance.** Governance charter, conduct process, OIDF/FIDO/IETF liaison.
-
----
-
-## Contributing
-
-Reviewers, standards authors, host integrators, and agent builders welcome — see [CONTRIBUTING.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/CODE_OF_CONDUCT.md).
-
-**Gate:** `typecheck`, unit, eval must be green; every change proves itself with fresh verifier run + one abuse case. Tests live at public seams (`src/index.ts`). Secrets never appear anywhere except the local store. Architecture changes need an ADR.
-
----
-
-## License
-
-Apache-2.0 — see [LICENSE](https://github.com/Binilts03/personal-trust-fabric/blob/main/LICENSE). Report vulnerabilities privately per [SECURITY.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/SECURITY.md).
+[Contributing](https://github.com/Binilts03/personal-trust-fabric/blob/main/CONTRIBUTING.md) · [Private security reporting](https://github.com/Binilts03/personal-trust-fabric/blob/main/SECURITY.md) · [Apache-2.0](https://github.com/Binilts03/personal-trust-fabric/blob/main/LICENSE)
