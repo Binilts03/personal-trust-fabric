@@ -34,6 +34,7 @@ Before proposing a change:
 
 ```sh
 npm run check:brand
+npm run check:docs
 npm run typecheck
 npm test
 npm run eval

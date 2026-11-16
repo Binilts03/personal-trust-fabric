@@ -7,6 +7,7 @@ git clone https://github.com/Binilts03/personal-trust-fabric
 cd personal-trust-fabric
 npm ci
 npm run check:brand
+npm run check:docs
 npm run typecheck
 npm test
 npm run eval
