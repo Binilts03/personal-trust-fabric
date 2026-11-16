@@ -6,8 +6,8 @@
 **PR:** [#121](https://github.com/Binilts03/personal-trust-fabric/pull/121) (draft; never merged or deployed)  
 **Review state:** implementation and synthetic integration exercised; independent security/maintainability review still required for approval.
 
-This report supersedes the *implementation-blocker conclusions* in the earlier
-[2026-10-24 consolidation gate](2026-10-24-consolidation-gate.md), while
+This report supersedes the _implementation-blocker conclusions_ in the earlier
+[2026-10-24 consolidation gate]({{ '/superpowers/reviews/2026-10-24-consolidation-gate/' | relative_url }}), while
 preserving its historical red-test and design evidence.
 
 ## Functional contract achieved
@@ -18,7 +18,7 @@ preserving its historical red-test and design evidence.
    receipts. Its `createEffectBoundary` compatibility wrapper keeps privacy
    mandatory and retains legacy `eventId`.
 2. Read-only `inspectExecutionJournal` checks the provider namespace and all
-   exact effect-bearing terms *before* new authority is consumed. A completed
+   exact effect-bearing terms _before_ new authority is consumed. A completed
    effect replays without new submit or re-grant; corrupt, mismatched, uncertain
    and unsubmitted records do not authorize a new effect. The payment replay
    adapter is now a projection of the same canonical inspector, not a second
@@ -84,17 +84,17 @@ preserving its historical red-test and design evidence.
 
 ## Specification review axis
 
-| Acceptance criterion | Result | Boundary |
-| --- | --- | --- |
-| Existing payment and DPDP retained | PASS | Synthetic/reference tests; no live certification |
-| Canonical host effect and backwards API | PASS | Test suite and conformance |
-| Non-payment SDK, clean npm consumer | PASS | Synthetic provider only |
-| Generic registered MCP redemption, no extra tools | PASS | Trusted programmatic registration required |
-| Default deny, agent interchangeability and removal | PASS | Fixed/registry localhost test harness |
-| Journal-first replay, unknown isolation and evidence gaps | PASS | Single-writer file-journal reference; no distributed exactly-once claim |
-| Private data excluded from protected-execution receipts | PASS within tested fixtures | Trusted host/provider egress is not externally audited |
-| Live production security / legal compliance | INCONCLUSIVE | Outside the spec and not claimed |
-| Independent external reviewer approval | PENDING | Do not merge solely on self-review and CI |
+| Acceptance criterion                                      | Result                      | Boundary                                                                |
+| --------------------------------------------------------- | --------------------------- | ----------------------------------------------------------------------- |
+| Existing payment and DPDP retained                        | PASS                        | Synthetic/reference tests; no live certification                        |
+| Canonical host effect and backwards API                   | PASS                        | Test suite and conformance                                              |
+| Non-payment SDK, clean npm consumer                       | PASS                        | Synthetic provider only                                                 |
+| Generic registered MCP redemption, no extra tools         | PASS                        | Trusted programmatic registration required                              |
+| Default deny, agent interchangeability and removal        | PASS                        | Fixed/registry localhost test harness                                   |
+| Journal-first replay, unknown isolation and evidence gaps | PASS                        | Single-writer file-journal reference; no distributed exactly-once claim |
+| Private data excluded from protected-execution receipts   | PASS within tested fixtures | Trusted host/provider egress is not externally audited                  |
+| Live production security / legal compliance               | INCONCLUSIVE                | Outside the spec and not claimed                                        |
+| Independent external reviewer approval                    | PENDING                     | Do not merge solely on self-review and CI                               |
 
 ## Execution graph and trust ownership
 

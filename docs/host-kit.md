@@ -12,7 +12,7 @@ place where it performs external effects. Each **operation routed through this b
 
 It is a library boundary, not an interceptor. A host that does not route its
 effects through it is uncovered, not compliant — see
-[ADR-0025](adr/0025-privacy-enforcement-is-per-host.md).
+[ADR-0025]({{ '/adr/0025-privacy-enforcement-is-per-host/' | relative_url }}).
 
 ## The surface
 
@@ -237,16 +237,16 @@ result with `ok: false` and a detail, never an exception.
 - It does not prove that a separately running host composes it. The
   conformance suite proves the composition it is given.
 
-The honest limits live in [audit/limits.md](audit/limits.md).
+The honest limits live in [the limits register]({{ '/audit/limits/' | relative_url }}).
 
 ## References
 
-- [ADR-0011](adr/0011-public-surface.md) — the curated public surface.
-- [ADR-0018](adr/0018-exact-operation-authorization.md) — exact-operation
+- [ADR-0011]({{ '/adr/0011-public-surface/' | relative_url }}) — the curated public surface.
+- [ADR-0018]({{ '/adr/0018-exact-operation-authorization/' | relative_url }}) — exact-operation
   authorization and consumption.
-- [ADR-0024](adr/0024-privacy-enforcement-narrows-authority.md) — privacy
+- [ADR-0024]({{ '/adr/0024-privacy-enforcement-narrows-authority/' | relative_url }}) — privacy
   enforcement narrows Authority.
-- [ADR-0025](adr/0025-privacy-enforcement-is-per-host.md) — per-host,
+- [ADR-0025]({{ '/adr/0025-privacy-enforcement-is-per-host/' | relative_url }}) — per-host,
   explicit enforcement at the effect boundary.
 
 ## Domain-neutral host-controlled effects (implemented on `main`)

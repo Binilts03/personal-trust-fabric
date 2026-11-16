@@ -17,7 +17,7 @@ Auditor entry point: honest limits, operations, verification, threats.
 | [Operations](operations/) | Container image, health signals, rotation, restore drills                 |
 | [Verification](verify/)   | Reproduce CI gate from scratch: `typecheck`, unit, eval, brand, harness   |
 | [Threats](threats/)       | Trust boundaries, assets, attacker capabilities, abuse paths, mitigations |
-| [Decisions](decisions/)   | Key security/architecture decisions with rationale                        |
+| [Decisions](../adr/)      | Key security/architecture decisions with rationale                        |
 
 ## Quick Verification
 

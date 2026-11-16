@@ -14,13 +14,13 @@ optional privacy controls. No industry or jurisdiction defines the product.
 
 ## Implemented local reference flows
 
-| Application | Repository example | What the code exercises | What it does **not** establish |
-| --- | --- | --- | --- |
-| Bounded payment and minimal disclosure | [payment-disclosure.mjs](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/payment-disclosure.mjs) | Exact-terms grant, recipient proof, fake payment executor, claim subset disclosure | Real payment or production payment-provider adoption |
-| Vault-scoped disclosure and protected credential use | [vault-protected-action.mjs](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/vault-protected-action.mjs) | Purpose/agent-scoped reads, in-host secret use, dry-run proposals, fake provider receipt | Real external credential processing, production custody |
-| Synthetic delegated email | `examples/generic-protected-action.mjs` | Scoped `/email/send` grant, recipient-signed proof, fake external reference, optional privacy module | Live email, authenticated real-world email server, independently deployed host |
-| GitHub Issues registered action | [GitHub Issues adapter]({{ '/adapters/github-issues/' | relative_url }}) | Registered MCP request, local recipient proof, real REST adapter shape and journal replay against controlled HTTP responses | Live issue creation, GitHub attestation, unattended retry or deployment |
-| **DPDP-informed personal-data processing (optional)** | [Synthetic clinic-to-lab walkthrough]({{ '/verticals/dpdp-consent-gateway/' | relative_url }}) | Configured privacy basis and activity, Authority plus privacy checks, Processing Events, withdrawal checked before subsequent disclosure, subject-scoped PTF vault erasure | Actual clinic/lab systems, legally valid consent, statutory compliance, full privacy-program automation, or coverage of unintegrated host paths |
+| Application                                           | Repository example                                                                                                             | What the code exercises                                                                              | What it does **not** establish                                                                                                                                             |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bounded payment and minimal disclosure                | [payment-disclosure.mjs](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/payment-disclosure.mjs)         | Exact-terms grant, recipient proof, fake payment executor, claim subset disclosure                   | Real payment or production payment-provider adoption                                                                                                                       |
+| Vault-scoped disclosure and protected credential use  | [vault-protected-action.mjs](https://github.com/Binilts03/personal-trust-fabric/blob/main/examples/vault-protected-action.mjs) | Purpose/agent-scoped reads, in-host secret use, dry-run proposals, fake provider receipt             | Real external credential processing, production custody                                                                                                                    |
+| Synthetic delegated email                             | `examples/generic-protected-action.mjs`                                                                                        | Scoped `/email/send` grant, recipient-signed proof, fake external reference, optional privacy module | Live email, authenticated real-world email server, independently deployed host                                                                                             |
+| GitHub Issues registered action                       | [GitHub Issues adapter]({{ '/adapters/github-issues/'                                                                          | relative_url }})                                                                                     | Registered MCP request, local recipient proof, real REST adapter shape and journal replay against controlled HTTP responses                                                | Live issue creation, GitHub attestation, unattended retry or deployment                                                                         |
+| **DPDP-informed personal-data processing (optional)** | [Synthetic clinic-to-lab walkthrough]({{ '/verticals/dpdp-consent-gateway/'                                                    | relative_url }})                                                                                     | Configured privacy basis and activity, Authority plus privacy checks, Processing Events, withdrawal checked before subsequent disclosure, subject-scoped PTF vault erasure | Actual clinic/lab systems, legally valid consent, statutory compliance, full privacy-program automation, or coverage of unintegrated host paths |
 
 Build and run the local flows from a checkout:
 
@@ -56,9 +56,12 @@ backups, and independently operating host paths are not automatically
 controlled. Read the [DPDP profile]({{ '/privacy/dpdp/' | relative_url }}), [host kit]({{ '/host-kit/' | relative_url }}),
 and [audit limits]({{ '/audit/limits/' | relative_url }}).
 
-The `ptf host-conformance` CLI checks the library's **reference effect
-boundary**. Integrators need their own host-specific conformance and
-end-to-end evidence before asserting actual runtime coverage.
+The `ptf host-conformance` CLI runs the library's nine boundary checks
+against its own **reference effect boundary**, or — with `--boundary MODULE` —
+against the boundary composition the integrator ships. It is a gate over the
+boundary's ordering, not over the rest of the host: integrators still need
+their own host-specific conformance and end-to-end evidence before asserting
+actual runtime coverage.
 
 ## Possible later applications (not complete implementations)
 

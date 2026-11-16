@@ -48,18 +48,18 @@ precedence if configured, so avoid setting it accidentally.
 
 ## Tools
 
-| Tool                    | Purpose                                                 | Consumes Authority? |
-| ----------------------- | ------------------------------------------------------- | ------------------- |
-| `ptf_authenticate`      | Registry mode: challenge, then signature-bound session  | No                  |
-| `ptf_propose`           | Dry-run: exact terms + digest                           | No (CHECK)          |
-| `ptf_check`             | Status of a proposal                                    | No                  |
+| Tool                    | Purpose                                                  | Consumes Authority? |
+| ----------------------- | -------------------------------------------------------- | ------------------- |
+| `ptf_authenticate`      | Registry mode: challenge, then signature-bound session   | No                  |
+| `ptf_propose`           | Dry-run: exact terms + digest                            | No (CHECK)          |
+| `ptf_check`             | Status of a proposal                                     | No                  |
 | `ptf_redeem`            | `/pay` or registered action: challenge → proof → receipt | **Yes** (REDEEM)    |
-| `ptf_request_data`      | Propose a disclosure                                    | No (CHECK)          |
-| `ptf_present_data`      | Holder-signed presentation, nonce-bound, single-present | **Yes** (REDEEM)    |
-| `ptf_request_action`    | Propose any `/-path` except `/disclose*`                | No (CHECK)          |
-| `ptf_get_receipt`       | Retrieve execution receipt                              | No                  |
-| `ptf_list_capabilities` | This identity's live grants only                        | No                  |
-| `ptf_revoke`            | Request-only revocation                                 | Request only        |
+| `ptf_request_data`      | Propose a disclosure                                     | No (CHECK)          |
+| `ptf_present_data`      | Holder-signed presentation, nonce-bound, single-present  | **Yes** (REDEEM)    |
+| `ptf_request_action`    | Propose any `/-path` except `/disclose*`                 | No (CHECK)          |
+| `ptf_get_receipt`       | Retrieve execution receipt                               | No                  |
+| `ptf_list_capabilities` | This identity's live grants only                         | No                  |
+| `ptf_revoke`            | Request-only revocation                                  | Request only        |
 
 **Deliberately no approve tool** — humans approve in CLI, or standing grants cover demand. Server only spends what already exists.
 
@@ -80,12 +80,11 @@ See `examples/vault-protected-action.mjs` and `examples/mcp-client-config.json`.
 
 ## Experimental DPDP privacy enforcement mode
 
-The stdio reference host accepts **operator-controlled** `PTF_MCP_PRIVACY_CONFIG` pointing to a protected JSON file. Configure its controller, opaque `subject:` reference, recipient role map and optional trusted subject assurance as documented in [DPDP privacy enforcement](privacy/dpdp.md). Enabling this mode requires an initialized encrypted PTF privacy store and an applicable Processing Activity/Basis Evidence **in addition to** agent authority.
+The stdio reference host accepts **operator-controlled** `PTF_MCP_PRIVACY_CONFIG` pointing to a protected JSON file. Configure its controller, opaque `subject:` reference, recipient role map and optional trusted subject assurance as documented in [DPDP privacy enforcement]({{ '/privacy/dpdp/' | relative_url }}). Enabling this mode requires an initialized encrypted PTF privacy store and an applicable Processing Activity/Basis Evidence **in addition to** agent authority.
 
 In the stock stdio host the privacy gate covers `ptf_request_data` and `ptf_present_data` disclosures, plus `ptf_propose:/pay` and `ptf_redeem:/pay` (including the journaled payment executor). Trusted embedding hosts may additionally register exact non-payment actions with their own enforced processing gates; unregistered actions cannot execute. Payment processing additionally requires an operator-defined `actionCategories["/pay"]` and a matching active processing activity/basis. The precommitted privacy event precedes payment authority consumption or provider execution. No agent-controlled legal-basis/controller/subject fields are added to tool schemas. Explicit mode fails closed when configuration or evidence is unavailable. Omitting the environment variable preserves the authority-only processing path; shared input validation still rejects malformed or pathological values. A startup stderr message reports enabled/disabled mode and its coverage without identifying subjects.
 
 **Limit:** Registered non-payment actions are protected only when explicitly composed by the trusted embedding host. Independently invoked adapter/provider paths and operator CLI actions are **not universally protected**. An integrator must explicitly wrap each personal-data processing path. A configured file is not proof that a running remote host actually uses it; `ptf privacy verify --mcp-config FILE` checks configuration and explicitly reports `runtimeAttested: false`.
-
 
 ## Host-registered generic execution (reference MCP host)
 

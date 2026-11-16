@@ -4,8 +4,8 @@
 **Base:** `7b52d61ea207d1d37d11a8c85f3253466b732537` (frozen pre-feature `main`)
 **Branch:** `feature/dpdp-privacy-enforcement`
 **Repair-batch head:** `4ba8fbafa7dc608ee95ed8b0c9e07a5913d96900` (journal-first payment recovery + the fallow repair batch; this document lands in the follow-up docs commit)
-**Design:** [2026-10-18-dpdp-privacy-enforcement-design.md](../specs/2026-10-18-dpdp-privacy-enforcement-design.md)
-**Plan:** [2026-10-18-dpdp-privacy-enforcement-master.md](../plans/2026-10-18-dpdp-privacy-enforcement-master.md)
+**Design:** [2026-10-18-dpdp-privacy-enforcement-design.md]({{ '/superpowers/specs/2026-10-18-dpdp-privacy-enforcement-design/' | relative_url }})
+**Plan:** [2026-10-18-dpdp-privacy-enforcement-master.md]({{ '/superpowers/plans/2026-10-18-dpdp-privacy-enforcement-master/' | relative_url }})
 **Disposition:** Draft PR; the P2 repair batch (including journal-first payment recovery) passed the full local gate and is awaiting a fresh independent Standards/Spec/Security re-review. No merge, publish or compliance assertion is authorised until that disposition is recorded as clean.
 
 ## Per-slice implementation heads / verification

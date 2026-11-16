@@ -1,4 +1,4 @@
-> **Historical gate** — superseded by the verified implementation handoff at [2026-10-24-consolidation-implementation-handoff.md](2026-10-24-consolidation-implementation-handoff.md). Preserve this report as a dated snapshot of blockers prior to the later work; do not use it as the current branch verdict.
+> **Historical gate** - superseded by the verified implementation handoff at [the implementation handoff]({{ '/superpowers/reviews/2026-10-24-consolidation-implementation-handoff/' | relative_url }}). Preserve this report as a dated snapshot of blockers prior to the later work; do not use it as the current branch verdict.
 
 # PTF architectural consolidation — implementation and review gate
 

@@ -29,7 +29,7 @@ Default-deny with citations: every allow names the grant or approval consumed. P
 
 ## Threat Model Summary
 
-See [THREATMODEL.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/THREATMODEL.md) and [docs/audit/threats.md](audit/threats) for full model.
+See [THREATMODEL.md](https://github.com/Binilts03/personal-trust-fabric/blob/main/THREATMODEL.md) and [docs/audit/threats.md]({{ '/audit/threats/' | relative_url }}) for full model.
 
 | Asset             | Threat          | Mitigation                                           |
 | ----------------- | --------------- | ---------------------------------------------------- |
@@ -44,7 +44,7 @@ See [THREATMODEL.md](https://github.com/Binilts03/personal-trust-fabric/blob/mai
 
 ## Honest Limits
 
-Documented in [docs/audit/limits.md](audit/limits). Key ceilings:
+Documented in [docs/audit/limits.md]({{ '/audit/limits/' | relative_url }}). Key ceilings:
 
 - Single-operator topology (no multi-tenant)
 - File keystore (no HSM/KMS)

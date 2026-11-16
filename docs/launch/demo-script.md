@@ -56,7 +56,7 @@ things in the transcript:
    prove belongs to that subject.
 
 The walkthrough with the full transcript is in
-[../verticals/dpdp-consent-gateway.md](../verticals/dpdp-consent-gateway.md).
+[the DPDP consent gateway vertical]({{ '/verticals/dpdp-consent-gateway/' | relative_url }}).
 
 ## Example 3: reference-boundary checks (not host attestation)
 
@@ -68,7 +68,7 @@ node dist/src/cli.js --dir ./ptf-store privacy init
 node dist/src/cli.js --dir ./ptf-store host-conformance --privacy-config ./privacy-config.json
 ```
 
-Nine checks exercise a shipped reference boundary with local state. A passing CLI check **does not attest** that a separately deployed host routes all its real processing paths through this boundary. Host owners need integration and end-to-end tests; see [host kit](../host-kit.md).
+Nine checks exercise a shipped reference boundary with local state. A passing CLI check **does not attest** that a separately deployed host routes all its real processing paths through this boundary. Host owners need integration and end-to-end tests; see [host kit]({{ '/host-kit/' | relative_url }}).
 
 ## Example 4: crash-recovery test
 

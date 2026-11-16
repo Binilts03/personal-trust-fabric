@@ -38,10 +38,35 @@ own composition)`), so a green run is attributable to the thing that was
   working directory; a bare specifier resolves from the working directory's
   `node_modules`, so the host's module — not PTF's — owns the dependency and
   its own `import "personal-trust-fabric/hostkit"` resolves from the host's
-  project.
+  project. The resolution uses the **ESM** algorithm (the `exports` map with
+  the `node`, `import` and `default` conditions, subpath maps, `*` patterns,
+  then `main`/`index.js`), anchored at the working directory: the CommonJS
+  resolver refuses a package that exports only an `import` condition — the
+  normal shape of a modern ESM-only host kit — and
+  `import.meta.resolve(specifier, parent)` ignores the parent argument on
+  Node 22.18, which would resolve the operator's module against PTF's own
+  `node_modules`.
 - A module that cannot be loaded is reported with the loader's message; a
   module that loads but exports no factory is refused with an actionable
   message naming both accepted export names.
+
+## Trust exposure
+
+The module the operator names is **executed in this process**, so this
+process must not hold anything the checks do not need.
+
+The checks seed their own encrypted stores in a scratch directory with their
+own key. They never needed the operator's store, but the command opened it:
+it decrypted the operator's keystore and privacy state before running the
+checks, in the same process that then loaded the adopter's module.
+
+The command now runs **before the store is opened**: it does not open the
+operator's store, does not decrypt the keystore and does not decrypt the
+privacy state, so it holds no operator secret and needs no passphrase. The
+adoption gate can therefore run in CI without the operator's passphrase. The
+operator's privacy-config file is still read — it names the controller, the
+opaque subject reference and the recipient roles the checks run against; it is
+policy metadata, not a secret.
 
 ## Trust
 
@@ -94,3 +119,11 @@ reachable from any agent-facing surface.
   against nine rules. It does not attest the host's whole surface — the
   proposal store, the MCP tools, the ingress model and the host's own
   provider are outside it. A green run is evidence, not certification.
+- The gate holds no operator secret: it reads no store, opens no keystore and
+  needs no passphrase, so a host can run it in CI without handing CI the
+  operator's key material.
+- The resolution rules are PTF's, and PTF models the common `exports` maps
+  rather than every one: a package published with conditions PTF does not
+  enable (a `browser`-only entry, a `development` condition) is not resolved
+  to that entry, and the operator passes a path to the module instead. The
+  rules are pinned by tests, not left to the runtime.

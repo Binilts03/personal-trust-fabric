@@ -106,6 +106,8 @@
   },
   "scripts": {
     "check:brand": "node scripts/check-brand.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
+    "check:seams": "node scripts/check-seams.mjs",
     "typecheck": "tsc --noEmit",
     "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.json",
