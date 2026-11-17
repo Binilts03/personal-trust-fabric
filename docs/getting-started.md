@@ -13,7 +13,10 @@ data. The fastest way to evaluate it is to run the checked-in examples before
 setting up an operator store.
 
 **Requirements:** Node.js 22 or later, npm 10 or later, and Git. Commands
-below use a fresh checkout; the installation is **not yet published to npm**.
+below use a fresh checkout; the published candidate is
+`personal-trust-fabric@0.2.0-rc.1` (dist-tag `next`) —
+`npm install personal-trust-fabric@next` — though this walkthrough uses a
+fresh checkout.
 
 ## 1. Run an example first
 
@@ -29,7 +32,7 @@ npm run demo
 This tested first-run script checks one permitted operation and denies both
 another actor and a modified recipient. It performs no external action and
 consumes no authority. No credentials, passphrase, real money or agent-host
-configuration are needed. For separate *offline* synthetic payment/disclosure
+configuration are needed. For separate _offline_ synthetic payment/disclosure
 examples see [use cases]({{ '/use-cases/' | relative_url }}). The
 [adoption-validation protocol]({{ '/adoption-validation/' | relative_url }})
 explains the additional evidence required for a real host integration.

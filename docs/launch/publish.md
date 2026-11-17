@@ -1,8 +1,8 @@
-# npm developer prerelease — release procedure (not yet executed)
+# npm developer prerelease — release procedure (executed)
 
-**Status:** This repository currently has a candidate package surface, but **no registry prerelease is claimed or authorized by these preparations**. The candidate version is `0.2.0-rc.1`, conditional on checking current npm registry ownership and versions. The historical GitHub tags `v0.1.0` and `v0.1.0-rc.1` predate the merged protected-effect/MCP interfaces; do not reuse them.
+**Status:** The candidate package surface shipped as the experimental npm prerelease **`personal-trust-fabric@0.2.0-rc.1`** — published (public, dist-tag `next`, registry shasum `fdcdc7dc70700c3a6168f2613f0a1ad084c0fd89`) from release commit `f09d145`, after the full release gate sequence passed at that commit and external consumer verification installed `personal-trust-fabric@next` in a fresh project.
 
-A GitHub release, a successful `npm pack`, and local installed-tarball tests are **not** an npm registry release. This is a review checklist; publishing, staging, tagging or deploying requires separate maintainer authorization.
+A GitHub release, a successful `npm pack`, and local installed-tarball tests are **not** an npm registry release. This is a review checklist; later release gates (staging, tagging, deploying) remain owner-gated.
 
 ## What the package contains
 
@@ -69,10 +69,10 @@ node -e "import('personal-trust-fabric').then(m => console.log(typeof m.Authorit
 node -e "import('personal-trust-fabric/mcp').then(m => console.log(typeof m.createPtfServer))"
 ```
 
-Verify `./hostkit` and `./adapters/github-issues` imports, package integrity and provenance, and a public synthetic flow that makes **no real provider call**. Record the actual registry version, dist-tag, hash and resolved source commit. Only then put `npm install personal-trust-fabric@next` into the README and operator onboarding guide.
+Verify `./hostkit` and `./adapters/github-issues` imports, package integrity and provenance, and a public synthetic flow that makes **no real provider call**. Record the actual registry version, dist-tag, hash and resolved source commit: version `0.2.0-rc.1`, dist-tag `next`, shasum `fdcdc7dc70700c3a6168f2613f0a1ad084c0fd89`, resolved from source commit `f09d145`. Only then put `npm install personal-trust-fabric@next` into the README and operator onboarding guide; the install line has been added there and the registry candidate is published.
 
 A prerelease can invite developer feedback **without** asserting live provider acceptance, distributed exactly-once execution, independently audited security, multi-tenant custody or comprehensive privacy compliance.
 
 ## Version policy
 
-`0.2.0-rc.1` is the candidate for the newer package-exported Host Kit and MCP interfaces. It is not a published version merely because `package.json` carries the number. Retain the planned changes in `CHANGELOG.md` under `Unreleased` until the owner approves an actual release.
+`0.2.0-rc.1` is the candidate for the newer package-exported Host Kit and MCP interfaces; it is not a published version merely because `package.json` carries the number. The planned changes were retained under `Unreleased` until the owner approved the release, which then shipped as the published candidate `0.2.0-rc.1` (dist-tag `next`, registry shasum `fdcdc7dc70700c3a6168f2613f0a1ad084c0fd89`). Retain subsequent planned changes in `Unreleased` until the owner approves an actual release.

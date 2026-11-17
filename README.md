@@ -73,7 +73,7 @@ These are examples of _authority-controlled protected use_, not claims that PTF 
 
 ## Try the working implementation
 
-The source checkout is the supported evaluation path until an npm prerelease is independently published and verified. Requires **Node.js 22+**, npm and Git.
+The source checkout is the supported evaluation path; an experimental npm prerelease — `personal-trust-fabric@0.2.0-rc.1` (dist-tag `next`) — is now published and verified. Requires **Node.js 22+**, npm and Git.
 
 ```sh
 git clone https://github.com/Binilts03/personal-trust-fabric.git
@@ -130,7 +130,7 @@ For the exact current limitations, see [the limits register](docs/audit/limits.m
 
 ## Integrate or evaluate
 
-**If you build agent tools or MCP hosts:** start with `personal-trust-fabric/hostkit` and `personal-trust-fabric/mcp`. A host that drives a payment also needs `personal-trust-fabric/capabilities` — the curated root's payment executors require a redemption, and that subpath is the only published producer of one. Host-owned registration and validation—not a new agent prompt—are where security properties must be enforced. The package _exports_ these surfaces in source; registry publication is a separate release gate.
+**If you build agent tools or MCP hosts:** start with `personal-trust-fabric/hostkit` and `personal-trust-fabric/mcp`. A host that drives a payment also needs `personal-trust-fabric/capabilities` — the curated root's payment executors require a redemption, and that subpath is the only published producer of one. Host-owned registration and validation—not a new agent prompt—are where security properties must be enforced. The package _exports_ these surfaces in source; the experimental registry release is `personal-trust-fabric@0.2.0-rc.1` (dist-tag `next`). For an install from npm, use `npm install personal-trust-fabric@next`.
 
 **If you evaluate privacy/security:** try to break actor, recipient, terms-digest, one-use, replay and evidence-gap handling. The value of a finding is a reproducible counterexample, not a broad claim that an architecture is "secure."
 
@@ -154,7 +154,7 @@ The CI gate runs these checks against the relevant commit, including a fresh-tar
 
 ## Release status
 
-This repository has historical GitHub release tags, but its newer Host Kit and MCP integration are **not yet verified as published to npm**. Preparations for an experimental npm prerelease are tracked in [the publishing runbook](docs/launch/publish.md). Do not infer a registry release from the `package.json` version, a GitHub release, or a successful local `npm pack`.
+This repository has historical GitHub release tags, and its newer Host Kit and MCP integration **are now published to npm** as the experimental prerelease `personal-trust-fabric@0.2.0-rc.1` (dist-tag `next`; published 2026-11-17, registry shasum `fdcdc7dc70700c3a6168f2613f0a1ad084c0fd89`). Preparations for that prerelease were tracked in [the publishing runbook](docs/launch/publish.md). The published state above was verified against the registry; do not infer a registry release from the `package.json` version, a GitHub release, or a successful local `npm pack` alone.
 
 ## Contributing and license
 

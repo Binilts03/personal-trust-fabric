@@ -4,9 +4,9 @@ All notable changes to this project are documented here, Keep-a-Changelog
 flow: land work under `## [Unreleased]`, move it to a versioned section on
 release day. This project adheres to Semantic Versioning.
 
-## [0.2.0-rc.1] - 2026-11-16
+## [0.2.0-rc.1] - 2026-11-17
 
-- **npm developer-preview preparation (not a published release):** reconcile version to candidate `0.2.0-rc.1`, document first-publication and trusted-publisher gates, and update README/website/Host Kit and security documentation to the merged reference implementation. Live provider UAT and independent security certification remain outstanding.
+- **npm developer-preview preparation: released as candidate `0.2.0-rc.1`:** reconcile version to candidate `0.2.0-rc.1`, document first-publication and trusted-publisher gates, and update README/website/Host Kit and security documentation to the merged reference implementation. Live provider UAT and independent security certification remain outstanding.
 
 - **Production dependency audit:** refreshed the lockfile to MCP server SDK `2.4.0` and Zod `4.6.7` and raised direct dependency floors to avoid previously audited high-severity ranges. At the exact candidate head the audit reports **zero vulnerabilities** for the production tree (`npm audit --omit=dev`) and for the full tree including the development toolchain. The audit is a property of the exact commit, so it runs in CI on every push rather than being pinned in this document; the prerelease tarball preview (`npm pack --dry-run --json`) is read-only.
 
@@ -46,10 +46,12 @@ release day. This project adheres to Semantic Versioning.
 
 > Release state (honest): the `v0.1.0` tag (2026-09-12) predates
 > `v0.1.0-rc.1` (2026-09-14); both predate the merged protected-effect/MCP
-> interfaces. The candidate package version is `0.2.0-rc.1`, and **no registry
-> prerelease is published or authorized** — npm still returns 404 for this
-> package. Everything above ships on the candidate branch only. The next
-> version cut reconciles tags + changelog after peer review.
+> interfaces. The candidate package version is `0.2.0-rc.1`, which was
+> **published** to npm on 2026-11-17 (public, dist-tag `next`, registry shasum
+> `fdcdc7dc70700c3a6168f2613f0a1ad084c0fd89`) from release commit `f09d145`;
+> external consumer verification installed `personal-trust-fabric@next`.
+> Everything above ships on the candidate branch only. The next version cut
+> reconciles tags + changelog after peer review.
 
 ### Added
 
